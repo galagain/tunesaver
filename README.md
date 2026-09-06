@@ -15,7 +15,6 @@ l'authentification et la file sont montés depuis la machine hôte.
   `mktemp`).
 - Docker Desktop, ou Docker Engine avec `docker compose` v2. Pour que les workers
   repartent après un redémarrage, Docker doit lui-même démarrer avec la machine.
-- La CLI Supabase pour appliquer la migration d'authentification et d'historique.
 - Une connexion Internet lors du premier build (sources et paquets sont téléchargés).
 - Un compte et un abonnement adaptés aux services utilisés.
 - Le droit de télécharger et conserver le contenu concerné. Respectez les conditions
@@ -34,33 +33,26 @@ actif pour télécharger. L'intégration utilise directement son code source ép
 
 ```sh
 cd tunesaver
-supabase login
-supabase link --project-ref VOTRE_PROJECT_REF
-supabase db push --dry-run
-supabase db push
 ./musicdl init
 ./musicdl auth tiddl
 ./musicdl auth qobuz
 ./musicdl start
 ```
 
-`supabase link` demande le mot de passe PostgreSQL courant. Ne le placez jamais dans
-Git, `.env`, une commande copiée dans l'historique du shell ou une conversation. La
-migration crée `profiles` et `download_history`, active RLS et limite chaque ligne à
-son propriétaire Supabase.
-
-`./musicdl init` demande aussi l'URL et la clé **publishable** visibles dans le bouton
-**Connect** du projet Supabase. Pour une installation automatisée, fournissez-les avec
-`SUPABASE_URL` et `SUPABASE_PUBLISHABLE_KEY` lors du premier `init`.
+TuneSaver stocke les comptes, sessions et historiques dans une base SQLite locale :
+`data/state/tiddl/tunesaver.db`. Sauvegardez ce fichier avec le reste du dossier
+`data/` si vous voulez conserver les comptes et les statistiques.
 
 ## Autoriser un utilisateur
 
-Un visiteur crée son compte depuis la page, confirme son e-mail, puis reste bloqué avec
-le message « compte en attente d'autorisation ». Dans Supabase, ouvrir **Table Editor →
-profiles** et passer `approved` à `true` uniquement pour les personnes autorisées.
+Un visiteur crée son compte depuis la page, puis reste bloqué avec le message
+« compte en attente d'approbation ». Connectez-vous avec le compte admin configuré
+dans `.env` (`ADMIN_EMAIL` et `ADMIN_PASSWORD`) pour accepter, refuser, supprimer ou
+changer le mot de passe d'un compte.
 
-La clé `SUPABASE_PUBLISHABLE_KEY` est publique par conception et peut être utilisée par
-le navigateur. N'ajoutez jamais une clé `service_role` au frontend.
+Les inscriptions et les mots de passe oubliés utilisent des codes envoyés par e-mail.
+Configurez `SMTP_HOST`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` et les autres
+variables SMTP dans `.env` pour envoyer ces codes depuis votre domaine.
 
 `auth` construit l'image au premier lancement et `start` réutilise ensuite le cache
 de build. `start` attend également les healthchecks, afin de rendre visible un
@@ -150,10 +142,10 @@ libellé explicite et demande confirmation avant de l'ajouter. Les liens d'artis
 label, susceptibles de lancer un téléchargement massif, sont volontairement refusés
 par l'interface web. Une fois prêt, le bouton **Récupérer** envoie le fichier au
 navigateur avec un lien temporaire. Après un transfert complet, sa copie temporaire est
-supprimée du serveur; l'historique Supabase reste disponible.
+supprimée du serveur; l'historique local reste disponible.
 
 Chaque historique, file visible et dossier temporaire est séparé par l'identifiant
-Supabase. Le montant affiché est une **estimation**, pas une économie comptable : par
+du compte local. Le montant affiché est une **estimation**, pas une économie comptable : par
 défaut 1,29 € par piste TIDAL et 1,49 € par piste Beatport ou Qobuz. Ces valeurs peuvent
 être adaptées avec `MUSICDL_TIDDL_TRACK_VALUE_CENTS`,
 `MUSICDL_BEATPORT_TRACK_VALUE_CENTS` et `MUSICDL_QOBUZ_TRACK_VALUE_CENTS`.
@@ -285,9 +277,6 @@ Après avoir installé Docker et Git :
 ```sh
 git clone https://github.com/VOTRE_COMPTE/tunesaver.git
 cd tunesaver
-supabase login
-supabase link --project-ref VOTRE_PROJECT_REF
-supabase db push
 ./musicdl init
 ./musicdl auth tiddl
 ./musicdl auth qobuz

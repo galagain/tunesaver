@@ -63,99 +63,10 @@ def response_json(response) -> dict:
 
 
 class WebAppFunctionTests(unittest.TestCase):
-    def test_supabase_token_requires_a_locally_allowed_profile(self) -> None:
-        user_response = mock.Mock(status_code=200)
-        user_response.json.return_value = {
-            "id": TEST_USER_ID,
-            "email": "test@example.com",
-        }
-        profile_response = mock.Mock(status_code=200)
-        profile_response.json.return_value = [{"approved": True}]
-        with (
-            mock.patch.object(webapp, "SUPABASE_URL", "https://project.supabase.co"),
-            mock.patch.object(webapp, "SUPABASE_PUBLISHABLE_KEY", "publishable"),
-            mock.patch.object(webapp, "admin_user_is_allowed", return_value=True),
-            mock.patch.object(webapp, "admin_user_is_blocked", return_value=False),
-            mock.patch.object(
-                webapp.requests,
-                "get",
-                side_effect=[user_response, profile_response],
-            ),
-        ):
-            user = webapp.verify_supabase_token("access-token")
-        self.assertEqual(user["id"], TEST_USER_ID)
-        self.assertTrue(user["approved"])
-
-    def test_supabase_token_keeps_unapproved_profiles_pending(self) -> None:
-        user_response = mock.Mock(status_code=200)
-        user_response.json.return_value = {
-            "id": TEST_USER_ID,
-            "email": "test@example.com",
-        }
-        profile_response = mock.Mock(status_code=200)
-        profile_response.json.return_value = [{"approved": False}]
-        with (
-            mock.patch.object(webapp, "SUPABASE_URL", "https://project.supabase.co"),
-            mock.patch.object(webapp, "SUPABASE_PUBLISHABLE_KEY", "publishable"),
-            mock.patch.object(webapp, "SUPABASE_SERVICE_ROLE_KEY", "service-role"),
-            mock.patch.object(webapp, "admin_user_is_allowed", return_value=False),
-            mock.patch.object(webapp, "admin_user_is_blocked", return_value=False),
-            mock.patch.object(
-                webapp.requests,
-                "get",
-                side_effect=[user_response, profile_response],
-            ),
-            mock.patch.object(webapp.requests, "post") as post,
-        ):
-            user = webapp.verify_supabase_token("access-token")
-        self.assertFalse(user["approved"])
-        post.assert_not_called()
-
-    def test_supabase_auth_delete_user_uses_service_role(self) -> None:
-        response = mock.Mock(status_code=204, content=b"")
-        with (
-            mock.patch.object(webapp, "SUPABASE_URL", "https://project.supabase.co"),
-            mock.patch.object(webapp, "SUPABASE_SERVICE_ROLE_KEY", "service-role"),
-            mock.patch.object(webapp.requests, "delete", return_value=response) as delete,
-        ):
-            webapp.supabase_auth_delete_user(TEST_USER_ID)
-        args, kwargs = delete.call_args
-        self.assertEqual(
-            args[0],
-            f"https://project.supabase.co/auth/v1/admin/users/{TEST_USER_ID}",
-        )
-        self.assertEqual(kwargs["headers"]["apikey"], "service-role")
-
-    def test_supabase_auth_create_user_confirms_email_without_sending_signup_mail(self) -> None:
-        response = mock.Mock(status_code=200)
-        response.json.return_value = {"id": TEST_USER_ID, "email": "test@example.com"}
-        with (
-            mock.patch.object(webapp, "SUPABASE_URL", "https://project.supabase.co"),
-            mock.patch.object(webapp, "SUPABASE_SERVICE_ROLE_KEY", "service-role"),
-            mock.patch.object(webapp.requests, "post", return_value=response) as post,
-        ):
-            created = webapp.supabase_auth_create_user("test@example.com", "secret123")
-        self.assertEqual(created["id"], TEST_USER_ID)
-        args, kwargs = post.call_args
-        self.assertEqual(args[0], "https://project.supabase.co/auth/v1/admin/users")
-        self.assertEqual(kwargs["headers"]["apikey"], "service-role")
-        self.assertTrue(kwargs["json"]["email_confirm"])
-
-    def test_supabase_auth_update_user_password_uses_service_role(self) -> None:
-        response = mock.Mock(status_code=200, content=b"{}")
-        with (
-            mock.patch.object(webapp, "SUPABASE_URL", "https://project.supabase.co"),
-            mock.patch.object(webapp, "SUPABASE_SERVICE_ROLE_KEY", "service-role"),
-            mock.patch.object(webapp.requests, "put", return_value=response) as put,
-        ):
-            webapp.supabase_auth_update_user_password(TEST_USER_ID, "secret123")
-        args, kwargs = put.call_args
-        self.assertEqual(
-            args[0],
-            f"https://project.supabase.co/auth/v1/admin/users/{TEST_USER_ID}",
-        )
-        self.assertEqual(kwargs["headers"]["apikey"], "service-role")
-        self.assertEqual(kwargs["json"], {"password": "secret123"})
+    def test_local_password_hash_verifies_only_matching_password(self) -> None:
+        salt, digest = webapp.hash_password("secret123")
+        self.assertTrue(webapp.verify_password("secret123", salt, digest))
+        self.assertFalse(webapp.verify_password("wrong", salt, digest))
 
     def test_admin_daily_stats_fill_days_and_sum_done_jobs(self) -> None:
         today = webapp.date.today()
@@ -326,7 +237,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             "QOBUZ_CONFIG_PATH": musicdl.QOBUZ_CONFIG_PATH,
             "TIDAL_AUTH_PATH": webapp.TIDAL_AUTH_PATH,
             "BEATPORT_CACHE_PATH": webapp.BEATPORT_CACHE_PATH,
-            "ADMIN_ACCESS_PATH": webapp.ADMIN_ACCESS_PATH,
+            "LOCAL_DB_PATH": webapp.LOCAL_DB_PATH,
             "ASSET_ROOT": webapp.ASSET_ROOT,
         }
         musicdl.QUEUE_ROOT = root / "queue"
@@ -342,9 +253,10 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         webapp.BEATPORT_CACHE_PATH = (
             musicdl.STATE_ROOT / "beatportdl" / "beatportdl-credentials.json"
         )
-        webapp.ADMIN_ACCESS_PATH = musicdl.STATE_ROOT / "tiddl" / "admin_access.json"
+        webapp.LOCAL_DB_PATH = musicdl.STATE_ROOT / "tiddl" / "tunesaver.db"
         webapp.ASSET_ROOT = PROJECT_ROOT / "web"
         musicdl.ensure_layout()
+        webapp.init_local_store()
         musicdl.SECRETS_ROOT.mkdir(parents=True)
         self.worker_handles = {
             provider: musicdl.acquire_provider_lock(
@@ -383,7 +295,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 setattr(webapp, name, value)
         webapp.TIDAL_AUTH_PATH = self.originals["TIDAL_AUTH_PATH"]
         webapp.BEATPORT_CACHE_PATH = self.originals["BEATPORT_CACHE_PATH"]
-        webapp.ADMIN_ACCESS_PATH = self.originals["ADMIN_ACCESS_PATH"]
+        webapp.LOCAL_DB_PATH = self.originals["LOCAL_DB_PATH"]
         webapp.ASSET_ROOT = self.originals["ASSET_ROOT"]
         self.temporary.cleanup()
 
@@ -480,7 +392,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         response = await webapp.api_middleware(request, webapp.download_handler)
         self.assertEqual(response.status, 403)
 
-    async def test_api_requires_a_supabase_session(self) -> None:
+    async def test_api_requires_a_local_session(self) -> None:
         request = FakeRequest(
             method="GET",
             path="/api/status",
@@ -604,159 +516,166 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         token = response_json(response)["access_token"]
         self.assertIn(token, self.app_state[webapp.ADMIN_SESSIONS_KEY])
 
-    async def test_signup_creates_pending_confirmed_user_through_admin_api(self) -> None:
-        with (
-            mock.patch.object(
-                webapp,
-                "supabase_auth_create_user",
-                return_value={"id": TEST_USER_ID},
-            ) as create_user,
-            mock.patch.object(webapp, "ensure_pending_profile") as ensure_profile,
-        ):
-            request = FakeRequest(
-                {"email": "Test@Example.com", "password": "secret123"},
-                path="/api/signup",
-                app=self.app_state,
-            )
+    async def test_signup_creates_pending_local_user(self) -> None:
+        request = FakeRequest(
+            {"email": "Test@Example.com", "password": "secret123"},
+            path="/api/signup",
+            app=self.app_state,
+        )
+        with mock.patch.object(webapp, "send_verification_code") as send_code:
             response = await webapp.api_middleware(request, webapp.signup_handler)
         self.assertEqual(response.status, 201)
         payload = response_json(response)
         self.assertTrue(payload["pending"])
-        create_user.assert_called_once_with("test@example.com", "secret123")
-        ensure_profile.assert_called_once_with(TEST_USER_ID, "test@example.com")
+        self.assertTrue(payload["needs_email_verification"])
+        profiles = webapp.local_admin_profiles()
+        self.assertEqual(profiles[0]["email"], "test@example.com")
+        self.assertFalse(profiles[0]["approved"])
+        self.assertFalse(profiles[0]["email_verified"])
+        send_code.assert_called_once_with(profiles[0]["user_id"], "test@example.com")
 
-    async def test_admin_routes_use_admin_token_and_service_role(self) -> None:
-        rows = [
-            {
-                "user_id": TEST_USER_ID,
-                "email": "test@example.com",
-                "approved": False,
-                "created_at": "2026-09-06T12:00:00Z",
-            }
-        ]
-        with (
-            mock.patch.object(webapp, "supabase_admin_request", return_value=rows) as admin_request,
-            mock.patch.object(
-                webapp,
-                "supabase_auth_admin_users",
-                return_value={
-                    TEST_USER_ID: {
-                        "email_confirmed_at": "2026-09-06T12:05:00Z",
-                        "last_sign_in_at": "",
-                    }
-                },
-            ),
-        ):
-            request = FakeRequest(
-                method="GET",
-                path="/api/admin/profiles",
-                headers={"Authorization": "Bearer admin-token"},
-                app=self.app_state,
-            )
-            response = await webapp.api_middleware(
-                request, webapp.admin_profiles_handler
-            )
+    async def test_local_login_requires_email_verification_and_admin_approval(self) -> None:
+        user = webapp.local_create_user("test@example.com", "secret123")
+        request = FakeRequest(
+            {"email": "test@example.com", "password": "secret123"},
+            path="/api/login",
+            app=self.app_state,
+        )
+        response = await webapp.api_middleware(request, webapp.login_handler)
+        self.assertEqual(response.status, 403)
+        self.assertIn("E-mail non vérifié", response_json(response)["error"])
+        webapp.local_mark_email_verified(user["id"])
+        response = await webapp.api_middleware(request, webapp.login_handler)
+        self.assertEqual(response.status, 403)
+        self.assertIn("en attente", response_json(response)["error"])
+        profile = webapp.local_admin_profiles()[0]
+        webapp.local_set_user_access(profile["user_id"], True)
+        response = await webapp.api_middleware(request, webapp.login_handler)
+        self.assertEqual(response.status, 200)
+        self.assertIn("access_token", response_json(response))
+
+    async def test_email_verify_consumes_code(self) -> None:
+        user = webapp.local_create_user("test@example.com", "secret123")
+        code = webapp.create_email_code(user["id"], "test@example.com", "verify_email")
+        request = FakeRequest(
+            {"email": "test@example.com", "code": code},
+            path="/api/email/verify",
+            app=self.app_state,
+        )
+        response = await webapp.api_middleware(request, webapp.email_verify_handler)
+        self.assertEqual(response.status, 200)
+        self.assertTrue(response_json(response)["verified"])
+        self.assertTrue(webapp.local_admin_profiles()[0]["email_verified"])
+
+    async def test_password_reset_code_updates_password(self) -> None:
+        user = webapp.local_create_user("test@example.com", "secret123")
+        code = webapp.create_email_code(user["id"], "test@example.com", "password_reset")
+        request = FakeRequest(
+            {"email": "test@example.com", "code": code, "password": "newsecret"},
+            path="/api/password-reset/confirm",
+            app=self.app_state,
+        )
+        response = await webapp.api_middleware(
+            request, webapp.password_reset_confirm_handler
+        )
+        self.assertEqual(response.status, 200)
+        self.assertIsNotNone(webapp.local_login_user("test@example.com", "newsecret"))
+        self.assertTrue(webapp.local_admin_profiles()[0]["email_verified"])
+
+    async def test_admin_routes_use_local_store(self) -> None:
+        webapp.local_create_user("test@example.com", "secret123")
+        request = FakeRequest(
+            method="GET",
+            path="/api/admin/profiles",
+            headers={"Authorization": "Bearer admin-token"},
+            app=self.app_state,
+        )
+        response = await webapp.api_middleware(
+            request, webapp.admin_profiles_handler
+        )
         self.assertEqual(response.status, 200)
         profile = response_json(response)["profiles"][0]
         self.assertFalse(profile["approved"])
         self.assertNotIn("email_confirmed", profile)
-        admin_request.assert_called_once()
 
     async def test_admin_can_update_profile_approval(self) -> None:
-        rows = [
-            {
-                "user_id": TEST_USER_ID,
-                "email": "test@example.com",
-                "approved": True,
-                "created_at": "2026-09-06T12:00:00Z",
-            }
-        ]
-        with (
-            mock.patch.object(webapp, "supabase_admin_request", return_value=rows),
-            mock.patch.object(webapp, "supabase_auth_admin_users", return_value={}),
-        ):
-            request = FakeRequest(
-                {"approved": True},
-                method="PATCH",
-                path=f"/api/admin/profiles/{TEST_USER_ID}",
-                headers={"Authorization": "Bearer admin-token"},
-                app=self.app_state,
-                match_info={"user_id": TEST_USER_ID},
-            )
-            response = await webapp.api_middleware(
-                request, webapp.admin_profile_handler
-            )
+        user = webapp.local_create_user("test@example.com", "secret123")
+        request = FakeRequest(
+            {"approved": True},
+            method="PATCH",
+            path=f"/api/admin/profiles/{user['id']}",
+            headers={"Authorization": "Bearer admin-token"},
+            app=self.app_state,
+            match_info={"user_id": user["id"]},
+        )
+        response = await webapp.api_middleware(
+            request, webapp.admin_profile_handler
+        )
         self.assertEqual(response.status, 200)
         self.assertTrue(response_json(response)["profile"]["approved"])
         self.assertFalse(self.app_state[webapp.AUTH_CACHE_KEY])
 
     async def test_admin_can_update_user_password(self) -> None:
-        with mock.patch.object(webapp, "supabase_auth_update_user_password") as update_password:
-            request = FakeRequest(
-                {"password": "secret123"},
-                method="POST",
-                path=f"/api/admin/profiles/{TEST_USER_ID}/password",
-                headers={"Authorization": "Bearer admin-token"},
-                app=self.app_state,
-                match_info={"user_id": TEST_USER_ID},
-            )
-            response = await webapp.api_middleware(
-                request, webapp.admin_profile_password_handler
-            )
+        user = webapp.local_create_user("test@example.com", "secret123")
+        request = FakeRequest(
+            {"password": "newsecret"},
+            method="POST",
+            path=f"/api/admin/profiles/{user['id']}/password",
+            headers={"Authorization": "Bearer admin-token"},
+            app=self.app_state,
+            match_info={"user_id": user["id"]},
+        )
+        response = await webapp.api_middleware(
+            request, webapp.admin_profile_password_handler
+        )
         self.assertEqual(response.status, 200)
         self.assertTrue(response_json(response)["updated"])
-        update_password.assert_called_once_with(TEST_USER_ID, "secret123")
+        self.assertIsNotNone(webapp.local_login_user("test@example.com", "newsecret"))
         self.assertFalse(self.app_state[webapp.AUTH_CACHE_KEY])
 
     async def test_admin_stats_returns_daily_download_totals(self) -> None:
-        rows = [
+        user = webapp.local_create_user("test@example.com", "secret123")
+        webapp.local_upsert_history(user["id"], [
             {
+                "job_id": "job-1",
                 "created_at": webapp.date.today().isoformat() + "T12:00:00Z",
                 "state": "done",
                 "track_count": 2,
                 "estimated_savings_cents": 298,
             }
-        ]
-        with mock.patch.object(webapp, "supabase_admin_request", return_value=rows) as admin_request:
-            request = FakeRequest(
-                method="GET",
-                path="/api/admin/stats",
-                headers={"Authorization": "Bearer admin-token"},
-                app=self.app_state,
-            )
-            response = await webapp.api_middleware(request, webapp.admin_stats_handler)
+        ])
+        request = FakeRequest(
+            method="GET",
+            path="/api/admin/stats",
+            headers={"Authorization": "Bearer admin-token"},
+            app=self.app_state,
+        )
+        response = await webapp.api_middleware(request, webapp.admin_stats_handler)
         self.assertEqual(response.status, 200)
         daily = response_json(response)["daily"]
         self.assertEqual(daily[-1]["tracks"], 2)
         self.assertEqual(daily[-1]["savings_cents"], 298)
-        _args, kwargs = admin_request.call_args
-        self.assertEqual(kwargs["params"]["state"], "eq.done")
 
     async def test_admin_can_delete_profile_auth_user(self) -> None:
-        webapp.set_admin_user_access(TEST_USER_ID, True)
-        with mock.patch.object(webapp, "supabase_auth_delete_user") as delete_user:
-            request = FakeRequest(
-                {},
-                method="DELETE",
-                path=f"/api/admin/profiles/{TEST_USER_ID}",
-                headers={"Authorization": "Bearer admin-token"},
-                app=self.app_state,
-                match_info={"user_id": TEST_USER_ID},
-            )
-            response = await webapp.api_middleware(
-                request, webapp.admin_profile_delete_handler
-            )
+        user = webapp.local_create_user("test@example.com", "secret123")
+        request = FakeRequest(
+            {},
+            method="DELETE",
+            path=f"/api/admin/profiles/{user['id']}",
+            headers={"Authorization": "Bearer admin-token"},
+            app=self.app_state,
+            match_info={"user_id": user["id"]},
+        )
+        response = await webapp.api_middleware(
+            request, webapp.admin_profile_delete_handler
+        )
         self.assertEqual(response.status, 200)
         self.assertTrue(response_json(response)["deleted"])
-        delete_user.assert_called_once_with(TEST_USER_ID)
-        self.assertFalse(webapp.admin_user_is_allowed(TEST_USER_ID))
-        self.assertFalse(webapp.admin_user_is_blocked(TEST_USER_ID))
+        self.assertEqual(webapp.local_admin_profiles(), [])
         self.assertFalse(self.app_state[webapp.AUTH_CACHE_KEY])
 
     async def test_config_includes_public_url(self) -> None:
         with (
-            mock.patch.object(webapp, "SUPABASE_URL", "https://project.supabase.co"),
-            mock.patch.object(webapp, "SUPABASE_PUBLISHABLE_KEY", "publishable"),
             mock.patch.object(webapp, "PUBLIC_URL", "https://tunesaver.galagain.com"),
         ):
             request = FakeRequest(method="GET", path="/api/config", app=self.app_state)

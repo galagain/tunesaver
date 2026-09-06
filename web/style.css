@@ -251,6 +251,29 @@ textarea:focus-visible {
 
 .auth-card .primary-button { margin-top: 12px; }
 
+.signup-verification {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.signup-verification[hidden] { display: none; }
+
+.secondary-button {
+  height: 42px;
+  padding: 0 16px;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 800;
+  background: #f1f7f4;
+  border: 1px solid #b9dccb;
+  border-radius: 10px;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: #e7f2ed;
+}
+
 .text-button {
   width: 100%;
   margin-top: 15px;
@@ -756,11 +779,22 @@ h1 {
   align-items: center;
 }
 
+.admin-email-status,
 .admin-status {
   padding: 4px 7px;
   font-size: 0.63rem;
   font-weight: 800;
   border-radius: 999px;
+}
+
+.admin-email-status.confirmed {
+  color: #155bd5;
+  background: #eaf1ff;
+}
+
+.admin-email-status.unconfirmed {
+  color: #656565;
+  background: #efefec;
 }
 
 .admin-status.approved {

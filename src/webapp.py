@@ -13,10 +13,14 @@ import os
 import re
 import secrets
 import shutil
+import smtplib
+import sqlite3
 import subprocess
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import date, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
@@ -43,7 +47,9 @@ BEATPORT_SEARCH_BINARY = os.environ.get(
 QOBUZ_SEARCH_SCRIPT = os.environ.get(
     "MUSICDL_QOBUZ_SEARCH_SCRIPT", "/app/qobuz_search.py"
 )
-ADMIN_ACCESS_PATH = musicdl.STATE_ROOT / "tiddl" / "admin_access.json"
+LOCAL_DB_PATH = Path(
+    os.environ.get("TUNESAVER_DB_PATH", str(musicdl.STATE_ROOT / "tiddl" / "tunesaver.db"))
+)
 
 TIDAL_SEARCH_URL = "https://api.tidal.com/v1/search"
 BEATPORT_SEARCH_URL = "https://api.beatport.com/v4/catalog/search/"
@@ -55,6 +61,10 @@ STATUS_CACHE_SECONDS = 3
 AUTH_CACHE_SECONDS = 60
 DOWNLOAD_TICKET_SECONDS = 120
 MAX_BATCH_LINKS = 50
+PASSWORD_ITERATIONS = 260_000
+ACCESS_TOKEN_SECONDS = 12 * 60 * 60
+REFRESH_TOKEN_SECONDS = 30 * 24 * 60 * 60
+EMAIL_CODE_SECONDS = 20 * 60
 ALLOWED_HOSTS = {
     host.strip().lower()
     for host in os.environ.get(
@@ -62,15 +72,16 @@ ALLOWED_HOSTS = {
     ).split(",")
     if host.strip()
 }
-SUPABASE_URL = os.environ.get("TUNESAVER_SUPABASE_URL", "").rstrip("/")
-SUPABASE_PUBLISHABLE_KEY = os.environ.get(
-    "TUNESAVER_SUPABASE_PUBLISHABLE_KEY", ""
-)
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("TUNESAVER_SUPABASE_SERVICE_ROLE_KEY", "")
 PUBLIC_URL = os.environ.get("TUNESAVER_PUBLIC_URL", "").rstrip("/")
 ADMIN_EMAIL = os.environ.get("TUNESAVER_ADMIN_EMAIL", "admin")
 ADMIN_PASSWORD = os.environ.get("TUNESAVER_ADMIN_PASSWORD", "")
 ADMIN_SESSION_SECONDS = 12 * 60 * 60
+SMTP_HOST = os.environ.get("TUNESAVER_SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("TUNESAVER_SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("TUNESAVER_SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("TUNESAVER_SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("TUNESAVER_SMTP_FROM", "tunesaver@galagain.com")
+SMTP_STARTTLS = os.environ.get("TUNESAVER_SMTP_STARTTLS", "1") != "0"
 
 PLATFORM_NAMES = {"tiddl": "TIDAL", "beatport": "Beatport", "qobuz": "Qobuz"}
 KIND_NAMES = {
@@ -104,10 +115,6 @@ class SourceError(PublicError):
 
 def _security_headers(response: web.StreamResponse, request: web.Request) -> None:
     connect_sources = ["'self'"]
-    if SUPABASE_URL:
-        parsed_supabase = urlparse(SUPABASE_URL)
-        if parsed_supabase.scheme == "https" and parsed_supabase.netloc:
-            connect_sources.append(f"{parsed_supabase.scheme}://{parsed_supabase.netloc}")
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; base-uri 'none'; connect-src {' '.join(connect_sources)}; "
         "font-src 'self'; form-action 'self'; frame-ancestors 'none'; "
@@ -173,128 +180,556 @@ def _check_same_origin(request: web.Request) -> None:
         raise PublicError("Origine refusée.", status=403)
 
 
-def verify_supabase_token(token: str) -> dict[str, str] | None:
-    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
-        raise RuntimeError("Supabase n'est pas configuré")
+def utc_timestamp() -> str:
+    return musicdl.utc_now()
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@contextmanager
+def local_db() -> Any:
+    LOCAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(LOCAL_DB_PATH, timeout=10)
     try:
-        response = requests.get(
-            f"{SUPABASE_URL}/auth/v1/user",
-            headers={
-                "apikey": SUPABASE_PUBLISHABLE_KEY,
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-            },
-            timeout=10,
-            allow_redirects=False,
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def init_local_store() -> None:
+    with local_db() as db:
+        db.executescript(
+            """
+            create table if not exists users (
+              id text primary key,
+              email text not null unique,
+              password_salt text not null,
+              password_hash text not null,
+              email_verified integer not null default 0,
+              approved integer not null default 0,
+              blocked integer not null default 0,
+              created_at text not null,
+              last_sign_in_at text
+            );
+
+            create table if not exists sessions (
+              token_hash text primary key,
+              user_id text not null references users(id) on delete cascade,
+              kind text not null check (kind in ('access', 'refresh')),
+              expires_at real not null,
+              created_at text not null
+            );
+
+            create index if not exists sessions_user_kind_idx
+              on sessions (user_id, kind);
+
+            create table if not exists email_codes (
+              code_hash text primary key,
+              user_id text not null references users(id) on delete cascade,
+              purpose text not null check (purpose in ('verify_email', 'password_reset')),
+              expires_at real not null,
+              used_at text,
+              created_at text not null
+            );
+
+            create index if not exists email_codes_user_purpose_idx
+              on email_codes (user_id, purpose, expires_at desc);
+
+            create table if not exists download_history (
+              job_id text primary key,
+              user_id text not null references users(id) on delete cascade,
+              provider text not null,
+              source_url text not null default '',
+              title text not null default '',
+              artist text not null default '',
+              resource_kind text not null default 'track',
+              state text not null,
+              track_count integer not null default 0,
+              estimated_savings_cents integer not null default 0,
+              created_at text not null,
+              completed_at text,
+              delivered_at text
+            );
+
+            create index if not exists download_history_user_created_idx
+              on download_history (user_id, created_at desc);
+
+            create index if not exists download_history_state_created_idx
+              on download_history (state, created_at desc);
+            """
         )
-    except requests.RequestException as exc:
-        raise RuntimeError("Supabase est momentanément indisponible") from exc
-    if response.status_code in {401, 403}:
-        return None
-    if response.status_code != 200:
-        raise RuntimeError("Supabase a refusé la vérification")
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(users)").fetchall()
+        }
+        if "email_verified" not in columns:
+            db.execute(
+                "alter table users add column email_verified integer not null default 0"
+            )
+
+
+def hash_password(password: str, *, salt: str | None = None) -> tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode(),
+        bytes.fromhex(salt),
+        PASSWORD_ITERATIONS,
+    )
+    return salt, digest.hex()
+
+
+def verify_password(password: str, salt: str, expected_hash: str) -> bool:
     try:
-        payload = response.json()
-        user_id = str(uuid.UUID(str(payload["id"])))
-    except (KeyError, TypeError, ValueError, requests.JSONDecodeError) as exc:
-        raise RuntimeError("Réponse d'authentification Supabase invalide") from exc
-    email = payload.get("email")
+        _salt, digest = hash_password(password, salt=salt)
+    except ValueError:
+        return False
+    return secrets.compare_digest(digest, expected_hash)
+
+
+def require_mail_config() -> None:
+    if not SMTP_HOST or not SMTP_FROM:
+        raise SourceError("Envoi d'e-mail non configuré.")
+
+
+def send_email(to_email: str, subject: str, body: str) -> None:
+    require_mail_config()
+    message = EmailMessage()
+    message["From"] = SMTP_FROM
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(body)
     try:
-        profile_response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            params={"select": "approved", "user_id": f"eq.{user_id}"},
-            headers={
-                "apikey": SUPABASE_PUBLISHABLE_KEY,
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json",
-            },
-            timeout=10,
-            allow_redirects=False,
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
+            if SMTP_STARTTLS:
+                smtp.starttls()
+            if SMTP_USERNAME or SMTP_PASSWORD:
+                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+            smtp.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise SourceError("Impossible d'envoyer l'e-mail pour le moment.") from exc
+
+
+def code_hash(email: str, purpose: str, code: str) -> str:
+    return hashlib.sha256(f"{email.lower()}:{purpose}:{code}".encode()).hexdigest()
+
+
+def create_email_code(user_id: str, email: str, purpose: str) -> str:
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    now = time.time()
+    with local_db() as db:
+        db.execute(
+            """
+            update email_codes
+            set used_at = ?
+            where user_id = ? and purpose = ? and used_at is null
+            """,
+            (utc_timestamp(), user_id, purpose),
         )
-    except requests.RequestException as exc:
-        raise RuntimeError("Impossible de vérifier l'autorisation utilisateur") from exc
-    if profile_response.status_code != 200:
-        raise RuntimeError("La table d'autorisation Supabase n'est pas prête")
-    try:
-        profiles = profile_response.json()
-    except requests.JSONDecodeError as exc:
-        raise RuntimeError("Réponse d'autorisation Supabase invalide") from exc
-    if not (
-        isinstance(profiles, list)
-        and len(profiles) == 1
-        and isinstance(profiles[0], dict)
-    ):
-        approved = False
-    else:
-        approved = admin_user_is_allowed(user_id)
-    blocked = admin_user_is_blocked(user_id)
-    return {
-        "id": user_id,
-        "email": email if isinstance(email, str) else "",
-        "approved": approved and not blocked,
-        "blocked": blocked,
-    }
+        db.execute(
+            """
+            insert into email_codes (code_hash, user_id, purpose, expires_at, created_at)
+            values (?, ?, ?, ?, ?)
+            """,
+            (
+                code_hash(email, purpose, code),
+                user_id,
+                purpose,
+                now + EMAIL_CODE_SECONDS,
+                utc_timestamp(),
+            ),
+        )
+    return code
 
 
-def load_admin_access() -> dict[str, set[str]]:
-    try:
-        payload = json.loads(ADMIN_ACCESS_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {"allowed": set(), "blocked": set()}
-    except (OSError, json.JSONDecodeError):
-        LOGGER.exception("liste d'accès admin illisible")
-        return {"allowed": set(), "blocked": set()}
-    if not isinstance(payload, dict):
-        return {"allowed": set(), "blocked": set()}
-
-    access = {"allowed": set(), "blocked": set()}
-    for key in access:
-        values = payload.get(key, [])
-        if not isinstance(values, list):
-            continue
-        for value in values:
-            try:
-                access[key].add(str(uuid.UUID(str(value))))
-            except ValueError:
-                continue
-    return access
-
-
-def save_admin_access(access: dict[str, set[str]]) -> None:
-    musicdl.atomic_write_json(
-        ADMIN_ACCESS_PATH,
-        {
-            "allowed": sorted(access.get("allowed", set())),
-            "blocked": sorted(access.get("blocked", set())),
-        },
+def send_verification_code(user_id: str, email: str) -> None:
+    code = create_email_code(user_id, email, "verify_email")
+    send_email(
+        email,
+        "Code de verification TuneSaver",
+        (
+            "Voici ton code TuneSaver :\n\n"
+            f"{code}\n\n"
+            "Il expire dans 20 minutes. Si tu n'as pas demandé ce code, ignore ce message."
+        ),
     )
 
 
-def admin_user_is_allowed(user_id: str) -> bool:
-    access = load_admin_access()
-    return user_id in access["allowed"] and user_id not in access["blocked"]
+def send_password_reset_code(user_id: str, email: str) -> None:
+    code = create_email_code(user_id, email, "password_reset")
+    send_email(
+        email,
+        "Code de reinitialisation TuneSaver",
+        (
+            "Voici ton code pour changer ton mot de passe TuneSaver :\n\n"
+            f"{code}\n\n"
+            "Il expire dans 20 minutes. Si tu n'as rien demandé, ignore ce message."
+        ),
+    )
 
 
-def admin_user_is_blocked(user_id: str) -> bool:
-    return user_id in load_admin_access()["blocked"]
+def consume_email_code(email: str, purpose: str, code: str) -> dict[str, Any] | None:
+    now = time.time()
+    with local_db() as db:
+        row = db.execute(
+            """
+            select users.*
+            from email_codes
+            join users on users.id = email_codes.user_id
+            where users.email = ?
+              and email_codes.purpose = ?
+              and email_codes.code_hash = ?
+              and email_codes.used_at is null
+              and email_codes.expires_at > ?
+            """,
+            (email, purpose, code_hash(email, purpose, code), now),
+        ).fetchone()
+        if row is None:
+            return None
+        db.execute(
+            "update email_codes set used_at = ? where code_hash = ?",
+            (utc_timestamp(), code_hash(email, purpose, code)),
+        )
+    return dict(row)
 
 
-def set_admin_user_access(user_id: str, approved: bool) -> None:
-    access = load_admin_access()
-    if approved:
-        access["allowed"].add(user_id)
-        access["blocked"].discard(user_id)
-    else:
-        access["allowed"].discard(user_id)
-        access["blocked"].add(user_id)
-    save_admin_access(access)
+def local_user_by_email(email: str) -> dict[str, Any] | None:
+    with local_db() as db:
+        row = db.execute("select * from users where email = ?", (email,)).fetchone()
+    return dict(row) if row else None
 
 
-def remove_admin_user_access(user_id: str) -> None:
-    access = load_admin_access()
-    access["allowed"].discard(user_id)
-    access["blocked"].discard(user_id)
-    save_admin_access(access)
+def local_mark_email_verified(user_id: str) -> None:
+    with local_db() as db:
+        db.execute("update users set email_verified = 1 where id = ?", (user_id,))
+
+
+def public_user(row: sqlite3.Row | dict[str, Any]) -> dict[str, str]:
+    return {
+        "id": str(row["id"]),
+        "email": str(row["email"]),
+    }
+
+
+def session_payload(user: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    access_token = secrets.token_urlsafe(32)
+    refresh_token = secrets.token_urlsafe(32)
+    now = time.time()
+    with local_db() as db:
+        db.execute(
+            "delete from sessions where user_id = ? and expires_at <= ?",
+            (str(user["id"]), now),
+        )
+        db.executemany(
+            """
+            insert into sessions (token_hash, user_id, kind, expires_at, created_at)
+            values (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    token_hash(access_token),
+                    str(user["id"]),
+                    "access",
+                    now + ACCESS_TOKEN_SECONDS,
+                    utc_timestamp(),
+                ),
+                (
+                    token_hash(refresh_token),
+                    str(user["id"]),
+                    "refresh",
+                    now + REFRESH_TOKEN_SECONDS,
+                    utc_timestamp(),
+                ),
+            ],
+        )
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_in": ACCESS_TOKEN_SECONDS,
+        "user": public_user(user),
+    }
+
+
+def local_create_user(email: str, password: str) -> dict[str, Any]:
+    user_id = str(uuid.uuid4())
+    salt, digest = hash_password(password)
+    try:
+        with local_db() as db:
+            db.execute(
+                """
+                insert into users (
+                  id, email, password_salt, password_hash, approved, blocked, created_at
+                ) values (?, ?, ?, ?, 0, 0, ?)
+                """,
+                (user_id, email, salt, digest, utc_timestamp()),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise PublicError("Ce compte existe déjà. Connecte-toi avec ton mot de passe.", status=409) from exc
+    return {"id": user_id, "email": email}
+
+
+def local_login_user(email: str, password: str) -> dict[str, Any] | None:
+    with local_db() as db:
+        row = db.execute(
+            "select * from users where email = ?",
+            (email,),
+        ).fetchone()
+        if row is None or not verify_password(password, row["password_salt"], row["password_hash"]):
+            return None
+        db.execute(
+            "update users set last_sign_in_at = ? where id = ?",
+            (utc_timestamp(), row["id"]),
+        )
+    return dict(row)
+
+
+def validate_email_password(payload: dict[str, Any]) -> tuple[str, str]:
+    email = payload.get("email")
+    password = payload.get("password")
+    if not isinstance(email, str) or not isinstance(password, str):
+        raise PublicError("E-mail ou mot de passe invalide.")
+    email = email.strip().lower()
+    if len(email) > 320 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise PublicError("E-mail invalide.")
+    if len(password) < 6 or len(password) > 256:
+        raise PublicError("Le mot de passe doit faire au moins 6 caractères.")
+    return email, password
+
+
+def local_user_for_access_token(token: str) -> dict[str, Any] | None:
+    now = time.time()
+    with local_db() as db:
+        row = db.execute(
+            """
+            select users.*
+            from sessions
+            join users on users.id = sessions.user_id
+            where sessions.token_hash = ?
+              and sessions.kind = 'access'
+              and sessions.expires_at > ?
+            """,
+            (token_hash(token), now),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def local_refresh_session(refresh_token: str) -> dict[str, Any] | None:
+    now = time.time()
+    with local_db() as db:
+        row = db.execute(
+            """
+            select users.*
+            from sessions
+            join users on users.id = sessions.user_id
+            where sessions.token_hash = ?
+              and sessions.kind = 'refresh'
+              and sessions.expires_at > ?
+            """,
+            (token_hash(refresh_token), now),
+        ).fetchone()
+        if row is None:
+            return None
+        db.execute("delete from sessions where token_hash = ?", (token_hash(refresh_token),))
+    return session_payload(dict(row))
+
+
+def local_delete_session(token: str) -> None:
+    with local_db() as db:
+        db.execute("delete from sessions where token_hash = ?", (token_hash(token),))
+
+
+def local_admin_profiles() -> list[dict[str, Any]]:
+    with local_db() as db:
+        rows = db.execute(
+            """
+            select id, email, email_verified, approved, blocked, created_at, last_sign_in_at
+            from users
+            order by created_at desc
+            """
+        ).fetchall()
+    return [
+        {
+            "user_id": row["id"],
+            "email": row["email"],
+            "email_verified": bool(row["email_verified"]),
+            "last_sign_in_at": row["last_sign_in_at"] or "",
+            "approved": bool(row["approved"]),
+            "blocked": bool(row["blocked"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
+def local_set_user_access(user_id: str, approved: bool) -> dict[str, Any] | None:
+    with local_db() as db:
+        db.execute(
+            "update users set approved = ?, blocked = ? where id = ?",
+            (1 if approved else 0, 0 if approved else 1, user_id),
+        )
+        row = db.execute(
+            """
+            select id, email, email_verified, approved, blocked, created_at, last_sign_in_at
+            from users where id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    return local_admin_profiles_from_rows([row])[0] if row else None
+
+
+def local_admin_profiles_from_rows(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    return [
+        {
+            "user_id": row["id"],
+            "email": row["email"],
+            "email_verified": bool(row["email_verified"]),
+            "last_sign_in_at": row["last_sign_in_at"] or "",
+            "approved": bool(row["approved"]),
+            "blocked": bool(row["blocked"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+        if row is not None
+    ]
+
+
+def local_update_user_password(user_id: str, password: str) -> bool:
+    salt, digest = hash_password(password)
+    with local_db() as db:
+        cursor = db.execute(
+            "update users set password_salt = ?, password_hash = ? where id = ?",
+            (salt, digest, user_id),
+        )
+    return cursor.rowcount > 0
+
+
+def local_delete_user(user_id: str) -> bool:
+    with local_db() as db:
+        cursor = db.execute("delete from users where id = ?", (user_id,))
+    return cursor.rowcount > 0
+
+
+def normalize_history_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": str(row["job_id"])[:120],
+        "user_id": str(row["user_id"])[:40],
+        "provider": str(row["provider"])[:16],
+        "source_url": str(row["source_url"] or "")[:DIRECT_LINK_LIMIT],
+        "title": str(row["title"] or "")[:200],
+        "artist": str(row["artist"] or "")[:200],
+        "resource_kind": str(row["resource_kind"] or "")[:32],
+        "state": str(row["state"])[:24],
+        "track_count": int(row["track_count"] or 0),
+        "estimated_savings_cents": int(row["estimated_savings_cents"] or 0),
+        "created_at": str(row["created_at"] or "")[:40],
+        "completed_at": str(row["completed_at"] or "")[:40],
+        "delivered_at": str(row["delivered_at"] or "")[:40],
+    }
+
+
+def local_upsert_history(user_id: str, rows: list[dict[str, Any]]) -> None:
+    with local_db() as db:
+        for row in rows:
+            job_id = str(row.get("job_id", ""))[:120]
+            if not job_id:
+                continue
+            db.execute(
+                """
+                insert into download_history (
+                  job_id, user_id, provider, source_url, title, artist, resource_kind,
+                  state, track_count, estimated_savings_cents, created_at, completed_at,
+                  delivered_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(job_id) do update set
+                  provider = excluded.provider,
+                  source_url = excluded.source_url,
+                  title = excluded.title,
+                  artist = excluded.artist,
+                  resource_kind = excluded.resource_kind,
+                  state = excluded.state,
+                  track_count = excluded.track_count,
+                  estimated_savings_cents = excluded.estimated_savings_cents,
+                  created_at = excluded.created_at,
+                  completed_at = excluded.completed_at,
+                  delivered_at = excluded.delivered_at
+                where download_history.user_id = excluded.user_id
+                """,
+                (
+                    job_id,
+                    user_id,
+                    str(row.get("provider", ""))[:16],
+                    str(row.get("source_url", ""))[:DIRECT_LINK_LIMIT],
+                    str(row.get("title", ""))[:200],
+                    str(row.get("artist", ""))[:200],
+                    str(row.get("resource_kind", "track"))[:32],
+                    str(row.get("state", ""))[:24],
+                    int(row.get("track_count") or 0),
+                    int(row.get("estimated_savings_cents") or 0),
+                    str(row.get("created_at") or utc_timestamp())[:40],
+                    row.get("completed_at") or None,
+                    row.get("delivered_at") or None,
+                ),
+            )
+
+
+def local_user_history(user_id: str, *, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
+    with local_db() as db:
+        rows = db.execute(
+            """
+            select * from download_history
+            where user_id = ?
+            order by created_at desc
+            limit ? offset ?
+            """,
+            (user_id, limit, offset),
+        ).fetchall()
+    return [normalize_history_row(row) for row in rows]
+
+
+def local_admin_history(user_id: str = "") -> list[dict[str, Any]]:
+    with local_db() as db:
+        if user_id:
+            rows = db.execute(
+                """
+                select * from download_history
+                where user_id = ?
+                order by created_at desc
+                limit 500
+                """,
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                """
+                select * from download_history
+                order by created_at desc
+                limit 500
+                """
+            ).fetchall()
+    return [normalize_history_row(row) for row in rows]
+
+
+def local_daily_history_rows() -> list[dict[str, Any]]:
+    with local_db() as db:
+        rows = db.execute(
+            """
+            select created_at, state, track_count, estimated_savings_cents
+            from download_history
+            where state = 'done'
+            order by created_at desc
+            limit 5000
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 async def authenticate_request(request: web.Request) -> dict[str, str]:
@@ -309,12 +744,11 @@ async def authenticate_request(request: web.Request) -> dict[str, str]:
     cached = cache.get(cache_key)
     if cached and cached[0] > time.monotonic():
         return cached[1]
-    try:
-        user = await asyncio.to_thread(verify_supabase_token, token)
-    except RuntimeError as exc:
-        raise SourceError(str(exc)) from exc
+    user = await asyncio.to_thread(local_user_for_access_token, token)
     if user is None:
         raise PublicError("Session expirée. Reconnectez-vous.", status=401)
+    if not user.get("email_verified"):
+        raise PublicError("E-mail non vérifié. Entre le code reçu par e-mail.", status=403)
     if not user.get("approved"):
         if user.get("blocked"):
             raise PublicError("Compte refusé. Contacte l'administrateur si tu penses que c'est une erreur.", status=403)
@@ -351,6 +785,12 @@ async def api_middleware(
             "/api/health",
             "/api/config",
             "/api/signup",
+            "/api/login",
+            "/api/email/verify",
+            "/api/email/resend",
+            "/api/password-reset/request",
+            "/api/password-reset/confirm",
+            "/api/session/refresh",
             "/api/admin/login",
         }
         if request.path.startswith("/api/admin/") and request.path not in public_paths:
@@ -1257,176 +1697,6 @@ async def status_handler(request: web.Request) -> web.Response:
     return web.json_response(snapshot)
 
 
-def require_supabase_admin() -> None:
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise SourceError("Administration Supabase non configurée.")
-
-
-def supabase_admin_headers(*, prefer: str = "") -> dict[str, str]:
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-    if prefer:
-        headers["Prefer"] = prefer
-    return headers
-
-
-def supabase_admin_request(
-    method: str,
-    path: str,
-    *,
-    params: dict[str, str] | None = None,
-    payload: dict[str, Any] | None = None,
-    prefer: str = "",
-) -> Any:
-    require_supabase_admin()
-    try:
-        response = requests.request(
-            method,
-            f"{SUPABASE_URL}/rest/v1/{path}",
-            params=params,
-            headers=supabase_admin_headers(prefer=prefer),
-            json=payload,
-            timeout=10,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise SourceError("Supabase admin est momentanément indisponible.") from exc
-    if response.status_code not in range(200, 300):
-        raise SourceError("Supabase admin a refusé la requête.")
-    if response.status_code == 204 or not response.content:
-        return None
-    try:
-        return response.json()
-    except requests.JSONDecodeError as exc:
-        raise SourceError("Réponse Supabase admin invalide.") from exc
-
-
-def supabase_auth_admin_users() -> dict[str, dict[str, str]]:
-    require_supabase_admin()
-    users: dict[str, dict[str, str]] = {}
-    page = 1
-    while True:
-        try:
-            response = requests.get(
-                f"{SUPABASE_URL}/auth/v1/admin/users",
-                params={"page": str(page), "per_page": "1000"},
-                headers={
-                    "apikey": SUPABASE_SERVICE_ROLE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                    "Accept": "application/json",
-                },
-                timeout=10,
-                allow_redirects=False,
-            )
-        except requests.RequestException as exc:
-            raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
-        if response.status_code not in range(200, 300):
-            raise SourceError("Supabase auth admin a refusé la requête.")
-        try:
-            payload = response.json()
-        except requests.JSONDecodeError as exc:
-            raise SourceError("Réponse Supabase auth admin invalide.") from exc
-        rows = payload.get("users") if isinstance(payload, dict) else None
-        if not isinstance(rows, list):
-            raise SourceError("Réponse Supabase auth admin invalide.")
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            try:
-                user_id = str(uuid.UUID(str(row.get("id", ""))))
-            except ValueError:
-                continue
-            email_confirmed_at = row.get("email_confirmed_at") or row.get("confirmed_at") or ""
-            users[user_id] = {
-                "email_confirmed_at": str(email_confirmed_at)[:40],
-                "last_sign_in_at": str(row.get("last_sign_in_at") or "")[:40],
-            }
-        if len(rows) < 1000:
-            return users
-        page += 1
-
-
-def supabase_auth_delete_user(user_id: str) -> None:
-    require_supabase_admin()
-    try:
-        response = requests.delete(
-            f"{SUPABASE_URL}/auth/v1/admin/users/{quote(user_id, safe='')}",
-            headers={
-                "apikey": SUPABASE_SERVICE_ROLE_KEY,
-                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                "Accept": "application/json",
-            },
-            timeout=10,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
-    if response.status_code == 404:
-        raise PublicError("Utilisateur introuvable.", status=404)
-    if response.status_code not in range(200, 300):
-        raise SourceError("Supabase auth admin a refusé la suppression.")
-
-
-def supabase_auth_update_user_password(user_id: str, password: str) -> None:
-    require_supabase_admin()
-    try:
-        response = requests.put(
-            f"{SUPABASE_URL}/auth/v1/admin/users/{quote(user_id, safe='')}",
-            headers=supabase_admin_headers(),
-            json={"password": password},
-            timeout=10,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
-    if response.status_code == 404:
-        raise PublicError("Utilisateur introuvable.", status=404)
-    if response.status_code not in range(200, 300):
-        raise SourceError("Supabase auth admin a refusé le changement de mot de passe.")
-
-
-def supabase_auth_create_user(email: str, password: str) -> dict[str, Any]:
-    require_supabase_admin()
-    try:
-        response = requests.post(
-            f"{SUPABASE_URL}/auth/v1/admin/users",
-            headers=supabase_admin_headers(),
-            json={
-                "email": email,
-                "password": password,
-                "email_confirm": True,
-            },
-            timeout=10,
-            allow_redirects=False,
-        )
-    except requests.RequestException as exc:
-        raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
-    if response.status_code in {400, 422} and "already" in response.text.lower():
-        raise PublicError("Ce compte existe déjà. Connecte-toi avec ton mot de passe.", status=409)
-    if response.status_code not in range(200, 300):
-        raise SourceError("Supabase auth admin a refusé la création du compte.")
-    try:
-        payload = response.json()
-    except requests.JSONDecodeError as exc:
-        raise SourceError("Réponse Supabase auth admin invalide.") from exc
-    if not isinstance(payload, dict):
-        raise SourceError("Réponse Supabase auth admin invalide.")
-    return payload
-
-
-def ensure_pending_profile(user_id: str, email: str) -> None:
-    supabase_admin_request(
-        "POST",
-        "profiles",
-        payload={"user_id": user_id, "email": email, "approved": False},
-        prefer="resolution=merge-duplicates",
-    )
-
-
 async def admin_login_handler(request: web.Request) -> web.Response:
     if not ADMIN_PASSWORD:
         raise PublicError("Admin non configuré.", status=503)
@@ -1446,86 +1716,144 @@ async def admin_login_handler(request: web.Request) -> web.Response:
 
 async def signup_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
-    email = payload.get("email")
-    password = payload.get("password")
-    if not isinstance(email, str) or not isinstance(password, str):
-        raise PublicError("E-mail ou mot de passe invalide.")
-    email = email.strip().lower()
-    if len(email) > 320 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-        raise PublicError("E-mail invalide.")
-    if len(password) < 6 or len(password) > 256:
-        raise PublicError("Le mot de passe doit faire au moins 6 caractères.")
-    user = await asyncio.to_thread(supabase_auth_create_user, email, password)
-    try:
-        user_id = str(uuid.UUID(str(user["id"])))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise SourceError("Réponse Supabase auth admin invalide.") from exc
-    await asyncio.to_thread(ensure_pending_profile, user_id, email)
+    email, password = validate_email_password(payload)
+    user = await asyncio.to_thread(local_create_user, email, password)
+    await asyncio.to_thread(send_verification_code, user["id"], email)
     return web.json_response(
         {
-            "message": "Compte créé. Il est en attente d'approbation.",
+            "message": "Compte créé. Un code de vérification a été envoyé par e-mail.",
             "pending": True,
+            "needs_email_verification": True,
         },
         status=201,
     )
 
 
-def normalize_admin_profiles(
-    rows: Any,
-    auth_users: dict[str, dict[str, str]] | None = None,
-) -> list[dict[str, Any]]:
-    if not isinstance(rows, list):
-        raise SourceError("Réponse profils invalide.")
-    auth_users = auth_users or {}
-    profiles = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        user_id = str(row.get("user_id", ""))
-        try:
-            user_id = str(uuid.UUID(user_id))
-        except ValueError:
-            continue
-        blocked = admin_user_is_blocked(user_id)
-        auth_user = auth_users.get(user_id, {})
-        profiles.append(
-            {
-                "user_id": user_id,
-                "email": str(row.get("email", ""))[:320],
-                "last_sign_in_at": auth_user.get("last_sign_in_at", ""),
-                "approved": admin_user_is_allowed(user_id),
-                "blocked": blocked,
-                "created_at": str(row.get("created_at", ""))[:40],
-            }
-        )
-    return profiles
+async def login_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    email = payload.get("email")
+    password = payload.get("password")
+    if not isinstance(email, str) or not isinstance(password, str):
+        raise PublicError("Identifiants invalides.", status=401)
+    user = await asyncio.to_thread(local_login_user, email.strip().lower(), password)
+    if user is None:
+        raise PublicError("Identifiants invalides.", status=401)
+    if not user.get("email_verified"):
+        raise PublicError("E-mail non vérifié. Entre le code reçu par e-mail.", status=403)
+    if user.get("blocked"):
+        raise PublicError("Compte refusé. Contacte l'administrateur si tu penses que c'est une erreur.", status=403)
+    if not user.get("approved"):
+        raise PublicError("Compte en attente d'approbation. Contacte l'administrateur pour activer ton accès.", status=403)
+    return web.json_response(await asyncio.to_thread(session_payload, user))
 
 
-def normalize_admin_history(rows: Any) -> list[dict[str, Any]]:
+async def email_verify_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    email = payload.get("email")
+    code = payload.get("code")
+    if not isinstance(email, str) or not isinstance(code, str):
+        raise PublicError("Code invalide.")
+    email = email.strip().lower()
+    code = code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise PublicError("Code invalide.")
+    user = await asyncio.to_thread(consume_email_code, email, "verify_email", code)
+    if user is None:
+        raise PublicError("Code invalide ou expiré.", status=400)
+    await asyncio.to_thread(local_mark_email_verified, user["id"])
+    return web.json_response({
+        "message": "E-mail vérifié. Ton compte est en attente d'approbation.",
+        "verified": True,
+    })
+
+
+async def email_resend_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    email = payload.get("email")
+    if not isinstance(email, str):
+        raise PublicError("E-mail invalide.")
+    email = email.strip().lower()
+    user = await asyncio.to_thread(local_user_by_email, email)
+    if user and not user.get("email_verified"):
+        await asyncio.to_thread(send_verification_code, user["id"], email)
+    return web.json_response({
+        "message": "Si ce compte existe, un code vient d'être envoyé.",
+    })
+
+
+async def password_reset_request_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    email = payload.get("email")
+    if not isinstance(email, str):
+        raise PublicError("E-mail invalide.")
+    email = email.strip().lower()
+    user = await asyncio.to_thread(local_user_by_email, email)
+    if user:
+        await asyncio.to_thread(send_password_reset_code, user["id"], email)
+    return web.json_response({
+        "message": "Si ce compte existe, un code de réinitialisation vient d'être envoyé.",
+    })
+
+
+async def password_reset_confirm_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    email, password = validate_email_password(payload)
+    code = payload.get("code")
+    if not isinstance(code, str) or not re.fullmatch(r"\d{6}", code.strip()):
+        raise PublicError("Code invalide.")
+    user = await asyncio.to_thread(
+        consume_email_code,
+        email,
+        "password_reset",
+        code.strip(),
+    )
+    if user is None:
+        raise PublicError("Code invalide ou expiré.", status=400)
+    await asyncio.to_thread(local_update_user_password, user["id"], password)
+    await asyncio.to_thread(local_mark_email_verified, user["id"])
+    return web.json_response({"message": "Mot de passe mis à jour."})
+
+
+async def refresh_session_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    refresh_token = payload.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise PublicError("Session expirée. Reconnecte-toi.", status=401)
+    session = await asyncio.to_thread(local_refresh_session, refresh_token)
+    if session is None:
+        raise PublicError("Session expirée. Reconnecte-toi.", status=401)
+    return web.json_response(session)
+
+
+async def logout_handler(request: web.Request) -> web.Response:
+    authorization = request.headers.get("Authorization", "")
+    if authorization.startswith("Bearer "):
+        await asyncio.to_thread(local_delete_session, authorization[7:].strip())
+    return web.json_response({"ok": True})
+
+
+async def history_sync_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    rows = payload.get("history")
     if not isinstance(rows, list):
-        raise SourceError("Réponse historique invalide.")
-    history = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        history.append(
-            {
-                "job_id": str(row.get("job_id", ""))[:120],
-                "user_id": str(row.get("user_id", ""))[:40],
-                "provider": str(row.get("provider", ""))[:16],
-                "source_url": str(row.get("source_url", ""))[:DIRECT_LINK_LIMIT],
-                "title": str(row.get("title", ""))[:200],
-                "artist": str(row.get("artist", ""))[:200],
-                "resource_kind": str(row.get("resource_kind", ""))[:32],
-                "state": str(row.get("state", ""))[:24],
-                "track_count": int(row.get("track_count") or 0),
-                "estimated_savings_cents": int(row.get("estimated_savings_cents") or 0),
-                "created_at": str(row.get("created_at", ""))[:40],
-                "completed_at": str(row.get("completed_at", ""))[:40],
-                "delivered_at": str(row.get("delivered_at", ""))[:40],
-            }
-        )
-    return history
+        raise PublicError("Historique invalide.")
+    await asyncio.to_thread(local_upsert_history, request["user"]["id"], rows[:1000])
+    return web.json_response({"ok": True})
+
+
+async def history_handler(request: web.Request) -> web.Response:
+    try:
+        limit = min(500, max(1, int(request.query.get("limit", "500"))))
+        offset = max(0, int(request.query.get("offset", "0")))
+    except ValueError as exc:
+        raise PublicError("Pagination invalide.") from exc
+    rows = await asyncio.to_thread(
+        local_user_history,
+        request["user"]["id"],
+        limit=limit,
+        offset=offset,
+    )
+    return web.json_response({"history": rows})
 
 
 def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, Any]]:
@@ -1568,19 +1896,8 @@ def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, 
 
 
 async def admin_profiles_handler(_request: web.Request) -> web.Response:
-    rows, auth_users = await asyncio.gather(
-        asyncio.to_thread(
-            supabase_admin_request,
-            "GET",
-            "profiles",
-            params={
-                "select": "user_id,email,approved,created_at",
-                "order": "created_at.desc",
-            },
-        ),
-        asyncio.to_thread(supabase_auth_admin_users),
-    )
-    return web.json_response({"profiles": normalize_admin_profiles(rows, auth_users)})
+    profiles = await asyncio.to_thread(local_admin_profiles)
+    return web.json_response({"profiles": profiles})
 
 
 async def admin_profile_handler(request: web.Request) -> web.Response:
@@ -1593,24 +1910,11 @@ async def admin_profile_handler(request: web.Request) -> web.Response:
     approved = payload.get("approved")
     if not isinstance(approved, bool):
         raise PublicError("Statut invalide.")
-    set_admin_user_access(user_id, approved)
-    rows = await asyncio.to_thread(
-        supabase_admin_request,
-        "PATCH",
-        "profiles",
-        params={
-            "user_id": f"eq.{user_id}",
-            "select": "user_id,email,approved,created_at",
-        },
-        payload={"approved": approved},
-        prefer="return=representation",
-    )
-    auth_users = await asyncio.to_thread(supabase_auth_admin_users)
-    profiles = normalize_admin_profiles(rows, auth_users)
-    if not profiles:
+    profile = await asyncio.to_thread(local_set_user_access, user_id, approved)
+    if not profile:
         raise PublicError("Utilisateur introuvable.", status=404)
     request.app[AUTH_CACHE_KEY].clear()
-    return web.json_response({"profile": profiles[0]})
+    return web.json_response({"profile": profile})
 
 
 async def admin_profile_password_handler(request: web.Request) -> web.Response:
@@ -1623,7 +1927,9 @@ async def admin_profile_password_handler(request: web.Request) -> web.Response:
     password = payload.get("password")
     if not isinstance(password, str) or len(password) < 6 or len(password) > 256:
         raise PublicError("Le mot de passe doit faire au moins 6 caractères.")
-    await asyncio.to_thread(supabase_auth_update_user_password, user_id, password)
+    updated = await asyncio.to_thread(local_update_user_password, user_id, password)
+    if not updated:
+        raise PublicError("Utilisateur introuvable.", status=404)
     request.app[AUTH_CACHE_KEY].clear()
     return web.json_response({"updated": True})
 
@@ -1634,8 +1940,9 @@ async def admin_profile_delete_handler(request: web.Request) -> web.Response:
         user_id = str(uuid.UUID(user_id))
     except ValueError as exc:
         raise PublicError("Utilisateur invalide.", status=404) from exc
-    await asyncio.to_thread(supabase_auth_delete_user, user_id)
-    await asyncio.to_thread(remove_admin_user_access, user_id)
+    deleted = await asyncio.to_thread(local_delete_user, user_id)
+    if not deleted:
+        raise PublicError("Utilisateur introuvable.", status=404)
     request.app[AUTH_CACHE_KEY].clear()
     return web.json_response({"deleted": True})
 
@@ -1653,27 +1960,12 @@ async def admin_history_handler(request: web.Request) -> web.Response:
         except ValueError as exc:
             raise PublicError("Utilisateur invalide.", status=404) from exc
         params["user_id"] = f"eq.{user_id}"
-    rows = await asyncio.to_thread(
-        supabase_admin_request,
-        "GET",
-        "download_history",
-        params=params,
-    )
-    return web.json_response({"history": normalize_admin_history(rows)})
+    rows = await asyncio.to_thread(local_admin_history, user_id)
+    return web.json_response({"history": rows})
 
 
 async def admin_stats_handler(_request: web.Request) -> web.Response:
-    rows = await asyncio.to_thread(
-        supabase_admin_request,
-        "GET",
-        "download_history",
-        params={
-            "select": "created_at,state,track_count,estimated_savings_cents",
-            "state": "eq.done",
-            "order": "created_at.desc",
-            "limit": "5000",
-        },
-    )
+    rows = await asyncio.to_thread(local_daily_history_rows)
     return web.json_response({"daily": normalize_admin_daily_stats(rows)})
 
 
@@ -1772,12 +2064,8 @@ async def file_handler(request: web.Request) -> web.StreamResponse:
 
 
 async def config_handler(_request: web.Request) -> web.Response:
-    if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
-        raise SourceError("Supabase n'est pas configuré.")
     return web.json_response(
         {
-            "supabase_url": SUPABASE_URL,
-            "supabase_publishable_key": SUPABASE_PUBLISHABLE_KEY,
             "public_url": PUBLIC_URL,
         }
     )
@@ -1800,6 +2088,7 @@ async def stylesheet_handler(_request: web.Request) -> web.StreamResponse:
 
 
 def create_app() -> web.Application:
+    init_local_store()
     app = web.Application(middlewares=[api_middleware], client_max_size=JSON_BODY_LIMIT)
     app[SEARCH_SEMAPHORES_KEY] = {
         "tiddl": asyncio.Semaphore(1),
@@ -1819,6 +2108,15 @@ def create_app() -> web.Application:
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)
     app.router.add_post("/api/signup", signup_handler)
+    app.router.add_post("/api/login", login_handler)
+    app.router.add_post("/api/email/verify", email_verify_handler)
+    app.router.add_post("/api/email/resend", email_resend_handler)
+    app.router.add_post("/api/password-reset/request", password_reset_request_handler)
+    app.router.add_post("/api/password-reset/confirm", password_reset_confirm_handler)
+    app.router.add_post("/api/session/refresh", refresh_session_handler)
+    app.router.add_post("/api/logout", logout_handler)
+    app.router.add_post("/api/history", history_sync_handler)
+    app.router.add_get("/api/history", history_handler)
     app.router.add_post("/api/admin/login", admin_login_handler)
     app.router.add_get("/api/admin/profiles", admin_profiles_handler)
     app.router.add_patch("/api/admin/profiles/{user_id}", admin_profile_handler)

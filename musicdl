@@ -98,25 +98,9 @@ write_default_env() {
     chmod 600 "$ROOT_DIR/.env"
     return
   fi
-  local uid gid temporary supabase_url supabase_key
+  local uid gid temporary
   uid="$(id -u)"
   gid="$(id -g)"
-  supabase_url="${SUPABASE_URL:-}"
-  supabase_key="${SUPABASE_PUBLISHABLE_KEY:-}"
-  if [[ -z "$supabase_url" ]]; then
-    read -r -p "URL Supabase (https://...supabase.co): " supabase_url
-  fi
-  if [[ -z "$supabase_key" ]]; then
-    read -r -p "Clé publique Supabase (sb_publishable_...): " supabase_key
-  fi
-  if [[ ! "$supabase_url" =~ ^https://[^[:space:]]+$ ]]; then
-    command echo "URL Supabase invalide." >&2
-    exit 2
-  fi
-  if [[ ! "$supabase_key" =~ ^sb_publishable_[A-Za-z0-9_-]+$ ]]; then
-    command echo "Clé publique Supabase invalide." >&2
-    exit 2
-  fi
   temporary="$(mktemp "$ROOT_DIR/.env.tmp.XXXXXX")"
   chmod 600 "$temporary"
   {
@@ -127,8 +111,15 @@ write_default_env() {
     command printf 'TIDDL_DOWNLOADS_PATH=./data/downloads/tiddl\n'
     command printf 'BEATPORT_DOWNLOADS_PATH=./data/downloads/beatport\n'
     command printf 'QOBUZ_DOWNLOADS_PATH=./data/downloads/qobuz\n'
-    command printf 'SUPABASE_URL=%s\n' "$supabase_url"
-    command printf 'SUPABASE_PUBLISHABLE_KEY=%s\n' "$supabase_key"
+    command printf 'PUBLIC_URL=http://127.0.0.1:8080\n'
+    command printf 'ADMIN_EMAIL=admin\n'
+    command printf 'ADMIN_PASSWORD=changez-moi\n'
+    command printf 'SMTP_HOST=\n'
+    command printf 'SMTP_PORT=587\n'
+    command printf 'SMTP_USERNAME=\n'
+    command printf 'SMTP_PASSWORD=\n'
+    command printf 'SMTP_FROM=tunesaver@galagain.com\n'
+    command printf 'SMTP_STARTTLS=1\n'
     command printf 'TUNESAVER_ALLOWED_HOSTS=127.0.0.1,localhost,::1\n'
     command printf 'TIDDL_TRACK_VALUE_CENTS=129\n'
     command printf 'BEATPORT_TRACK_VALUE_CENTS=149\n'

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css?v=20260906-4">
-    <script src="/app.js?v=20260906-4" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260906-8">
+    <script src="/app.js?v=20260906-8" defer></script>
   </head>
   <body>
     <header class="site-header">
@@ -62,9 +62,15 @@
           <input id="auth-email" type="text" autocomplete="username" required>
           <label for="auth-password">Mot de passe</label>
           <input id="auth-password" type="password" minlength="8" autocomplete="current-password" required>
+          <div id="signup-verification" class="signup-verification" hidden>
+            <button id="send-verification-code" class="secondary-button" type="button">Vérification d’e-mail</button>
+            <label for="auth-code">Code reçu par e-mail</label>
+            <input id="auth-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">
+          </div>
           <button id="auth-submit" class="primary-button" type="submit">Se connecter</button>
         </form>
         <button id="auth-toggle" class="text-button" type="button">Créer un compte</button>
+        <button id="forgot-password-button" class="text-button" type="button">Mot de passe oublié</button>
         <p id="auth-message" class="form-message" role="status" aria-live="polite"></p>
       </div>
     </section>

@@ -20,8 +20,12 @@ const authView = document.querySelector("#auth-view");
 const authForm = document.querySelector("#auth-form");
 const authEmail = document.querySelector("#auth-email");
 const authPassword = document.querySelector("#auth-password");
+const authCode = document.querySelector("#auth-code");
+const signupVerification = document.querySelector("#signup-verification");
+const sendVerificationCode = document.querySelector("#send-verification-code");
 const authSubmit = document.querySelector("#auth-submit");
 const authToggle = document.querySelector("#auth-toggle");
+const forgotPasswordButton = document.querySelector("#forgot-password-button");
 const authIntro = document.querySelector("#auth-intro");
 const authMessage = document.querySelector("#auth-message");
 const appView = document.querySelector("#app-view");
@@ -104,14 +108,22 @@ async function loadConfig() {
   publicConfig = await parseResponse(response);
 }
 
-async function supabaseAuth(path, body, accessToken = "") {
-  const response = await fetch(`${publicConfig.supabase_url}${path}`, {
+async function localAuth(path, body = {}, accessToken = "") {
+  const response = await fetch(path, {
     method: "POST",
     headers: {
-      apikey: publicConfig.supabase_publishable_key,
       "Content-Type": "application/json",
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
+    body: JSON.stringify(body),
+  });
+  return parseResponse(response);
+}
+
+async function publicJson(path, body = {}) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   return parseResponse(response);
@@ -137,8 +149,8 @@ function saveAdminSession(value) {
 
 async function refreshSession() {
   if (!session?.refresh_token) throw new Error("Session expirée");
-  const refreshed = await supabaseAuth(
-    "/auth/v1/token?grant_type=refresh_token",
+  const refreshed = await localAuth(
+    "/api/session/refresh",
     { refresh_token: session.refresh_token }
   );
   saveSession(refreshed);
@@ -204,23 +216,6 @@ async function requestJson(path, options = {}) {
   return parseResponse(response);
 }
 
-async function supabaseRest(path, options = {}) {
-  const { expectJson = true, ...fetchOptions } = options;
-  const response = await authenticatedFetch(`${publicConfig.supabase_url}/rest/v1/${path}`, {
-    ...fetchOptions,
-    headers: {
-      apikey: publicConfig.supabase_publishable_key,
-      "Content-Type": "application/json",
-      ...(fetchOptions.headers || {}),
-    },
-  });
-  if (!expectJson) {
-    if (!response.ok) await parseResponse(response);
-    return null;
-  }
-  return parseResponse(response);
-}
-
 function showAuth(message = "") {
   window.clearInterval(queueTimer);
   queueTimer = null;
@@ -269,7 +264,69 @@ authToggle.addEventListener("click", () => {
     ? "Crée ton espace personnel sécurisé."
     : "Connecte-toi pour accéder à ton espace.";
   authPassword.autocomplete = signup ? "new-password" : "current-password";
+  signupVerification.hidden = !signup;
+  authCode.required = signup;
+  authCode.value = "";
   authMessage.textContent = "";
+});
+
+async function sendSignupVerificationCode() {
+  const email = authEmail.value.trim();
+  if (!email) {
+    authMessage.textContent = "Entre ton e-mail avant de demander le code.";
+    authEmail.focus();
+    return;
+  }
+  if (!authPassword.value) {
+    authMessage.textContent = "Entre un mot de passe avant de demander le code.";
+    authPassword.focus();
+    return;
+  }
+  try {
+    const result = await publicJson("/api/signup", { email, password: authPassword.value });
+    authMessage.textContent = result.message || "Code envoyé par e-mail.";
+  } catch (error) {
+    if (!/existe/i.test(error.message)) throw error;
+    const result = await publicJson("/api/email/resend", { email });
+    authMessage.textContent = result.message || "Nouveau code envoyé par e-mail.";
+  }
+  authCode.focus();
+}
+
+async function forgotPasswordFlow() {
+  const email = window.prompt("E-mail du compte", authEmail.value.trim());
+  if (!email) return;
+  const request = await publicJson("/api/password-reset/request", { email });
+  authMessage.textContent = request.message;
+  const code = window.prompt("Code reçu par e-mail");
+  if (!code) return;
+  const password = window.prompt("Nouveau mot de passe");
+  if (!password) return;
+  const result = await publicJson("/api/password-reset/confirm", { email, code, password });
+  authMessage.textContent = result.message || "Mot de passe mis à jour.";
+}
+
+forgotPasswordButton.addEventListener("click", async () => {
+  forgotPasswordButton.disabled = true;
+  try {
+    await forgotPasswordFlow();
+  } catch (error) {
+    authMessage.textContent = error.message;
+  } finally {
+    forgotPasswordButton.disabled = false;
+  }
+});
+
+sendVerificationCode.addEventListener("click", async () => {
+  sendVerificationCode.disabled = true;
+  authMessage.textContent = "";
+  try {
+    await sendSignupVerificationCode();
+  } catch (error) {
+    authMessage.textContent = error.message;
+  } finally {
+    sendVerificationCode.disabled = false;
+  }
 });
 
 authForm.addEventListener("submit", async (event) => {
@@ -290,16 +347,23 @@ authForm.addEventListener("submit", async (event) => {
       showAdmin();
       return;
     }
-    const result = authMode === "signup"
-      ? await fetch("/api/signup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password: authPassword.value }),
-        }).then(parseResponse)
-      : await supabaseAuth("/auth/v1/token?grant_type=password", {
-          email,
-          password: authPassword.value,
-        });
+    if (authMode === "signup") {
+      const code = authCode.value.trim();
+      if (!code) {
+        authMessage.textContent = "Clique sur Vérification d’e-mail, puis entre le code reçu.";
+        authCode.focus();
+        return;
+      }
+      const result = await publicJson("/api/email/verify", { email, code });
+      authMessage.textContent = result.message || "Compte créé. Il est en attente d'approbation.";
+      authPassword.value = "";
+      authCode.value = "";
+      return;
+    }
+    const result = await localAuth("/api/login", {
+      email,
+      password: authPassword.value,
+    });
     if (!result.access_token) {
       authMessage.textContent = result.message || "Compte créé. Il est en attente d'approbation.";
       authPassword.value = "";
@@ -324,7 +388,7 @@ logoutButton.addEventListener("click", async () => {
     return;
   }
   if (session?.access_token) {
-    try { await supabaseAuth("/auth/v1/logout", {}, session.access_token); } catch (_error) { /* local logout still applies */ }
+    try { await localAuth("/api/logout", {}, session.access_token); } catch (_error) { /* local logout still applies */ }
   }
   showAuth("Tu es déconnecté.");
 });
@@ -520,7 +584,6 @@ async function syncHistory(items) {
   if (!items.length) return;
   const rows = items.map((job) => ({
     job_id: job.id,
-    user_id: session.user.id,
     provider: job.provider,
     source_url: job.source_url || "",
     title: job.title || "",
@@ -535,11 +598,9 @@ async function syncHistory(items) {
   }));
   const fingerprint = JSON.stringify(rows);
   if (fingerprint === lastHistoryFingerprint) return;
-  await supabaseRest("download_history?on_conflict=job_id", {
+  await requestJson("/api/history", {
     method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(rows),
-    expectJson: false,
+    body: JSON.stringify({ history: rows }),
   });
   lastHistoryFingerprint = fingerprint;
 }
@@ -548,9 +609,10 @@ async function fetchHistory() {
   const history = [];
   const pageSize = 500;
   for (let offset = 0; ; offset += pageSize) {
-    const page = await supabaseRest(
-      `download_history?select=*&order=created_at.desc&limit=${pageSize}&offset=${offset}`
-    );
+    const payload = await requestJson(`/api/history?limit=${pageSize}&offset=${offset}`, {
+      method: "GET",
+    });
+    const page = payload.history || [];
     history.push(...page);
     if (page.length < pageSize) return history;
   }
@@ -650,7 +712,7 @@ async function refreshQueueOnce() {
       history = await fetchHistory();
     } catch (error) {
       if (!historyWarningShown) {
-        showToast(`Historique Supabase indisponible : ${error.message}`, "error");
+        showToast(`Historique local indisponible : ${error.message}`, "error");
         historyWarningShown = true;
       }
     }
@@ -715,6 +777,10 @@ function renderAdminUsers(profiles) {
     const status = document.createElement("span");
     status.className = `admin-status ${profile.blocked ? "denied" : profile.approved ? "approved" : "pending"}`;
     status.textContent = profile.blocked ? "Refusé" : profile.approved ? "Accepté" : "En attente";
+
+    const emailStatus = document.createElement("span");
+    emailStatus.className = `admin-email-status ${profile.email_verified ? "confirmed" : "unconfirmed"}`;
+    emailStatus.textContent = profile.email_verified ? "Mail vérifié" : "Mail non vérifié";
 
     const action = document.createElement("button");
     action.className = profile.approved ? "admin-deny" : "admin-approve";
@@ -786,7 +852,7 @@ function renderAdminUsers(profiles) {
 
     const actions = document.createElement("div");
     actions.className = "admin-user-actions";
-    actions.append(status, action, passwordButton, deleteButton);
+    actions.append(emailStatus, status, action, passwordButton, deleteButton);
 
     row.append(button, actions);
     adminUsers.append(row);
