@@ -157,6 +157,39 @@ class WebAppFunctionTests(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["apikey"], "service-role")
         self.assertEqual(kwargs["json"], {"password": "secret123"})
 
+    def test_admin_daily_stats_fill_days_and_sum_done_jobs(self) -> None:
+        today = webapp.date.today()
+        yesterday = today - webapp.timedelta(days=1)
+        rows = [
+            {
+                "created_at": today.isoformat() + "T12:00:00Z",
+                "state": "done",
+                "track_count": 3,
+                "estimated_savings_cents": 450,
+            },
+            {
+                "created_at": today.isoformat() + "T13:00:00Z",
+                "state": "failed",
+                "track_count": 9,
+                "estimated_savings_cents": 999,
+            },
+            {
+                "created_at": yesterday.isoformat() + "T09:00:00Z",
+                "state": "done",
+                "track_count": 0,
+                "estimated_savings_cents": 129,
+            },
+        ]
+        daily = webapp.normalize_admin_daily_stats(rows, days=2)
+        self.assertEqual([item["date"] for item in daily], [
+            yesterday.isoformat(),
+            today.isoformat(),
+        ])
+        self.assertEqual(daily[0]["tracks"], 1)
+        self.assertEqual(daily[0]["savings_cents"], 129)
+        self.assertEqual(daily[1]["tracks"], 3)
+        self.assertEqual(daily[1]["savings_cents"], 450)
+
     def test_direct_links_are_detected_and_revalidated(self) -> None:
         tidal = webapp.direct_result("https://tidal.com/browse/track/123")
         self.assertIsNotNone(tidal)
@@ -674,6 +707,30 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response_json(response)["updated"])
         update_password.assert_called_once_with(TEST_USER_ID, "secret123")
         self.assertFalse(self.app_state[webapp.AUTH_CACHE_KEY])
+
+    async def test_admin_stats_returns_daily_download_totals(self) -> None:
+        rows = [
+            {
+                "created_at": webapp.date.today().isoformat() + "T12:00:00Z",
+                "state": "done",
+                "track_count": 2,
+                "estimated_savings_cents": 298,
+            }
+        ]
+        with mock.patch.object(webapp, "supabase_admin_request", return_value=rows) as admin_request:
+            request = FakeRequest(
+                method="GET",
+                path="/api/admin/stats",
+                headers={"Authorization": "Bearer admin-token"},
+                app=self.app_state,
+            )
+            response = await webapp.api_middleware(request, webapp.admin_stats_handler)
+        self.assertEqual(response.status, 200)
+        daily = response_json(response)["daily"]
+        self.assertEqual(daily[-1]["tracks"], 2)
+        self.assertEqual(daily[-1]["savings_cents"], 298)
+        _args, kwargs = admin_request.call_args
+        self.assertEqual(kwargs["params"]["state"], "eq.done")
 
     async def test_admin_can_delete_profile_auth_user(self) -> None:
         webapp.set_admin_user_access(TEST_USER_ID, True)

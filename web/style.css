@@ -613,6 +613,90 @@ h1 {
   font-size: 0.82rem;
 }
 
+.admin-chart-panel { margin-bottom: 16px; }
+
+.admin-chart-panel .admin-panel-header {
+  height: auto;
+  min-height: 54px;
+  gap: 12px;
+  padding: 10px 15px;
+}
+
+.admin-chart-panel .admin-panel-header > div:first-child {
+  min-width: 0;
+}
+
+.admin-chart-panel .result-count {
+  display: block;
+  margin-top: 3px;
+}
+
+.chart-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.chart-toggle button {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  background: #fff;
+  border: 0;
+}
+
+.chart-toggle button + button { border-left: 1px solid var(--line); }
+
+.chart-toggle button[data-active="true"] {
+  color: #fff;
+  background: var(--accent);
+}
+
+.admin-chart {
+  min-height: 270px;
+  padding: 12px 14px 10px;
+}
+
+.admin-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chart-grid {
+  stroke: #e4e1db;
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.chart-bar {
+  fill: #87b78d;
+  opacity: 0.86;
+}
+
+.chart-line {
+  fill: none;
+  stroke: #27324a;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.chart-point {
+  fill: #fff;
+  stroke: #27324a;
+  stroke-width: 2;
+}
+
 .admin-user {
   display: flex;
   flex-direction: column;
@@ -858,6 +942,8 @@ h1 {
 
   .admin-layout { grid-template-columns: 1fr; }
 
+  .admin-chart-panel .admin-panel-header { align-items: flex-start; }
+
   .queue-stats { grid-template-columns: repeat(2, 1fr); }
 
   .queue-stats > div:nth-child(2) { border-right: 0; }
@@ -897,6 +983,16 @@ h1 {
   .query-label { max-width: 52%; }
 
   .admin-user-actions { gap: 6px; }
+
+  .admin-chart-panel .admin-panel-header {
+    flex-direction: column;
+  }
+
+  .chart-toggle { width: 100%; }
+
+  .chart-toggle button {
+    flex: 1 1 0;
+  }
 
   .admin-track { grid-template-columns: 64px minmax(0, 1fr); }
 

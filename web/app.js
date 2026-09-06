@@ -42,6 +42,10 @@ const adminUsers = document.querySelector("#admin-users");
 const adminUsersCount = document.querySelector("#admin-users-count");
 const adminHistory = document.querySelector("#admin-history");
 const adminHistoryCount = document.querySelector("#admin-history-count");
+const adminChart = document.querySelector("#admin-chart");
+const adminChartTotal = document.querySelector("#admin-chart-total");
+const adminChartTracks = document.querySelector("#admin-chart-tracks");
+const adminChartSavings = document.querySelector("#admin-chart-savings");
 const savingsTotal = document.querySelector("#savings-total");
 const toast = document.querySelector("#toast");
 
@@ -53,6 +57,8 @@ let toastTimer = null;
 let queueTimer = null;
 let queueRefreshPromise = null;
 let selectedAdminUserId = "";
+let adminChartMode = "tracks";
+let adminDailyStats = [];
 let historyWarningShown = false;
 let lastHistoryFingerprint = "";
 const activeProviders = { tiddl: null, beatport: null, qobuz: null };
@@ -787,6 +793,137 @@ function renderAdminUsers(profiles) {
   }
 }
 
+function formatChartDay(value) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+  }).format(date);
+}
+
+function formatChartValue(value, mode = adminChartMode) {
+  if (mode === "savings") {
+    return new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency: "EUR",
+      maximumFractionDigits: 0,
+    }).format(value / 100);
+  }
+  return new Intl.NumberFormat("fr-FR").format(value);
+}
+
+function chartSvgElement(name, attrs = {}) {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [key, value] of Object.entries(attrs)) {
+    element.setAttribute(key, String(value));
+  }
+  return element;
+}
+
+function renderAdminChart() {
+  adminChart.replaceChildren();
+  adminChartTracks.dataset.active = adminChartMode === "tracks" ? "true" : "false";
+  adminChartSavings.dataset.active = adminChartMode === "savings" ? "true" : "false";
+  const valueKey = adminChartMode === "savings" ? "savings_cents" : "tracks";
+  const total = adminDailyStats.reduce((sum, item) => sum + Number(item[valueKey] || 0), 0);
+  adminChartTotal.textContent = adminChartMode === "savings"
+    ? `${formatChartValue(total, "savings")} économisés`
+    : `${formatChartValue(total, "tracks")} sons`;
+  if (!adminDailyStats.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-copy";
+    empty.textContent = "Aucune donnée.";
+    adminChart.append(empty);
+    return;
+  }
+
+  const width = 720;
+  const height = 260;
+  const margin = { top: 20, right: 22, bottom: 42, left: 54 };
+  const chartWidth = width - margin.left - margin.right;
+  const chartHeight = height - margin.top - margin.bottom;
+  const values = adminDailyStats.map((item) => Number(item[valueKey] || 0));
+  const maxValue = Math.max(1, ...values);
+  const step = chartWidth / adminDailyStats.length;
+  const barWidth = Math.max(6, Math.min(18, step * 0.56));
+  const yFor = (value) => margin.top + chartHeight - (Number(value || 0) / maxValue) * chartHeight;
+  const xCenter = (index) => margin.left + step * index + step / 2;
+
+  const svg = chartSvgElement("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    role: "img",
+    "aria-label": adminChartMode === "savings"
+      ? "Économies par jour"
+      : "Sons téléchargés par jour",
+  });
+
+  for (let tick = 0; tick <= 4; tick += 1) {
+    const value = Math.round((maxValue / 4) * tick);
+    const y = yFor(value);
+    svg.append(chartSvgElement("line", {
+      class: "chart-grid",
+      x1: margin.left,
+      x2: width - margin.right,
+      y1: y,
+      y2: y,
+    }));
+    const label = chartSvgElement("text", {
+      class: "chart-axis-label",
+      x: margin.left - 10,
+      y: y + 4,
+      "text-anchor": "end",
+    });
+    label.textContent = formatChartValue(value);
+    svg.append(label);
+  }
+
+  const points = [];
+  adminDailyStats.forEach((item, index) => {
+    const value = Number(item[valueKey] || 0);
+    const x = xCenter(index);
+    const y = yFor(value);
+    points.push([x, y]);
+    svg.append(chartSvgElement("rect", {
+      class: "chart-bar",
+      x: x - barWidth / 2,
+      y,
+      width: barWidth,
+      height: margin.top + chartHeight - y,
+      rx: 3,
+    }));
+    const shouldLabel = index === 0
+      || index === adminDailyStats.length - 1
+      || index % 5 === 0;
+    if (shouldLabel) {
+      const label = chartSvgElement("text", {
+        class: "chart-axis-label",
+        x,
+        y: height - 14,
+        "text-anchor": "middle",
+      });
+      label.textContent = formatChartDay(item.date);
+      svg.append(label);
+    }
+  });
+
+  if (points.length > 1) {
+    svg.append(chartSvgElement("path", {
+      class: "chart-line",
+      d: points.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`).join(" "),
+    }));
+  }
+  for (const [x, y] of points) {
+    svg.append(chartSvgElement("circle", {
+      class: "chart-point",
+      cx: x,
+      cy: y,
+      r: 3,
+    }));
+  }
+  adminChart.append(svg);
+}
+
 function renderAdminHistory(items) {
   adminHistory.replaceChildren();
   adminHistoryCount.textContent = `${items.length} son${items.length > 1 ? "s" : ""}`;
@@ -825,6 +962,12 @@ async function refreshAdminHistory() {
   renderAdminHistory(payload.history || []);
 }
 
+async function refreshAdminStats() {
+  const payload = await adminJson("/api/admin/stats");
+  adminDailyStats = payload.daily || [];
+  renderAdminChart();
+}
+
 async function refreshAdmin() {
   adminRefreshButton.disabled = true;
   adminMessage.textContent = "";
@@ -832,6 +975,7 @@ async function refreshAdmin() {
     const payload = await adminJson("/api/admin/profiles");
     const profiles = payload.profiles || [];
     renderAdminUsers(profiles);
+    await refreshAdminStats();
     await refreshAdminHistory();
   } catch (error) {
     adminMessage.textContent = error.message;
@@ -841,6 +985,14 @@ async function refreshAdmin() {
 }
 
 adminRefreshButton.addEventListener("click", refreshAdmin);
+adminChartTracks.addEventListener("click", () => {
+  adminChartMode = "tracks";
+  renderAdminChart();
+});
+adminChartSavings.addEventListener("click", () => {
+  adminChartMode = "savings";
+  renderAdminChart();
+});
 
 async function start() {
   try {

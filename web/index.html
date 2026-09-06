@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css?v=20260906-3">
-    <script src="/app.js?v=20260906-3" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260906-4">
+    <script src="/app.js?v=20260906-4" defer></script>
   </head>
   <body>
     <header class="site-header">
@@ -170,6 +170,21 @@
           </div>
 
           <div id="admin-message" class="form-message" role="status" aria-live="polite"></div>
+
+          <section class="admin-panel admin-chart-panel" aria-labelledby="admin-chart-title">
+            <header class="admin-panel-header">
+              <div>
+                <h2 id="admin-chart-title">Activité par jour</h2>
+                <span id="admin-chart-total" class="result-count"></span>
+              </div>
+              <div class="chart-toggle" role="group" aria-label="Mesure du graphique">
+                <button id="admin-chart-tracks" type="button" data-active="true">Sons</button>
+                <button id="admin-chart-savings" type="button">Économies</button>
+              </div>
+            </header>
+            <div id="admin-chart" class="admin-chart" aria-live="polite"></div>
+          </section>
+
           <div class="admin-layout">
             <section class="admin-panel" aria-labelledby="admin-users-title">
               <header class="admin-panel-header">

@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote, urlparse
@@ -1527,6 +1528,45 @@ def normalize_admin_history(rows: Any) -> list[dict[str, Any]]:
     return history
 
 
+def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        raise SourceError("Réponse statistiques invalide.")
+    today = date.today()
+    first_day = today - timedelta(days=days - 1)
+    totals = {
+        (first_day + timedelta(days=offset)).isoformat(): {
+            "date": (first_day + timedelta(days=offset)).isoformat(),
+            "tracks": 0,
+            "savings_cents": 0,
+        }
+        for offset in range(days)
+    }
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("state") not in {"", None, "done"}:
+            continue
+        created_at = str(row.get("created_at", ""))[:10]
+        try:
+            day = date.fromisoformat(created_at)
+        except ValueError:
+            continue
+        if day < first_day or day > today:
+            continue
+        bucket = totals[day.isoformat()]
+        try:
+            track_count = int(row.get("track_count") or 0)
+        except (TypeError, ValueError):
+            track_count = 0
+        try:
+            savings_cents = int(row.get("estimated_savings_cents") or 0)
+        except (TypeError, ValueError):
+            savings_cents = 0
+        bucket["tracks"] += max(track_count, 1)
+        bucket["savings_cents"] += max(savings_cents, 0)
+    return list(totals.values())
+
+
 async def admin_profiles_handler(_request: web.Request) -> web.Response:
     rows, auth_users = await asyncio.gather(
         asyncio.to_thread(
@@ -1620,6 +1660,21 @@ async def admin_history_handler(request: web.Request) -> web.Response:
         params=params,
     )
     return web.json_response({"history": normalize_admin_history(rows)})
+
+
+async def admin_stats_handler(_request: web.Request) -> web.Response:
+    rows = await asyncio.to_thread(
+        supabase_admin_request,
+        "GET",
+        "download_history",
+        params={
+            "select": "created_at,state,track_count,estimated_savings_cents",
+            "state": "eq.done",
+            "order": "created_at.desc",
+            "limit": "5000",
+        },
+    )
+    return web.json_response({"daily": normalize_admin_daily_stats(rows)})
 
 
 def find_done_job(job_id: str) -> tuple[Path, dict[str, Any]]:
@@ -1770,6 +1825,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/admin/profiles/{user_id}/password", admin_profile_password_handler)
     app.router.add_delete("/api/admin/profiles/{user_id}", admin_profile_delete_handler)
     app.router.add_get("/api/admin/history", admin_history_handler)
+    app.router.add_get("/api/admin/stats", admin_stats_handler)
     app.router.add_get("/api/status", status_handler)
     app.router.add_post("/api/search", search_handler)
     app.router.add_post("/api/download", download_handler)
