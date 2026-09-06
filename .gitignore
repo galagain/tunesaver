@@ -1,0 +1,14 @@
+.env
+.env.tmp.*
+.DS_Store
+data/*
+!data/README.md
+secrets/*
+!secrets/README.md
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/

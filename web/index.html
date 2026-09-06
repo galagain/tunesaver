@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>TuneSaver</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="TuneSaver — accueil">
+        <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="10"></rect>
+          <path d="M16 8v11m-5-4 5 5 5-5M10 24h12"></path>
+        </svg>
+        <span>TuneSaver</span>
+      </a>
+
+      <div class="header-actions">
+      <div id="services" class="services" aria-label="État des plateformes" hidden>
+        <div id="tiddl-service" class="service" data-status="loading">
+          <div class="service-logo tidal-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 16">
+              <path d="M4 0 8 4 4 8 0 4Zm8 0 4 4-4 4-4-4Zm8 0 4 4-4 4-4-4Zm-8 8 4 4-4 4-4-4Z"></path>
+            </svg>
+            <span>TIDAL</span>
+          </div>
+          <span id="tiddl-health" class="health-badge" aria-label="Vérification TIDAL">…</span>
+        </div>
+
+        <div id="beatport-service" class="service" data-status="loading">
+          <div class="service-logo beatport-logo" aria-hidden="true">
+            <span class="beatport-symbol">b</span>
+            <span>beatport</span>
+          </div>
+          <span id="beatport-health" class="health-badge" aria-label="Vérification Beatport">…</span>
+        </div>
+
+        <div id="qobuz-service" class="service" data-status="loading">
+          <div class="service-logo qobuz-logo" aria-hidden="true">
+            <span class="qobuz-symbol">Q</span>
+            <span>qobuz</span>
+          </div>
+          <span id="qobuz-health" class="health-badge" aria-label="Vérification Qobuz">…</span>
+        </div>
+      </div>
+        <button id="logout-button" class="account-button" type="button" hidden>
+          <span id="user-email"></span>
+          <span>Déconnexion</span>
+        </button>
+      </div>
+    </header>
+
+    <section id="auth-view" class="auth-view" aria-labelledby="auth-title">
+      <div class="auth-card">
+        <h1 id="auth-title">Bienvenue sur TuneSaver</h1>
+        <p id="auth-intro">Connecte-toi pour accéder à ton espace.</p>
+        <form id="auth-form">
+          <label for="auth-email">E-mail</label>
+          <input id="auth-email" type="email" autocomplete="email" required>
+          <label for="auth-password">Mot de passe</label>
+          <input id="auth-password" type="password" minlength="8" autocomplete="current-password" required>
+          <button id="auth-submit" class="primary-button" type="submit">Se connecter</button>
+        </form>
+        <button id="auth-toggle" class="text-button" type="button">Créer un compte</button>
+        <p id="auth-message" class="form-message" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <div id="app-view" hidden>
+    <main class="container">
+      <section class="search-section" aria-labelledby="page-title">
+        <h1 id="page-title">Trouve et télécharge ta musique.</h1>
+        <p>Recherche un titre sur les trois plateformes ou colle un lien direct.</p>
+
+        <form id="search-form" class="search-form" novalidate>
+          <label class="sr-only" for="search-input">Titre, artiste ou lien direct</label>
+          <div class="search-box">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5"></circle>
+              <path d="m16 16 4 4"></path>
+            </svg>
+            <textarea
+              id="search-input"
+              name="query"
+              rows="1"
+              maxlength="100000"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Titre, artiste ou liens (un par ligne)…"
+              required
+            ></textarea>
+            <button id="search-button" class="primary-button" type="submit">Rechercher</button>
+          </div>
+        </form>
+        <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
+        <p class="search-help">Pour une liste, colle un lien TIDAL, Beatport ou Qobuz par ligne.</p>
+      </section>
+
+      <section id="results-section" class="results-section" aria-labelledby="results-title" hidden>
+        <div class="section-heading">
+          <h2 id="results-title">Résultats</h2>
+          <p id="results-query" class="query-label"></p>
+        </div>
+
+        <div class="platform-grid">
+          <article class="platform-panel" aria-labelledby="tidal-title">
+            <header class="platform-header">
+              <h3 id="tidal-title">TIDAL</h3>
+              <span id="tiddl-count" class="result-count"></span>
+            </header>
+            <div id="tiddl-state" class="panel-state">En attente</div>
+            <div id="tiddl-results" class="result-list"></div>
+          </article>
+
+          <article class="platform-panel" aria-labelledby="beatport-title">
+            <header class="platform-header">
+              <h3 id="beatport-title">Beatport</h3>
+              <span id="beatport-count" class="result-count"></span>
+            </header>
+            <div id="beatport-state" class="panel-state">En attente</div>
+            <div id="beatport-results" class="result-list"></div>
+          </article>
+
+          <article class="platform-panel" aria-labelledby="qobuz-title">
+            <header class="platform-header">
+              <h3 id="qobuz-title">Qobuz</h3>
+              <span id="qobuz-count" class="result-count"></span>
+            </header>
+            <div id="qobuz-state" class="panel-state">En attente</div>
+            <div id="qobuz-results" class="result-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="queue-section" aria-labelledby="queue-title">
+        <div class="section-heading">
+          <h2 id="queue-title">Téléchargements</h2>
+          <div class="queue-actions">
+            <p class="savings"><span>Économie estimée</span><strong id="savings-total">0,00 €</strong></p>
+            <button id="refresh-status" class="refresh-button" type="button" aria-label="Actualiser">↻</button>
+          </div>
+        </div>
+
+        <div class="queue-stats" aria-live="polite">
+          <div><strong id="pending-count">—</strong><span>En attente</span></div>
+          <div><strong id="running-count">—</strong><span>En cours</span></div>
+          <div><strong id="done-count">—</strong><span>Terminés</span></div>
+          <div><strong id="failed-count">—</strong><span>Échecs</span></div>
+        </div>
+
+        <div id="recent-jobs" class="recent-jobs">
+          <p class="empty-copy">Aucune tâche pour le moment.</p>
+        </div>
+      </section>
+    </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

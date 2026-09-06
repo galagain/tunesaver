@@ -1,0 +1,548 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+COMPOSE_FILE="$ROOT_DIR/compose.yaml"
+
+usage() {
+  command cat <<'EOF'
+Usage: ./musicdl <commande> [arguments]
+
+  init [--skip-beatport] [--force-beatport] [--skip-qobuz] [--force-qobuz]
+                               Prépare les dossiers et les secrets
+  build                        Construit l'image pour l'architecture locale
+  auth <tiddl|qobuz> [--force] Connecte ou réinitialise un compte
+  start [all|tiddl|beatport|qobuz]
+                               Démarre l'interface et le(s) worker(s)
+  stop                         Arrête les workers sans effacer les données
+  add <source> <url...>        Ajoute une tâche durable à la file
+  add-file <source> <fichier>  Ajoute les URL non vides d'un fichier
+  run <source> <url...>        Lance immédiatement, sans passer par la file
+  retry [all|source] [job-id]  Replace les tâches échouées dans pending
+  status [all|source] [--limit N]
+                               Affiche l'état des files
+  doctor [all|source]          Vérifie la présence des authentifications
+  logs [all|tiddl|beatport|qobuz|web]
+                               Suit les journaux des services
+  versions                     Affiche les versions embarquées
+
+Sources: tiddl, beatport, qobuz
+EOF
+}
+
+compose() {
+  docker compose --project-directory "$ROOT_DIR" --file "$COMPOSE_FILE" "$@"
+}
+
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    command echo "Docker est introuvable. Installez Docker Desktop ou Docker Engine + Compose v2." >&2
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    command echo "La commande 'docker compose' (Compose v2) est requise." >&2
+    exit 1
+  fi
+}
+
+create_empty_secret() {
+  local path="$1"
+  if [[ ! -e "$path" ]]; then
+    (umask 077; : >"$path")
+  fi
+  chmod 600 "$path"
+}
+
+ensure_layout() {
+  local state provider directory
+  mkdir -p \
+    "$ROOT_DIR/data/downloads/tiddl" \
+    "$ROOT_DIR/data/downloads/beatport" \
+    "$ROOT_DIR/data/downloads/qobuz" \
+    "$ROOT_DIR/data/deliveries" \
+    "$ROOT_DIR/data/queue" \
+    "$ROOT_DIR/data/state/tiddl" \
+    "$ROOT_DIR/data/state/beatportdl" \
+    "$ROOT_DIR/data/state/qobuz" \
+    "$ROOT_DIR/data/state/home/tiddl" \
+    "$ROOT_DIR/data/state/home/beatport" \
+    "$ROOT_DIR/secrets"
+  chmod 700 "$ROOT_DIR/data/queue" "$ROOT_DIR/data/state" \
+    "$ROOT_DIR/data/deliveries" \
+    "$ROOT_DIR/data/state/tiddl" "$ROOT_DIR/data/state/beatportdl" \
+    "$ROOT_DIR/data/state/qobuz" \
+    "$ROOT_DIR/data/state/home" "$ROOT_DIR/data/state/home/tiddl" \
+    "$ROOT_DIR/data/state/home/beatport" "$ROOT_DIR/secrets"
+  for state in pending running done failed; do
+    for provider in tiddl beatport qobuz; do
+      directory="$ROOT_DIR/data/queue/$state/$provider"
+      mkdir -p "$directory"
+      chmod 700 "$directory"
+    done
+  done
+  for state in logs locks; do
+    for provider in tiddl beatport qobuz; do
+      directory="$ROOT_DIR/data/queue/$state/$provider"
+      mkdir -p "$directory"
+      chmod 700 "$directory"
+    done
+  done
+  create_empty_secret "$ROOT_DIR/secrets/beatport_username"
+  create_empty_secret "$ROOT_DIR/secrets/beatport_password"
+  create_empty_secret "$ROOT_DIR/secrets/qobuz_user_id"
+  create_empty_secret "$ROOT_DIR/secrets/qobuz_token"
+}
+
+write_default_env() {
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    chmod 600 "$ROOT_DIR/.env"
+    return
+  fi
+  local uid gid temporary supabase_url supabase_key
+  uid="$(id -u)"
+  gid="$(id -g)"
+  supabase_url="${SUPABASE_URL:-}"
+  supabase_key="${SUPABASE_PUBLISHABLE_KEY:-}"
+  if [[ -z "$supabase_url" ]]; then
+    read -r -p "URL Supabase (https://...supabase.co): " supabase_url
+  fi
+  if [[ -z "$supabase_key" ]]; then
+    read -r -p "Clé publique Supabase (sb_publishable_...): " supabase_key
+  fi
+  if [[ ! "$supabase_url" =~ ^https://[^[:space:]]+$ ]]; then
+    command echo "URL Supabase invalide." >&2
+    exit 2
+  fi
+  if [[ ! "$supabase_key" =~ ^sb_publishable_[A-Za-z0-9_-]+$ ]]; then
+    command echo "Clé publique Supabase invalide." >&2
+    exit 2
+  fi
+  temporary="$(mktemp "$ROOT_DIR/.env.tmp.XXXXXX")"
+  chmod 600 "$temporary"
+  {
+    command printf 'PUID=%s\n' "$uid"
+    command printf 'PGID=%s\n' "$gid"
+    command printf 'POLL_INTERVAL=5\n'
+    command printf 'WEB_PORT=8080\n'
+    command printf 'TIDDL_DOWNLOADS_PATH=./data/downloads/tiddl\n'
+    command printf 'BEATPORT_DOWNLOADS_PATH=./data/downloads/beatport\n'
+    command printf 'QOBUZ_DOWNLOADS_PATH=./data/downloads/qobuz\n'
+    command printf 'SUPABASE_URL=%s\n' "$supabase_url"
+    command printf 'SUPABASE_PUBLISHABLE_KEY=%s\n' "$supabase_key"
+    command printf 'TUNESAVER_ALLOWED_HOSTS=127.0.0.1,localhost,::1\n'
+    command printf 'TIDDL_TRACK_VALUE_CENTS=129\n'
+    command printf 'BEATPORT_TRACK_VALUE_CENTS=149\n'
+    command printf 'QOBUZ_TRACK_VALUE_CENTS=149\n'
+  } >"$temporary"
+  mv "$temporary" "$ROOT_DIR/.env"
+}
+
+write_secret() {
+  local path="$1" value="$2"
+  local temporary
+  temporary="$(mktemp "$ROOT_DIR/secrets/.secret.tmp.XXXXXX")"
+  chmod 600 "$temporary"
+  command printf '%s' "$value" >"$temporary"
+  mv "$temporary" "$path"
+}
+
+secret_is_ready() {
+  [[ -s "$1" ]]
+}
+
+configure_beatport() {
+  local force="${1:-false}"
+  local username="${BEATPORT_USERNAME:-}"
+  local password="${BEATPORT_PASSWORD:-}"
+
+  if [[ "$force" != true ]] \
+    && secret_is_ready "$ROOT_DIR/secrets/beatport_username" \
+    && secret_is_ready "$ROOT_DIR/secrets/beatport_password"; then
+    command echo "Secrets Beatport déjà présents; ils ne sont pas modifiés."
+    return
+  fi
+
+  if [[ -z "$username" || -z "$password" ]]; then
+    if [[ ! -t 0 ]]; then
+      command echo "Terminal interactif absent: définissez BEATPORT_USERNAME et BEATPORT_PASSWORD, ou relancez init dans un terminal." >&2
+      return 1
+    fi
+    read -r -p "Identifiant Beatport: " username
+    read -r -s -p "Mot de passe Beatport: " password
+    command echo
+  fi
+
+  if [[ -z "$username" || -z "$password" ]]; then
+    command echo "Identifiant et mot de passe Beatport obligatoires." >&2
+    return 1
+  fi
+  write_secret "$ROOT_DIR/secrets/beatport_username" "$username"
+  write_secret "$ROOT_DIR/secrets/beatport_password" "$password"
+  unset username password
+  command echo "Secrets Beatport enregistrés localement avec les permissions 0600."
+}
+
+configure_qobuz() {
+  local force="${1:-false}"
+  local user_id="${QOBUZ_USER_ID:-}"
+  local token="${QOBUZ_TOKEN:-}"
+
+  if [[ "$force" != true ]] \
+    && secret_is_ready "$ROOT_DIR/secrets/qobuz_user_id" \
+    && secret_is_ready "$ROOT_DIR/secrets/qobuz_token"; then
+    command echo "Secrets Qobuz déjà présents; ils ne sont pas modifiés."
+    return
+  fi
+  if [[ -z "$user_id" || -z "$token" ]]; then
+    if [[ ! -t 0 ]]; then
+      command echo "Terminal interactif absent: définissez QOBUZ_USER_ID et QOBUZ_TOKEN." >&2
+      return 1
+    fi
+    command cat <<'EOF'
+Qobuz n'accepte plus le mot de passe dans les outils tiers.
+Sur https://play.qobuz.com, ouvrez les outils développeur > Console et exécutez:
+JSON.parse(localStorage.getItem('localuser'))
+Copiez ensuite les champs id et token (ou user_auth_token selon la version du site).
+EOF
+    read -r -p "user_id Qobuz (champ id): " user_id
+    read -r -s -p "Jeton Qobuz (champ token, entrée masquée): " token
+    command echo
+  fi
+  if [[ -z "$user_id" || -z "$token" ]]; then
+    command echo "user_id et jeton Qobuz obligatoires." >&2
+    return 1
+  fi
+  write_secret "$ROOT_DIR/secrets/qobuz_user_id" "$user_id"
+  write_secret "$ROOT_DIR/secrets/qobuz_token" "$token"
+  unset user_id token
+  command echo "Jeton Qobuz enregistré localement avec les permissions 0600."
+}
+
+require_beatport_secrets() {
+  if ! secret_is_ready "$ROOT_DIR/secrets/beatport_username" \
+    || ! secret_is_ready "$ROOT_DIR/secrets/beatport_password"; then
+    command echo "Secrets Beatport absents. Lancez d'abord: ./musicdl init" >&2
+    exit 1
+  fi
+}
+
+require_qobuz_secrets() {
+  if ! secret_is_ready "$ROOT_DIR/secrets/qobuz_user_id" \
+    || ! secret_is_ready "$ROOT_DIR/secrets/qobuz_token"; then
+    command echo "Jeton Qobuz absent. Lancez d'abord: ./musicdl auth qobuz" >&2
+    exit 1
+  fi
+}
+
+validate_provider() {
+  case "${1:-}" in
+    tiddl|beatport|qobuz) ;;
+    *)
+      command echo "Source attendue: tiddl, beatport ou qobuz." >&2
+      exit 2
+      ;;
+  esac
+}
+
+service_for_provider() {
+  validate_provider "$1"
+  command printf '%s\n' "$1"
+}
+
+absolute_path() {
+  local input="$1" directory basename
+  directory="$(cd -- "$(dirname -- "$input")" >/dev/null 2>&1 && pwd -P)"
+  basename="$(basename -- "$input")"
+  command printf '%s/%s\n' "$directory" "$basename"
+}
+
+cmd_init() {
+  local skip_beatport=false force_beatport=false skip_qobuz=false force_qobuz=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --skip-beatport) skip_beatport=true ;;
+      --force-beatport) force_beatport=true ;;
+      --skip-qobuz) skip_qobuz=true ;;
+      --force-qobuz) force_qobuz=true ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  ensure_layout
+  write_default_env
+  if [[ "$skip_beatport" == false ]]; then
+    configure_beatport "$force_beatport"
+  fi
+  if [[ "$skip_qobuz" == false ]]; then
+    configure_qobuz "$force_qobuz"
+  fi
+  command echo "Initialisation terminée. Authentifiez ensuite TIDAL et Qobuz."
+}
+
+cmd_build() {
+  if [[ $# -ne 0 ]]; then
+    usage >&2
+    exit 2
+  fi
+  ensure_layout
+  require_docker
+  compose build
+}
+
+cmd_auth() {
+  local provider="${1:-}"
+  if [[ "$provider" != "tiddl" && "$provider" != "qobuz" ]] || [[ $# -gt 2 \
+    || ( $# -eq 2 && "${2:-}" != "--force" ) ]]; then
+    command echo "Utilisation: ./musicdl auth <tiddl|qobuz> [--force]" >&2
+    exit 2
+  fi
+  ensure_layout
+  write_default_env
+  require_docker
+  if [[ "$provider" == "qobuz" ]]; then
+    if [[ $# -eq 2 ]]; then
+      configure_qobuz true
+    elif ! secret_is_ready "$ROOT_DIR/secrets/qobuz_user_id" \
+      || ! secret_is_ready "$ROOT_DIR/secrets/qobuz_token"; then
+      configure_qobuz false
+    fi
+  fi
+  compose build "$provider"
+  local internal_command="auth-$provider"
+  if [[ $# -eq 2 ]]; then
+    compose run --rm --no-deps "$provider" "$internal_command" --force
+  else
+    compose run --rm --no-deps "$provider" "$internal_command"
+  fi
+}
+
+cmd_start() {
+  if [[ $# -gt 1 ]]; then
+    usage >&2
+    exit 2
+  fi
+  local target="${1:-all}"
+  ensure_layout
+  write_default_env
+  require_docker
+  case "$target" in
+    all)
+      require_beatport_secrets
+      require_qobuz_secrets
+      compose build tiddl beatport qobuz web
+      compose run --rm --no-deps tiddl doctor tiddl
+      compose run --rm --no-deps beatport doctor beatport
+      compose run --rm --no-deps qobuz doctor qobuz
+      compose up --detach --wait --wait-timeout 120 tiddl beatport qobuz web
+      ;;
+    tiddl)
+      compose build tiddl web
+      compose run --rm --no-deps tiddl doctor tiddl
+      compose up --detach --wait --wait-timeout 120 tiddl web
+      ;;
+    beatport)
+      require_beatport_secrets
+      compose build beatport web
+      compose run --rm --no-deps beatport doctor beatport
+      compose up --detach --wait --wait-timeout 120 beatport web
+      ;;
+    qobuz)
+      require_qobuz_secrets
+      compose build qobuz web
+      compose run --rm --no-deps qobuz doctor qobuz
+      compose up --detach --wait --wait-timeout 120 qobuz web
+      ;;
+    *)
+      command echo "Cible attendue: all, tiddl, beatport ou qobuz." >&2
+      exit 2
+      ;;
+  esac
+  local web_port=8080 key value
+  if [[ -f "$ROOT_DIR/.env" ]]; then
+    while IFS='=' read -r key value; do
+      value="${value%$'\r'}"
+      if [[ "$key" == WEB_PORT && "$value" =~ ^[0-9]+$ \
+        && "$value" -ge 1 && "$value" -le 65535 ]]; then
+        web_port="$value"
+      fi
+    done <"$ROOT_DIR/.env"
+  fi
+  command printf 'Interface web: http://127.0.0.1:%s\n' "$web_port"
+}
+
+cmd_stop() {
+  if [[ $# -ne 0 ]]; then
+    usage >&2
+    exit 2
+  fi
+  ensure_layout
+  require_docker
+  compose down
+}
+
+cmd_add() {
+  local provider="${1:-}"
+  if [[ $# -lt 2 ]]; then
+    usage >&2
+    exit 2
+  fi
+  shift
+  validate_provider "$provider"
+  ensure_layout
+  require_docker
+  compose run --rm --no-deps "$(service_for_provider "$provider")" enqueue "$provider" "$@"
+}
+
+cmd_add_file() {
+  local provider="${1:-}" file="${2:-}"
+  if [[ $# -ne 2 ]]; then
+    usage >&2
+    exit 2
+  fi
+  validate_provider "$provider"
+  if [[ ! -f "$file" ]]; then
+    command echo "Fichier introuvable: $file" >&2
+    exit 1
+  fi
+  local resolved
+  resolved="$(absolute_path "$file")"
+  ensure_layout
+  require_docker
+  compose run --rm --no-deps \
+    --volume "$resolved:/input/urls.txt:ro" \
+    "$(service_for_provider "$provider")" \
+    enqueue-file "$provider" /input/urls.txt
+}
+
+cmd_run() {
+  local provider="${1:-}"
+  if [[ $# -lt 2 ]]; then
+    usage >&2
+    exit 2
+  fi
+  shift
+  validate_provider "$provider"
+  if [[ "$provider" == beatport ]]; then
+    require_beatport_secrets
+  elif [[ "$provider" == qobuz ]]; then
+    require_qobuz_secrets
+  fi
+  ensure_layout
+  require_docker
+  compose run --rm --no-deps "$(service_for_provider "$provider")" run "$provider" "$@"
+}
+
+cmd_retry() {
+  local provider="${1:-all}"
+  shift || true
+  ensure_layout
+  require_docker
+  compose run --rm --no-deps admin retry "$provider" "$@"
+}
+
+cmd_status() {
+  local provider=all
+  if [[ $# -gt 0 && "${1:-}" != "--limit" ]]; then
+    provider="$1"
+    shift
+  fi
+  case "$provider" in
+    all|tiddl|beatport|qobuz) ;;
+    *)
+      command echo "Cible attendue: all, tiddl, beatport ou qobuz." >&2
+      exit 2
+      ;;
+  esac
+  if [[ $# -ne 0 && !( $# -eq 2 && "${1:-}" == "--limit" && "${2:-}" =~ ^[1-9][0-9]*$ ) ]]; then
+    usage >&2
+    exit 2
+  fi
+  ensure_layout
+  require_docker
+  compose run --rm --no-deps admin status "$provider" "$@"
+}
+
+cmd_doctor() {
+  if [[ $# -gt 1 ]]; then
+    usage >&2
+    exit 2
+  fi
+  local provider="${1:-all}"
+  case "$provider" in
+    all|tiddl|beatport|qobuz) ;;
+    *)
+      command echo "Cible attendue: all, tiddl, beatport ou qobuz." >&2
+      exit 2
+      ;;
+  esac
+  ensure_layout
+  require_docker
+  case "$provider" in
+    all)
+      compose run --rm --no-deps tiddl doctor tiddl
+      compose run --rm --no-deps beatport doctor beatport
+      compose run --rm --no-deps qobuz doctor qobuz
+      ;;
+    tiddl|beatport|qobuz)
+      compose run --rm --no-deps "$provider" doctor "$provider"
+      ;;
+  esac
+}
+
+cmd_logs() {
+  if [[ $# -gt 1 ]]; then
+    usage >&2
+    exit 2
+  fi
+  local provider="${1:-all}"
+  ensure_layout
+  require_docker
+  case "$provider" in
+    all) compose logs --follow tiddl beatport qobuz web ;;
+    tiddl|beatport|qobuz|web) compose logs --follow "$provider" ;;
+    *)
+      command echo "Cible attendue: all, tiddl, beatport, qobuz ou web." >&2
+      exit 2
+      ;;
+  esac
+}
+
+cmd_versions() {
+  if [[ $# -ne 0 ]]; then
+    usage >&2
+    exit 2
+  fi
+  ensure_layout
+  require_docker
+  compose run --rm --no-deps admin versions
+}
+
+main() {
+  local command="${1:-help}"
+  if [[ $# -gt 0 ]]; then
+    shift
+  fi
+  case "$command" in
+    init) cmd_init "$@" ;;
+    build) cmd_build "$@" ;;
+    auth) cmd_auth "$@" ;;
+    start) cmd_start "$@" ;;
+    stop) cmd_stop "$@" ;;
+    add) cmd_add "$@" ;;
+    add-file) cmd_add_file "$@" ;;
+    run) cmd_run "$@" ;;
+    retry) cmd_retry "$@" ;;
+    status) cmd_status "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    logs) cmd_logs "$@" ;;
+    versions) cmd_versions "$@" ;;
+    help|-h|--help) usage ;;
+    *)
+      command echo "Commande inconnue: $command" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

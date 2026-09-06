@@ -1,0 +1,29 @@
+enable_cache = true
+debug = false
+
+[metadata]
+enable = true
+lyrics = false
+cover = true
+album_review = false
+
+[cover]
+save = false
+
+[download]
+track_quality = "high"
+video_quality = "fhd"
+skip_existing = true
+threads_count = 4
+download_path = "/downloads/tiddl"
+scan_path = "/downloads/tiddl"
+singles_filter = "none"
+videos_filter = "none"
+update_mtime = false
+rewrite_metadata = false
+write_lrc_file = false
+match_existing_path_case = false
+atmos_filter = "none"
+
+[m3u]
+save = false

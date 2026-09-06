@@ -1,0 +1,9 @@
+{
+  "quality": "lossless",
+  "track_exists": "update",
+  "max_download_workers": 4,
+  "max_global_workers": 4,
+  "sort_by_context": false,
+  "fix_tags": true,
+  "key_system": "standard-short"
+}

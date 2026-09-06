@@ -1,0 +1,163 @@
+name: tunesaver
+
+x-common: &common
+  build:
+    context: .
+    args:
+      BEATPORTDL_COMMIT: 878d3f61c5a98cffd43b9e0306b8cbc75488999e
+      BEATPORTDL_ARCHIVE_SHA256: 91f64963d51c0e358a4dcc595e8ef1b081f0e3e5a300e8ac93152a4cfade5bdc
+      QOBUZDL_COMMIT: 00f8ce21b276ddf9278f0a944a2f85de2421d98d
+      QOBUZDL_ARCHIVE_SHA256: 32d1effc81c4ee7772ea49ada289ec4724d901faf29d03306859d6d8080822a4
+  image: tunesaver:local
+  user: "${PUID:-1000}:${PGID:-1000}"
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=1g
+  environment:
+    MUSICDL_POLL_INTERVAL: "${POLL_INTERVAL:-5}"
+    MUSICDL_TIDDL_TRACK_VALUE_CENTS: "${TIDDL_TRACK_VALUE_CENTS:-129}"
+    MUSICDL_BEATPORT_TRACK_VALUE_CENTS: "${BEATPORT_TRACK_VALUE_CENTS:-149}"
+    MUSICDL_QOBUZ_TRACK_VALUE_CENTS: "${QOBUZ_TRACK_VALUE_CENTS:-149}"
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+  stop_grace_period: 30m
+
+services:
+  tiddl:
+    <<: *common
+    command: ["worker", "tiddl"]
+    restart: unless-stopped
+    volumes:
+      - ./config:/config:ro
+      # One queue mount keeps pending -> running -> done/failed renames atomic.
+      - ./data/queue:/queue
+      - ./data/state/tiddl:/state/tiddl
+      - ./data/state/home/tiddl:/state/home
+      - ${TIDDL_DOWNLOADS_PATH:-./data/downloads/tiddl}:/downloads/tiddl
+      - ./data/deliveries:/deliveries
+    healthcheck:
+      test: ["CMD", "python", "/app/musicdl.py", "doctor", "tiddl"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  beatport:
+    <<: *common
+    command: ["worker", "beatport"]
+    restart: unless-stopped
+    volumes:
+      - ./config:/config:ro
+      # One queue mount keeps pending -> running -> done/failed renames atomic.
+      - ./data/queue:/queue
+      - ./data/state/beatportdl:/state/beatportdl
+      - ./data/state/home/beatport:/state/home
+      - ${BEATPORT_DOWNLOADS_PATH:-./data/downloads/beatport}:/downloads/beatport
+      - ./data/deliveries:/deliveries
+    secrets:
+      - beatport_username
+      - beatport_password
+    healthcheck:
+      test: ["CMD", "python", "/app/musicdl.py", "doctor", "beatport"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  qobuz:
+    <<: *common
+    command: ["worker", "qobuz"]
+    restart: unless-stopped
+    volumes:
+      - ./config:/config:ro
+      # One queue mount keeps pending -> running -> done/failed renames atomic.
+      - ./data/queue:/queue
+      - ./data/state/qobuz:/state/qobuz
+      - ${QOBUZ_DOWNLOADS_PATH:-./data/downloads/qobuz}:/downloads/qobuz
+      - ./data/deliveries:/deliveries
+    secrets:
+      - qobuz_user_id
+      - qobuz_token
+    healthcheck:
+      test: ["CMD", "python", "/app/musicdl.py", "doctor", "qobuz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web:
+    <<: *common
+    entrypoint: ["python", "/app/webapp.py"]
+    command: []
+    restart: unless-stopped
+    stop_grace_period: 10s
+    environment:
+      MUSICDL_WEB_HOST: "0.0.0.0"
+      MUSICDL_WEB_PORT: "8080"
+      TUNESAVER_SUPABASE_URL: "${SUPABASE_URL:?SUPABASE_URL doit être défini dans .env}"
+      TUNESAVER_SUPABASE_PUBLISHABLE_KEY: "${SUPABASE_PUBLISHABLE_KEY:?SUPABASE_PUBLISHABLE_KEY doit être défini dans .env}"
+      TUNESAVER_ALLOWED_HOSTS: "${TUNESAVER_ALLOWED_HOSTS:-127.0.0.1,localhost,::1}"
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    volumes:
+      - ./config:/config:ro
+      - ./data/queue/pending/tiddl:/queue/pending/tiddl
+      - ./data/queue/pending/beatport:/queue/pending/beatport
+      - ./data/queue/pending/qobuz:/queue/pending/qobuz
+      - ./data/queue/running/tiddl:/queue/running/tiddl:ro
+      - ./data/queue/running/beatport:/queue/running/beatport:ro
+      - ./data/queue/running/qobuz:/queue/running/qobuz:ro
+      - ./data/queue/done/tiddl:/queue/done/tiddl
+      - ./data/queue/done/beatport:/queue/done/beatport
+      - ./data/queue/done/qobuz:/queue/done/qobuz
+      - ./data/queue/failed/tiddl:/queue/failed/tiddl:ro
+      - ./data/queue/failed/beatport:/queue/failed/beatport:ro
+      - ./data/queue/failed/qobuz:/queue/failed/qobuz:ro
+      - ./data/queue/locks/tiddl:/queue/locks/tiddl
+      - ./data/queue/locks/beatport:/queue/locks/beatport
+      - ./data/queue/locks/qobuz:/queue/locks/qobuz
+      - ./data/state/tiddl:/state/tiddl
+      - ./data/state/beatportdl:/state/beatportdl
+      - ./data/state/qobuz:/state/qobuz
+      - ./data/deliveries:/deliveries
+    secrets:
+      - beatport_username
+      - beatport_password
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  admin:
+    <<: *common
+    profiles: ["tools"]
+    command: ["status", "all"]
+    volumes:
+      - ./config:/config:ro
+      - ./data/queue:/queue
+
+secrets:
+  beatport_username:
+    file: ./secrets/beatport_username
+  beatport_password:
+    file: ./secrets/beatport_password
+  qobuz_user_id:
+    file: ./secrets/qobuz_user_id
+  qobuz_token:
+    file: ./secrets/qobuz_token
