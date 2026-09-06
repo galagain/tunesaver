@@ -42,6 +42,7 @@ BEATPORT_SEARCH_BINARY = os.environ.get(
 QOBUZ_SEARCH_SCRIPT = os.environ.get(
     "MUSICDL_QOBUZ_SEARCH_SCRIPT", "/app/qobuz_search.py"
 )
+ADMIN_ACCESS_PATH = musicdl.STATE_ROOT / "tiddl" / "admin_access.json"
 
 TIDAL_SEARCH_URL = "https://api.tidal.com/v1/search"
 BEATPORT_SEARCH_URL = "https://api.beatport.com/v4/catalog/search/"
@@ -64,6 +65,11 @@ SUPABASE_URL = os.environ.get("TUNESAVER_SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.environ.get(
     "TUNESAVER_SUPABASE_PUBLISHABLE_KEY", ""
 )
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("TUNESAVER_SUPABASE_SERVICE_ROLE_KEY", "")
+PUBLIC_URL = os.environ.get("TUNESAVER_PUBLIC_URL", "").rstrip("/")
+ADMIN_EMAIL = os.environ.get("TUNESAVER_ADMIN_EMAIL", "admin")
+ADMIN_PASSWORD = os.environ.get("TUNESAVER_ADMIN_PASSWORD", "")
+ADMIN_SESSION_SECONDS = 12 * 60 * 60
 
 PLATFORM_NAMES = {"tiddl": "TIDAL", "beatport": "Beatport", "qobuz": "Qobuz"}
 KIND_NAMES = {
@@ -80,6 +86,7 @@ KIND_NAMES = {
 SEARCH_SEMAPHORES_KEY = web.AppKey("search_semaphores", dict)
 STATUS_CACHE_KEY = web.AppKey("status_cache", dict)
 AUTH_CACHE_KEY = web.AppKey("auth_cache", dict)
+ADMIN_SESSIONS_KEY = web.AppKey("admin_sessions", dict)
 
 
 class PublicError(Exception):
@@ -211,17 +218,82 @@ def verify_supabase_token(token: str) -> dict[str, str] | None:
         profiles = profile_response.json()
     except requests.JSONDecodeError as exc:
         raise RuntimeError("Réponse d'autorisation Supabase invalide") from exc
-    approved = (
+    if not (
         isinstance(profiles, list)
         and len(profiles) == 1
         and isinstance(profiles[0], dict)
-        and profiles[0].get("approved") is True
-    )
+    ):
+        approved = False
+    else:
+        approved = admin_user_is_allowed(user_id)
+    blocked = admin_user_is_blocked(user_id)
     return {
         "id": user_id,
         "email": email if isinstance(email, str) else "",
-        "approved": approved,
+        "approved": approved and not blocked,
+        "blocked": blocked,
     }
+
+
+def load_admin_access() -> dict[str, set[str]]:
+    try:
+        payload = json.loads(ADMIN_ACCESS_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"allowed": set(), "blocked": set()}
+    except (OSError, json.JSONDecodeError):
+        LOGGER.exception("liste d'accès admin illisible")
+        return {"allowed": set(), "blocked": set()}
+    if not isinstance(payload, dict):
+        return {"allowed": set(), "blocked": set()}
+
+    access = {"allowed": set(), "blocked": set()}
+    for key in access:
+        values = payload.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            try:
+                access[key].add(str(uuid.UUID(str(value))))
+            except ValueError:
+                continue
+    return access
+
+
+def save_admin_access(access: dict[str, set[str]]) -> None:
+    musicdl.atomic_write_json(
+        ADMIN_ACCESS_PATH,
+        {
+            "allowed": sorted(access.get("allowed", set())),
+            "blocked": sorted(access.get("blocked", set())),
+        },
+    )
+
+
+def admin_user_is_allowed(user_id: str) -> bool:
+    access = load_admin_access()
+    return user_id in access["allowed"] and user_id not in access["blocked"]
+
+
+def admin_user_is_blocked(user_id: str) -> bool:
+    return user_id in load_admin_access()["blocked"]
+
+
+def set_admin_user_access(user_id: str, approved: bool) -> None:
+    access = load_admin_access()
+    if approved:
+        access["allowed"].add(user_id)
+        access["blocked"].discard(user_id)
+    else:
+        access["allowed"].discard(user_id)
+        access["blocked"].add(user_id)
+    save_admin_access(access)
+
+
+def remove_admin_user_access(user_id: str) -> None:
+    access = load_admin_access()
+    access["allowed"].discard(user_id)
+    access["blocked"].discard(user_id)
+    save_admin_access(access)
 
 
 async def authenticate_request(request: web.Request) -> dict[str, str]:
@@ -243,9 +315,26 @@ async def authenticate_request(request: web.Request) -> dict[str, str]:
     if user is None:
         raise PublicError("Session expirée. Reconnectez-vous.", status=401)
     if not user.get("approved"):
-        raise PublicError("Compte en attente d'autorisation.", status=403)
+        if user.get("blocked"):
+            raise PublicError("Compte refusé. Contacte l'administrateur si tu penses que c'est une erreur.", status=403)
+        raise PublicError("Compte en attente d'approbation. Contacte l'administrateur pour activer ton accès.", status=403)
     cache[cache_key] = (time.monotonic() + AUTH_CACHE_SECONDS, user)
     return user
+
+
+async def authenticate_admin_request(request: web.Request) -> dict[str, str]:
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise PublicError("Connexion admin requise.", status=401)
+    token = authorization[7:].strip()
+    if not token:
+        raise PublicError("Session admin invalide.", status=401)
+    sessions = request.app[ADMIN_SESSIONS_KEY]
+    expires_at = sessions.get(token)
+    if not isinstance(expires_at, (int, float)) or expires_at < time.monotonic():
+        sessions.pop(token, None)
+        raise PublicError("Session admin expirée.", status=401)
+    return {"email": ADMIN_EMAIL}
 
 
 @web.middleware
@@ -254,8 +343,18 @@ async def api_middleware(
 ) -> web.StreamResponse:
     try:
         _check_local_host(request)
-        public_paths = {"/", "/app.js", "/style.css", "/api/health", "/api/config"}
-        if request.path not in public_paths and not request.path.startswith("/api/files/"):
+        public_paths = {
+            "/",
+            "/app.js",
+            "/style.css",
+            "/api/health",
+            "/api/config",
+            "/api/signup",
+            "/api/admin/login",
+        }
+        if request.path.startswith("/api/admin/") and request.path not in public_paths:
+            request["admin"] = await authenticate_admin_request(request)
+        elif request.path not in public_paths and not request.path.startswith("/api/files/"):
             request["user"] = await authenticate_request(request)
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             _check_same_origin(request)
@@ -1157,6 +1256,372 @@ async def status_handler(request: web.Request) -> web.Response:
     return web.json_response(snapshot)
 
 
+def require_supabase_admin() -> None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise SourceError("Administration Supabase non configurée.")
+
+
+def supabase_admin_headers(*, prefer: str = "") -> dict[str, str]:
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def supabase_admin_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, str] | None = None,
+    payload: dict[str, Any] | None = None,
+    prefer: str = "",
+) -> Any:
+    require_supabase_admin()
+    try:
+        response = requests.request(
+            method,
+            f"{SUPABASE_URL}/rest/v1/{path}",
+            params=params,
+            headers=supabase_admin_headers(prefer=prefer),
+            json=payload,
+            timeout=10,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise SourceError("Supabase admin est momentanément indisponible.") from exc
+    if response.status_code not in range(200, 300):
+        raise SourceError("Supabase admin a refusé la requête.")
+    if response.status_code == 204 or not response.content:
+        return None
+    try:
+        return response.json()
+    except requests.JSONDecodeError as exc:
+        raise SourceError("Réponse Supabase admin invalide.") from exc
+
+
+def supabase_auth_admin_users() -> dict[str, dict[str, str]]:
+    require_supabase_admin()
+    users: dict[str, dict[str, str]] = {}
+    page = 1
+    while True:
+        try:
+            response = requests.get(
+                f"{SUPABASE_URL}/auth/v1/admin/users",
+                params={"page": str(page), "per_page": "1000"},
+                headers={
+                    "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                    "Accept": "application/json",
+                },
+                timeout=10,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
+        if response.status_code not in range(200, 300):
+            raise SourceError("Supabase auth admin a refusé la requête.")
+        try:
+            payload = response.json()
+        except requests.JSONDecodeError as exc:
+            raise SourceError("Réponse Supabase auth admin invalide.") from exc
+        rows = payload.get("users") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise SourceError("Réponse Supabase auth admin invalide.")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                user_id = str(uuid.UUID(str(row.get("id", ""))))
+            except ValueError:
+                continue
+            email_confirmed_at = row.get("email_confirmed_at") or row.get("confirmed_at") or ""
+            users[user_id] = {
+                "email_confirmed_at": str(email_confirmed_at)[:40],
+                "last_sign_in_at": str(row.get("last_sign_in_at") or "")[:40],
+            }
+        if len(rows) < 1000:
+            return users
+        page += 1
+
+
+def supabase_auth_delete_user(user_id: str) -> None:
+    require_supabase_admin()
+    try:
+        response = requests.delete(
+            f"{SUPABASE_URL}/auth/v1/admin/users/{quote(user_id, safe='')}",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                "Accept": "application/json",
+            },
+            timeout=10,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
+    if response.status_code == 404:
+        raise PublicError("Utilisateur introuvable.", status=404)
+    if response.status_code not in range(200, 300):
+        raise SourceError("Supabase auth admin a refusé la suppression.")
+
+
+def supabase_auth_update_user_password(user_id: str, password: str) -> None:
+    require_supabase_admin()
+    try:
+        response = requests.put(
+            f"{SUPABASE_URL}/auth/v1/admin/users/{quote(user_id, safe='')}",
+            headers=supabase_admin_headers(),
+            json={"password": password},
+            timeout=10,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
+    if response.status_code == 404:
+        raise PublicError("Utilisateur introuvable.", status=404)
+    if response.status_code not in range(200, 300):
+        raise SourceError("Supabase auth admin a refusé le changement de mot de passe.")
+
+
+def supabase_auth_create_user(email: str, password: str) -> dict[str, Any]:
+    require_supabase_admin()
+    try:
+        response = requests.post(
+            f"{SUPABASE_URL}/auth/v1/admin/users",
+            headers=supabase_admin_headers(),
+            json={
+                "email": email,
+                "password": password,
+                "email_confirm": True,
+            },
+            timeout=10,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise SourceError("Supabase auth admin est momentanément indisponible.") from exc
+    if response.status_code in {400, 422} and "already" in response.text.lower():
+        raise PublicError("Ce compte existe déjà. Connecte-toi avec ton mot de passe.", status=409)
+    if response.status_code not in range(200, 300):
+        raise SourceError("Supabase auth admin a refusé la création du compte.")
+    try:
+        payload = response.json()
+    except requests.JSONDecodeError as exc:
+        raise SourceError("Réponse Supabase auth admin invalide.") from exc
+    if not isinstance(payload, dict):
+        raise SourceError("Réponse Supabase auth admin invalide.")
+    return payload
+
+
+def ensure_pending_profile(user_id: str, email: str) -> None:
+    supabase_admin_request(
+        "POST",
+        "profiles",
+        payload={"user_id": user_id, "email": email, "approved": False},
+        prefer="resolution=merge-duplicates",
+    )
+
+
+async def admin_login_handler(request: web.Request) -> web.Response:
+    if not ADMIN_PASSWORD:
+        raise PublicError("Admin non configuré.", status=503)
+    payload = await read_json_object(request)
+    email = payload.get("email")
+    password = payload.get("password")
+    if not isinstance(email, str) or not isinstance(password, str):
+        raise PublicError("Identifiants admin invalides.", status=401)
+    valid_email = secrets.compare_digest(email.strip(), ADMIN_EMAIL)
+    valid_password = secrets.compare_digest(password, ADMIN_PASSWORD)
+    if not valid_email or not valid_password:
+        raise PublicError("Identifiants admin invalides.", status=401)
+    token = secrets.token_urlsafe(32)
+    request.app[ADMIN_SESSIONS_KEY][token] = time.monotonic() + ADMIN_SESSION_SECONDS
+    return web.json_response({"access_token": token, "expires_in": ADMIN_SESSION_SECONDS})
+
+
+async def signup_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    email = payload.get("email")
+    password = payload.get("password")
+    if not isinstance(email, str) or not isinstance(password, str):
+        raise PublicError("E-mail ou mot de passe invalide.")
+    email = email.strip().lower()
+    if len(email) > 320 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise PublicError("E-mail invalide.")
+    if len(password) < 6 or len(password) > 256:
+        raise PublicError("Le mot de passe doit faire au moins 6 caractères.")
+    user = await asyncio.to_thread(supabase_auth_create_user, email, password)
+    try:
+        user_id = str(uuid.UUID(str(user["id"])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SourceError("Réponse Supabase auth admin invalide.") from exc
+    await asyncio.to_thread(ensure_pending_profile, user_id, email)
+    return web.json_response(
+        {
+            "message": "Compte créé. Il est en attente d'approbation.",
+            "pending": True,
+        },
+        status=201,
+    )
+
+
+def normalize_admin_profiles(
+    rows: Any,
+    auth_users: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        raise SourceError("Réponse profils invalide.")
+    auth_users = auth_users or {}
+    profiles = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        user_id = str(row.get("user_id", ""))
+        try:
+            user_id = str(uuid.UUID(user_id))
+        except ValueError:
+            continue
+        blocked = admin_user_is_blocked(user_id)
+        auth_user = auth_users.get(user_id, {})
+        profiles.append(
+            {
+                "user_id": user_id,
+                "email": str(row.get("email", ""))[:320],
+                "last_sign_in_at": auth_user.get("last_sign_in_at", ""),
+                "approved": admin_user_is_allowed(user_id),
+                "blocked": blocked,
+                "created_at": str(row.get("created_at", ""))[:40],
+            }
+        )
+    return profiles
+
+
+def normalize_admin_history(rows: Any) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        raise SourceError("Réponse historique invalide.")
+    history = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        history.append(
+            {
+                "job_id": str(row.get("job_id", ""))[:120],
+                "user_id": str(row.get("user_id", ""))[:40],
+                "provider": str(row.get("provider", ""))[:16],
+                "source_url": str(row.get("source_url", ""))[:DIRECT_LINK_LIMIT],
+                "title": str(row.get("title", ""))[:200],
+                "artist": str(row.get("artist", ""))[:200],
+                "resource_kind": str(row.get("resource_kind", ""))[:32],
+                "state": str(row.get("state", ""))[:24],
+                "track_count": int(row.get("track_count") or 0),
+                "estimated_savings_cents": int(row.get("estimated_savings_cents") or 0),
+                "created_at": str(row.get("created_at", ""))[:40],
+                "completed_at": str(row.get("completed_at", ""))[:40],
+                "delivered_at": str(row.get("delivered_at", ""))[:40],
+            }
+        )
+    return history
+
+
+async def admin_profiles_handler(_request: web.Request) -> web.Response:
+    rows, auth_users = await asyncio.gather(
+        asyncio.to_thread(
+            supabase_admin_request,
+            "GET",
+            "profiles",
+            params={
+                "select": "user_id,email,approved,created_at",
+                "order": "created_at.desc",
+            },
+        ),
+        asyncio.to_thread(supabase_auth_admin_users),
+    )
+    return web.json_response({"profiles": normalize_admin_profiles(rows, auth_users)})
+
+
+async def admin_profile_handler(request: web.Request) -> web.Response:
+    user_id = request.match_info.get("user_id", "")
+    try:
+        user_id = str(uuid.UUID(user_id))
+    except ValueError as exc:
+        raise PublicError("Utilisateur invalide.", status=404) from exc
+    payload = await read_json_object(request)
+    approved = payload.get("approved")
+    if not isinstance(approved, bool):
+        raise PublicError("Statut invalide.")
+    set_admin_user_access(user_id, approved)
+    rows = await asyncio.to_thread(
+        supabase_admin_request,
+        "PATCH",
+        "profiles",
+        params={
+            "user_id": f"eq.{user_id}",
+            "select": "user_id,email,approved,created_at",
+        },
+        payload={"approved": approved},
+        prefer="return=representation",
+    )
+    auth_users = await asyncio.to_thread(supabase_auth_admin_users)
+    profiles = normalize_admin_profiles(rows, auth_users)
+    if not profiles:
+        raise PublicError("Utilisateur introuvable.", status=404)
+    request.app[AUTH_CACHE_KEY].clear()
+    return web.json_response({"profile": profiles[0]})
+
+
+async def admin_profile_password_handler(request: web.Request) -> web.Response:
+    user_id = request.match_info.get("user_id", "")
+    try:
+        user_id = str(uuid.UUID(user_id))
+    except ValueError as exc:
+        raise PublicError("Utilisateur invalide.", status=404) from exc
+    payload = await read_json_object(request)
+    password = payload.get("password")
+    if not isinstance(password, str) or len(password) < 6 or len(password) > 256:
+        raise PublicError("Le mot de passe doit faire au moins 6 caractères.")
+    await asyncio.to_thread(supabase_auth_update_user_password, user_id, password)
+    request.app[AUTH_CACHE_KEY].clear()
+    return web.json_response({"updated": True})
+
+
+async def admin_profile_delete_handler(request: web.Request) -> web.Response:
+    user_id = request.match_info.get("user_id", "")
+    try:
+        user_id = str(uuid.UUID(user_id))
+    except ValueError as exc:
+        raise PublicError("Utilisateur invalide.", status=404) from exc
+    await asyncio.to_thread(supabase_auth_delete_user, user_id)
+    await asyncio.to_thread(remove_admin_user_access, user_id)
+    request.app[AUTH_CACHE_KEY].clear()
+    return web.json_response({"deleted": True})
+
+
+async def admin_history_handler(request: web.Request) -> web.Response:
+    user_id = request.query.get("user_id", "")
+    params = {
+        "select": "*",
+        "order": "created_at.desc",
+        "limit": "500",
+    }
+    if user_id:
+        try:
+            user_id = str(uuid.UUID(user_id))
+        except ValueError as exc:
+            raise PublicError("Utilisateur invalide.", status=404) from exc
+        params["user_id"] = f"eq.{user_id}"
+    rows = await asyncio.to_thread(
+        supabase_admin_request,
+        "GET",
+        "download_history",
+        params=params,
+    )
+    return web.json_response({"history": normalize_admin_history(rows)})
+
+
 def find_done_job(job_id: str) -> tuple[Path, dict[str, Any]]:
     if not musicdl.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Téléchargement invalide.", status=404)
@@ -1258,6 +1723,7 @@ async def config_handler(_request: web.Request) -> web.Response:
         {
             "supabase_url": SUPABASE_URL,
             "supabase_publishable_key": SUPABASE_PUBLISHABLE_KEY,
+            "public_url": PUBLIC_URL,
         }
     )
 
@@ -1291,11 +1757,19 @@ def create_app() -> web.Application:
         "lock": asyncio.Lock(),
     }
     app[AUTH_CACHE_KEY] = {}
+    app[ADMIN_SESSIONS_KEY] = {}
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)
+    app.router.add_post("/api/signup", signup_handler)
+    app.router.add_post("/api/admin/login", admin_login_handler)
+    app.router.add_get("/api/admin/profiles", admin_profiles_handler)
+    app.router.add_patch("/api/admin/profiles/{user_id}", admin_profile_handler)
+    app.router.add_post("/api/admin/profiles/{user_id}/password", admin_profile_password_handler)
+    app.router.add_delete("/api/admin/profiles/{user_id}", admin_profile_delete_handler)
+    app.router.add_get("/api/admin/history", admin_history_handler)
     app.router.add_get("/api/status", status_handler)
     app.router.add_post("/api/search", search_handler)
     app.router.add_post("/api/download", download_handler)

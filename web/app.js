@@ -25,6 +25,7 @@ const authToggle = document.querySelector("#auth-toggle");
 const authIntro = document.querySelector("#auth-intro");
 const authMessage = document.querySelector("#auth-message");
 const appView = document.querySelector("#app-view");
+const adminView = document.querySelector("#admin-view");
 const services = document.querySelector("#services");
 const logoutButton = document.querySelector("#logout-button");
 const userEmail = document.querySelector("#user-email");
@@ -35,15 +36,23 @@ const searchMessage = document.querySelector("#search-message");
 const resultsSection = document.querySelector("#results-section");
 const resultsQuery = document.querySelector("#results-query");
 const refreshStatusButton = document.querySelector("#refresh-status");
+const adminRefreshButton = document.querySelector("#admin-refresh");
+const adminMessage = document.querySelector("#admin-message");
+const adminUsers = document.querySelector("#admin-users");
+const adminUsersCount = document.querySelector("#admin-users-count");
+const adminHistory = document.querySelector("#admin-history");
+const adminHistoryCount = document.querySelector("#admin-history-count");
 const savingsTotal = document.querySelector("#savings-total");
 const toast = document.querySelector("#toast");
 
 let publicConfig = null;
 let session = null;
+let adminSession = null;
 let authMode = "login";
 let toastTimer = null;
 let queueTimer = null;
 let queueRefreshPromise = null;
+let selectedAdminUserId = "";
 let historyWarningShown = false;
 let lastHistoryFingerprint = "";
 const activeProviders = { tiddl: null, beatport: null, qobuz: null };
@@ -111,6 +120,15 @@ function saveSession(value) {
   }
 }
 
+function saveAdminSession(value) {
+  adminSession = value;
+  if (value) {
+    localStorage.setItem("tunesaver.adminSession", JSON.stringify(value));
+  } else {
+    localStorage.removeItem("tunesaver.adminSession");
+  }
+}
+
 async function refreshSession() {
   if (!session?.refresh_token) throw new Error("Session expirée");
   const refreshed = await supabaseAuth(
@@ -119,6 +137,33 @@ async function refreshSession() {
   );
   saveSession(refreshed);
   return refreshed;
+}
+
+async function adminFetch(url, options = {}) {
+  if (!adminSession?.access_token) throw new Error("Connexion admin requise");
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${adminSession.access_token}`,
+    },
+  });
+  if (response.status === 401) {
+    saveAdminSession(null);
+    showAuth("Session admin expirée.");
+  }
+  return response;
+}
+
+async function adminJson(path, options = {}) {
+  const response = await adminFetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  return parseResponse(response);
 }
 
 async function authenticatedFetch(url, options = {}, retry = true) {
@@ -174,22 +219,39 @@ function showAuth(message = "") {
   window.clearInterval(queueTimer);
   queueTimer = null;
   saveSession(null);
+  saveAdminSession(null);
   authView.hidden = false;
   appView.hidden = true;
+  adminView.hidden = true;
   services.hidden = true;
   logoutButton.hidden = true;
   authMessage.textContent = message;
 }
 
 function showApp() {
+  saveAdminSession(null);
   authView.hidden = true;
   appView.hidden = false;
+  adminView.hidden = true;
   services.hidden = false;
   logoutButton.hidden = false;
   userEmail.textContent = session?.user?.email || "Mon compte";
   refreshQueue();
   window.clearInterval(queueTimer);
   queueTimer = window.setInterval(refreshQueue, 5000);
+}
+
+function showAdmin() {
+  window.clearInterval(queueTimer);
+  queueTimer = null;
+  saveSession(null);
+  authView.hidden = true;
+  appView.hidden = true;
+  adminView.hidden = false;
+  services.hidden = true;
+  logoutButton.hidden = false;
+  userEmail.textContent = "Admin";
+  refreshAdmin();
 }
 
 authToggle.addEventListener("click", () => {
@@ -209,15 +271,32 @@ authForm.addEventListener("submit", async (event) => {
   authSubmit.disabled = true;
   authMessage.textContent = "";
   try {
-    const path = authMode === "signup"
-      ? "/auth/v1/signup"
-      : "/auth/v1/token?grant_type=password";
-    const result = await supabaseAuth(path, {
-      email: authEmail.value.trim(),
-      password: authPassword.value,
-    });
+    const email = authEmail.value.trim();
+    if (authMode === "login" && email === "admin") {
+      const response = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: authPassword.value }),
+      });
+      const result = await parseResponse(response);
+      saveAdminSession(result);
+      authPassword.value = "";
+      showAdmin();
+      return;
+    }
+    const result = authMode === "signup"
+      ? await fetch("/api/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: authPassword.value }),
+        }).then(parseResponse)
+      : await supabaseAuth("/auth/v1/token?grant_type=password", {
+          email,
+          password: authPassword.value,
+        });
     if (!result.access_token) {
-      authMessage.textContent = "Compte créé. Vérifie ton e-mail avant de te connecter.";
+      authMessage.textContent = result.message || "Compte créé. Il est en attente d'approbation.";
+      authPassword.value = "";
       return;
     }
     saveSession(result);
@@ -234,6 +313,10 @@ authForm.addEventListener("submit", async (event) => {
 });
 
 logoutButton.addEventListener("click", async () => {
+  if (adminSession?.access_token) {
+    showAuth("Tu es déconnecté.");
+    return;
+  }
   if (session?.access_token) {
     try { await supabaseAuth("/auth/v1/logout", {}, session.access_token); } catch (_error) { /* local logout still applies */ }
   }
@@ -579,9 +662,200 @@ async function refreshQueueOnce() {
 
 refreshStatusButton.addEventListener("click", refreshQueue);
 
+function formatAdminDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function renderAdminUsers(profiles) {
+  adminUsers.replaceChildren();
+  adminUsersCount.textContent = `${profiles.length} compte${profiles.length > 1 ? "s" : ""}`;
+  if (!profiles.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-copy";
+    empty.textContent = "Aucun compte.";
+    adminUsers.append(empty);
+    return;
+  }
+  if (!selectedAdminUserId || !profiles.some((profile) => profile.user_id === selectedAdminUserId)) {
+    selectedAdminUserId = profiles[0].user_id;
+  }
+  for (const profile of profiles) {
+    const row = document.createElement("article");
+    row.className = "admin-user";
+    row.dataset.selected = profile.user_id === selectedAdminUserId ? "true" : "false";
+    const button = document.createElement("button");
+    button.className = "admin-user-main";
+    button.type = "button";
+    button.addEventListener("click", async () => {
+      selectedAdminUserId = profile.user_id;
+      renderAdminUsers(profiles);
+      await refreshAdminHistory();
+    });
+    const email = document.createElement("strong");
+    email.textContent = profile.email || "Sans e-mail";
+    const details = document.createElement("span");
+    details.textContent = formatAdminDate(profile.created_at) || profile.user_id;
+    button.append(email, details);
+
+    const status = document.createElement("span");
+    status.className = `admin-status ${profile.blocked ? "denied" : profile.approved ? "approved" : "pending"}`;
+    status.textContent = profile.blocked ? "Refusé" : profile.approved ? "Accepté" : "En attente";
+
+    const action = document.createElement("button");
+    action.className = profile.approved ? "admin-deny" : "admin-approve";
+    action.type = "button";
+    action.textContent = profile.approved ? "Refuser" : "Accepter";
+    action.addEventListener("click", async () => {
+      action.disabled = true;
+      try {
+        await adminJson(`/api/admin/profiles/${profile.user_id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ approved: !profile.approved }),
+        });
+        await refreshAdmin();
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        action.disabled = false;
+      }
+    });
+
+    const passwordButton = document.createElement("button");
+    passwordButton.className = "admin-password";
+    passwordButton.type = "button";
+    passwordButton.textContent = "Mot de passe";
+    passwordButton.addEventListener("click", async () => {
+      const label = profile.email || "ce compte";
+      const password = window.prompt(`Nouveau mot de passe pour ${label}`);
+      if (password === null) return;
+      if (password.length < 6) {
+        showToast("Le mot de passe doit faire au moins 6 caractères.", "error");
+        return;
+      }
+      passwordButton.disabled = true;
+      try {
+        await adminJson(`/api/admin/profiles/${profile.user_id}/password`, {
+          method: "POST",
+          body: JSON.stringify({ password }),
+        });
+        showToast("Mot de passe mis à jour.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        passwordButton.disabled = false;
+      }
+    });
+
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "admin-delete";
+    deleteButton.type = "button";
+    deleteButton.textContent = "Supprimer";
+    deleteButton.addEventListener("click", async () => {
+      const label = profile.email || "ce compte";
+      if (!window.confirm(`Supprimer définitivement ${label} ?`)) return;
+      deleteButton.disabled = true;
+      try {
+        await adminJson(`/api/admin/profiles/${profile.user_id}`, {
+          method: "DELETE",
+          body: JSON.stringify({}),
+        });
+        if (selectedAdminUserId === profile.user_id) selectedAdminUserId = "";
+        await refreshAdmin();
+        showToast("Compte supprimé.");
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        deleteButton.disabled = false;
+      }
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "admin-user-actions";
+    actions.append(status, action, passwordButton, deleteButton);
+
+    row.append(button, actions);
+    adminUsers.append(row);
+  }
+}
+
+function renderAdminHistory(items) {
+  adminHistory.replaceChildren();
+  adminHistoryCount.textContent = `${items.length} son${items.length > 1 ? "s" : ""}`;
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-copy";
+    empty.textContent = "Aucun son pour ce compte.";
+    adminHistory.append(empty);
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement("article");
+    row.className = "admin-track";
+    const provider = document.createElement("span");
+    provider.className = `mini-provider ${item.provider}`;
+    provider.textContent = providerLabels[item.provider] || item.provider;
+    const body = document.createElement("div");
+    body.className = "admin-track-body";
+    const title = document.createElement("strong");
+    title.textContent = item.title || item.source_url || item.job_id;
+    const meta = document.createElement("span");
+    const artist = item.artist ? `${item.artist} · ` : "";
+    meta.textContent = `${artist}${item.resource_kind || "track"} · ${formatAdminDate(item.created_at)}`;
+    body.append(title, meta);
+    const state = document.createElement("span");
+    state.className = `job-state ${item.state}`;
+    state.textContent = stateLabels[item.state] || item.state;
+    row.append(provider, body, state);
+    adminHistory.append(row);
+  }
+}
+
+async function refreshAdminHistory() {
+  if (!selectedAdminUserId) return;
+  const payload = await adminJson(`/api/admin/history?user_id=${encodeURIComponent(selectedAdminUserId)}`);
+  renderAdminHistory(payload.history || []);
+}
+
+async function refreshAdmin() {
+  adminRefreshButton.disabled = true;
+  adminMessage.textContent = "";
+  try {
+    const payload = await adminJson("/api/admin/profiles");
+    const profiles = payload.profiles || [];
+    renderAdminUsers(profiles);
+    await refreshAdminHistory();
+  } catch (error) {
+    adminMessage.textContent = error.message;
+  } finally {
+    adminRefreshButton.disabled = false;
+  }
+}
+
+adminRefreshButton.addEventListener("click", refreshAdmin);
+
 async function start() {
   try {
     await loadConfig();
+    const storedAdmin = JSON.parse(localStorage.getItem("tunesaver.adminSession") || "null");
+    if (storedAdmin?.access_token) {
+      adminSession = storedAdmin;
+      try {
+        await adminJson("/api/admin/profiles");
+        showAdmin();
+        return;
+      } catch (_error) {
+        saveAdminSession(null);
+      }
+    }
     const stored = JSON.parse(localStorage.getItem("tunesaver.session") || "null");
     if (stored?.access_token && stored?.refresh_token) {
       session = stored;

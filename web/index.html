@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css">
-    <script src="/app.js" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260906-3">
+    <script src="/app.js?v=20260906-3" defer></script>
   </head>
   <body>
     <header class="site-header">
@@ -59,7 +59,7 @@
         <p id="auth-intro">Connecte-toi pour accéder à ton espace.</p>
         <form id="auth-form">
           <label for="auth-email">E-mail</label>
-          <input id="auth-email" type="email" autocomplete="email" required>
+          <input id="auth-email" type="text" autocomplete="username" required>
           <label for="auth-password">Mot de passe</label>
           <input id="auth-password" type="password" minlength="8" autocomplete="current-password" required>
           <button id="auth-submit" class="primary-button" type="submit">Se connecter</button>
@@ -156,6 +156,41 @@
         </div>
       </section>
     </main>
+    </div>
+
+    <div id="admin-view" hidden>
+      <main class="container admin-container">
+        <section class="admin-section" aria-labelledby="admin-title">
+          <div class="section-heading">
+            <div>
+              <h1 id="admin-title">Admin TuneSaver</h1>
+              <p class="admin-subtitle">Comptes et téléchargements</p>
+            </div>
+            <button id="admin-refresh" class="refresh-button" type="button" aria-label="Actualiser">↻</button>
+          </div>
+
+          <div id="admin-message" class="form-message" role="status" aria-live="polite"></div>
+          <div class="admin-layout">
+            <section class="admin-panel" aria-labelledby="admin-users-title">
+              <header class="admin-panel-header">
+                <h2 id="admin-users-title">Comptes</h2>
+                <span id="admin-users-count" class="result-count"></span>
+              </header>
+              <div id="admin-users" class="admin-users"></div>
+            </section>
+
+            <section class="admin-panel" aria-labelledby="admin-history-title">
+              <header class="admin-panel-header">
+                <h2 id="admin-history-title">Sons</h2>
+                <span id="admin-history-count" class="result-count"></span>
+              </header>
+              <div id="admin-history" class="admin-history">
+                <p class="empty-copy">Sélectionne un compte.</p>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
