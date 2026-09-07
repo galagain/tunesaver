@@ -720,8 +720,11 @@ def prepare_delivery(payload: dict[str, Any], content_dir: Path) -> None:
     if not files:
         raise RuntimeError("aucun fichier téléchargeable n'a été produit")
 
-    audio_count = sum(path.suffix.lower() in AUDIO_EXTENSIONS for path in files)
-    if len(files) == 1:
+    audio_files = [path for path in files if path.suffix.lower() in AUDIO_EXTENSIONS]
+    audio_count = len(audio_files)
+    if audio_count == 1:
+        delivery_path = audio_files[0]
+    elif len(files) == 1:
         delivery_path = files[0]
     else:
         delivery_path = content_dir.parent / f"TuneSaver-{payload['id']}.zip"

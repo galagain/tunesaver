@@ -12,12 +12,12 @@ import mimetypes
 import os
 import re
 import secrets
-import shutil
 import smtplib
 import sqlite3
 import subprocess
 import time
 import uuid
+import zipfile
 from contextlib import contextmanager
 from datetime import date, timedelta
 from email.message import EmailMessage
@@ -27,6 +27,7 @@ from urllib.parse import quote, urlparse
 
 import requests
 from aiohttp import web
+from mutagen import File as MutagenFile
 
 import musicdl
 
@@ -118,7 +119,7 @@ def _security_headers(response: web.StreamResponse, request: web.Request) -> Non
     response.headers["Content-Security-Policy"] = (
         f"default-src 'self'; base-uri 'none'; connect-src {' '.join(connect_sources)}; "
         "font-src 'self'; form-action 'self'; frame-ancestors 'none'; "
-        "img-src 'self'; object-src 'none'; script-src 'self'; style-src 'self'"
+        "img-src 'self' blob: https:; object-src 'none'; script-src 'self'; style-src 'self'"
     )
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = (
@@ -265,6 +266,41 @@ def init_local_store() -> None:
 
             create index if not exists download_history_state_created_idx
               on download_history (state, created_at desc);
+
+            create table if not exists playlists (
+              id text primary key,
+              user_id text not null references users(id) on delete cascade,
+              name text not null,
+              created_at text not null
+            );
+
+            create index if not exists playlists_user_created_idx
+              on playlists (user_id, created_at desc);
+
+            create table if not exists playlist_items (
+              playlist_id text not null references playlists(id) on delete cascade,
+              job_id text not null,
+              created_at text not null,
+              primary key (playlist_id, job_id)
+            );
+
+            create table if not exists tags (
+              id text primary key,
+              user_id text not null references users(id) on delete cascade,
+              name text not null,
+              color text not null,
+              created_at text not null
+            );
+
+            create index if not exists tags_user_created_idx
+              on tags (user_id, created_at desc);
+
+            create table if not exists tag_items (
+              tag_id text not null references tags(id) on delete cascade,
+              job_id text not null,
+              created_at text not null,
+              primary key (tag_id, job_id)
+            );
             """
         )
         columns = {
@@ -732,6 +768,414 @@ def local_daily_history_rows() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def audio_mime_type(name: str) -> str:
+    suffix = Path(name).suffix.lower()
+    if suffix == ".flac":
+        return "audio/flac"
+    if suffix == ".m4a":
+        return "audio/mp4"
+    guessed = mimetypes.guess_type(name)[0] or ""
+    return guessed if guessed.startswith("audio/") else ""
+
+
+def cover_mime_type(name: str) -> str:
+    suffix = Path(name).suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".png":
+        return "image/png"
+    if suffix == ".webp":
+        return "image/webp"
+    guessed = mimetypes.guess_type(name)[0] or ""
+    return guessed if guessed.startswith("image/") else ""
+
+
+def embedded_cover_for_audio(path: Path) -> dict[str, Any] | None:
+    try:
+        audio = MutagenFile(path)
+    except Exception:
+        return None
+    if audio is None:
+        return None
+
+    pictures = getattr(audio, "pictures", None)
+    if pictures:
+        for picture in pictures:
+            data = getattr(picture, "data", b"")
+            mime_type = str(getattr(picture, "mime", "") or "image/jpeg")
+            if data and mime_type.startswith("image/"):
+                return {"data": data, "mime_type": mime_type}
+
+    tags = getattr(audio, "tags", None)
+    if not tags:
+        return None
+    for value in tags.values():
+        if getattr(value, "FrameID", "") == "APIC" and getattr(value, "data", b""):
+            return {
+                "data": value.data,
+                "mime_type": str(getattr(value, "mime", "") or "image/jpeg"),
+            }
+    covers = tags.get("covr") if hasattr(tags, "get") else None
+    if covers:
+        for cover in covers:
+            data = bytes(cover)
+            image_format = getattr(cover, "imageformat", None)
+            mime_type = "image/png" if image_format == 14 else "image/jpeg"
+            if data:
+                return {"data": data, "mime_type": mime_type}
+    return None
+
+
+def zip_members(path: Path) -> list[zipfile.ZipInfo]:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return [
+                item
+                for item in archive.infolist()
+                if not item.is_dir() and not Path(item.filename).name.startswith(".")
+            ]
+    except (OSError, zipfile.BadZipFile):
+        return []
+
+
+def single_zip_audio(path: Path) -> zipfile.ZipInfo | None:
+    audio_members = [
+        item
+        for item in zip_members(path)
+        if Path(item.filename).suffix.lower() in musicdl.AUDIO_EXTENSIONS
+    ]
+    return audio_members[0] if len(audio_members) == 1 else None
+
+
+def zip_cover(path: Path) -> dict[str, Any] | None:
+    image_members = [
+        item
+        for item in zip_members(path)
+        if cover_mime_type(Path(item.filename).name)
+    ]
+    if not image_members:
+        return None
+    preferred_names = {"cover", "folder", "front", "album", "artwork"}
+    image_members.sort(
+        key=lambda item: (
+            Path(item.filename).stem.lower() not in preferred_names,
+            item.file_size,
+            item.filename.lower(),
+        )
+    )
+    member = image_members[0]
+    try:
+        with zipfile.ZipFile(path) as archive:
+            data = archive.read(member)
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return None
+    return {"data": data, "mime_type": cover_mime_type(Path(member.filename).name)}
+
+
+def delivery_for_job(job_id: str, owner_id: str) -> dict[str, Any] | None:
+    try:
+        _path, job = find_done_job(job_id)
+    except PublicError:
+        return None
+    if job.get("owner_id") != owner_id:
+        return None
+    delivery = job.get("delivery")
+    if not isinstance(delivery, dict) or not isinstance(delivery.get("path"), str):
+        return None
+    candidate = (musicdl.DELIVERY_ROOT / delivery["path"]).resolve()
+    root = musicdl.DELIVERY_ROOT.resolve()
+    if (
+        not candidate.is_relative_to(root)
+        or not candidate.is_file()
+        or candidate.is_symlink()
+    ):
+        return None
+    name = str(delivery.get("name") or candidate.name)
+    mime_type = audio_mime_type(name)
+    if not mime_type and candidate.suffix.lower() == ".zip":
+        member = single_zip_audio(candidate)
+        if member:
+            name = Path(member.filename).name
+            mime_type = audio_mime_type(name)
+    return {
+        "name": name,
+        "size": candidate.stat().st_size,
+        "mime_type": mime_type,
+        "path": candidate,
+    }
+
+
+def cover_for_job(job_id: str, owner_id: str) -> dict[str, Any] | None:
+    delivery = delivery_for_job(job_id, owner_id)
+    if not delivery:
+        return None
+    delivery_path = delivery["path"]
+    if delivery_path.suffix.lower() == ".zip":
+        return zip_cover(delivery_path)
+    embedded = embedded_cover_for_audio(delivery_path)
+    if embedded:
+        return embedded
+    search_dirs = [delivery_path.parent]
+    candidates: list[Path] = []
+    for directory in search_dirs:
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if path.is_file() and not path.is_symlink() and cover_mime_type(path.name):
+                candidates.append(path)
+    if not candidates:
+        return None
+    preferred_names = {"cover", "folder", "front", "album", "artwork"}
+    candidates.sort(
+        key=lambda path: (
+            Path(path.stem.lower()).name not in preferred_names,
+            path.stat().st_size,
+            path.name.lower(),
+        )
+    )
+    path = candidates[0]
+    return {"path": path, "mime_type": cover_mime_type(path.name)}
+
+
+def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
+    tracks = []
+    tags_by_job = local_track_tag_map(user_id)
+    for row in local_user_history(user_id, limit=500, offset=0):
+        if row["state"] != "done":
+            continue
+        delivery = delivery_for_job(row["job_id"], user_id)
+        if not delivery:
+            continue
+        cover = cover_for_job(row["job_id"], user_id)
+        tracks.append({
+            **row,
+            "file_name": delivery["name"],
+            "file_size": delivery["size"],
+            "streamable": bool(delivery["mime_type"]),
+            "cover_url": f"/api/covers/{row['job_id']}" if cover else "",
+            "tags": tags_by_job.get(row["job_id"], []),
+        })
+    return tracks
+
+
+def normalize_playlist_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "name": str(row["name"])[:80],
+        "created_at": str(row["created_at"] or "")[:40],
+        "track_ids": [
+            value for value in str(row["track_ids"] or "").split("\n") if value
+        ],
+    }
+
+
+def local_playlists(user_id: str) -> list[dict[str, Any]]:
+    with local_db() as db:
+        rows = db.execute(
+            """
+            select
+              playlists.id,
+              playlists.name,
+              playlists.created_at,
+              group_concat(playlist_items.job_id, char(10)) as track_ids
+            from playlists
+            left join playlist_items on playlist_items.playlist_id = playlists.id
+            where playlists.user_id = ?
+            group by playlists.id
+            order by playlists.created_at desc
+            """,
+            (user_id,),
+        ).fetchall()
+    return [normalize_playlist_row(row) for row in rows]
+
+
+def normalize_tag_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "name": str(row["name"])[:40],
+        "color": str(row["color"] or "#665cff")[:16],
+        "created_at": str(row["created_at"] or "")[:40],
+        "track_ids": [
+            value for value in str(row["track_ids"] or "").split("\n") if value
+        ],
+    }
+
+
+def local_tags(user_id: str) -> list[dict[str, Any]]:
+    with local_db() as db:
+        rows = db.execute(
+            """
+            select
+              tags.id,
+              tags.name,
+              tags.color,
+              tags.created_at,
+              group_concat(tag_items.job_id, char(10)) as track_ids
+            from tags
+            left join tag_items on tag_items.tag_id = tags.id
+            where tags.user_id = ?
+            group by tags.id
+            order by tags.created_at desc
+            """,
+            (user_id,),
+        ).fetchall()
+    return [normalize_tag_row(row) for row in rows]
+
+
+def local_track_tag_map(user_id: str) -> dict[str, list[dict[str, str]]]:
+    with local_db() as db:
+        rows = db.execute(
+            """
+            select tag_items.job_id, tags.id, tags.name, tags.color
+            from tag_items
+            join tags on tags.id = tag_items.tag_id
+            where tags.user_id = ?
+            order by tag_items.created_at desc
+            """,
+            (user_id,),
+        ).fetchall()
+    tag_map: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        tag_map.setdefault(str(row["job_id"]), []).append({
+            "id": str(row["id"]),
+            "name": str(row["name"])[:40],
+            "color": str(row["color"] or "#665cff")[:16],
+        })
+    return tag_map
+
+
+def local_create_playlist(user_id: str, name: str) -> dict[str, Any]:
+    name = re.sub(r"\s+", " ", name.strip())[:80]
+    if not name:
+        raise PublicError("Nom de playlist invalide.")
+    playlist_id = str(uuid.uuid4())
+    created_at = utc_timestamp()
+    with local_db() as db:
+        db.execute(
+            "insert into playlists (id, user_id, name, created_at) values (?, ?, ?, ?)",
+            (playlist_id, user_id, name, created_at),
+        )
+    return {"id": playlist_id, "name": name, "created_at": created_at, "track_ids": []}
+
+
+TAG_COLORS = ["#665cff", "#14866d", "#d14d72", "#9b6b00", "#2878b8", "#6f55a3"]
+
+
+def normalize_tag_color(color: Any, seed: str) -> str:
+    if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color.strip()):
+        return color.strip().lower()
+    return TAG_COLORS[sum(seed.encode()) % len(TAG_COLORS)]
+
+
+def local_create_tag(user_id: str, name: str, color: Any = "") -> dict[str, Any]:
+    name = re.sub(r"\s+", " ", name.strip())[:40]
+    if not name:
+        raise PublicError("Nom de tag invalide.")
+    tag_id = str(uuid.uuid4())
+    created_at = utc_timestamp()
+    tag_color = normalize_tag_color(color, name)
+    with local_db() as db:
+        db.execute(
+            "insert into tags (id, user_id, name, color, created_at) values (?, ?, ?, ?, ?)",
+            (tag_id, user_id, name, tag_color, created_at),
+        )
+    return {
+        "id": tag_id,
+        "name": name,
+        "color": tag_color,
+        "created_at": created_at,
+        "track_ids": [],
+    }
+
+
+def local_delete_playlist(user_id: str, playlist_id: str) -> bool:
+    with local_db() as db:
+        cursor = db.execute(
+            "delete from playlists where id = ? and user_id = ?",
+            (playlist_id, user_id),
+        )
+    return cursor.rowcount > 0
+
+
+def local_delete_tag(user_id: str, tag_id: str) -> bool:
+    with local_db() as db:
+        cursor = db.execute(
+            "delete from tags where id = ? and user_id = ?",
+            (tag_id, user_id),
+        )
+    return cursor.rowcount > 0
+
+
+def local_playlist_has_owner(db: sqlite3.Connection, playlist_id: str, user_id: str) -> bool:
+    row = db.execute(
+        "select 1 from playlists where id = ? and user_id = ?",
+        (playlist_id, user_id),
+    ).fetchone()
+    return row is not None
+
+
+def local_tag_has_owner(db: sqlite3.Connection, tag_id: str, user_id: str) -> bool:
+    row = db.execute(
+        "select 1 from tags where id = ? and user_id = ?",
+        (tag_id, user_id),
+    ).fetchone()
+    return row is not None
+
+
+def local_playlist_add_track(user_id: str, playlist_id: str, job_id: str) -> None:
+    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+        raise PublicError("Morceau invalide.", status=404)
+    if not delivery_for_job(job_id, user_id):
+        raise PublicError("Morceau introuvable.", status=404)
+    with local_db() as db:
+        if not local_playlist_has_owner(db, playlist_id, user_id):
+            raise PublicError("Playlist introuvable.", status=404)
+        db.execute(
+            """
+            insert or ignore into playlist_items (playlist_id, job_id, created_at)
+            values (?, ?, ?)
+            """,
+            (playlist_id, job_id, utc_timestamp()),
+        )
+
+
+def local_tag_add_track(user_id: str, tag_id: str, job_id: str) -> None:
+    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+        raise PublicError("Morceau invalide.", status=404)
+    if not delivery_for_job(job_id, user_id):
+        raise PublicError("Morceau introuvable.", status=404)
+    with local_db() as db:
+        if not local_tag_has_owner(db, tag_id, user_id):
+            raise PublicError("Tag introuvable.", status=404)
+        db.execute(
+            """
+            insert or ignore into tag_items (tag_id, job_id, created_at)
+            values (?, ?, ?)
+            """,
+            (tag_id, job_id, utc_timestamp()),
+        )
+
+
+def local_playlist_remove_track(user_id: str, playlist_id: str, job_id: str) -> None:
+    with local_db() as db:
+        if not local_playlist_has_owner(db, playlist_id, user_id):
+            raise PublicError("Playlist introuvable.", status=404)
+        db.execute(
+            "delete from playlist_items where playlist_id = ? and job_id = ?",
+            (playlist_id, job_id),
+        )
+
+
+def local_tag_remove_track(user_id: str, tag_id: str, job_id: str) -> None:
+    with local_db() as db:
+        if not local_tag_has_owner(db, tag_id, user_id):
+            raise PublicError("Tag introuvable.", status=404)
+        db.execute(
+            "delete from tag_items where tag_id = ? and job_id = ?",
+            (tag_id, job_id),
+        )
+
+
 async def authenticate_request(request: web.Request) -> dict[str, str]:
     authorization = request.headers.get("Authorization", "")
     if not authorization.startswith("Bearer "):
@@ -795,7 +1239,11 @@ async def api_middleware(
         }
         if request.path.startswith("/api/admin/") and request.path not in public_paths:
             request["admin"] = await authenticate_admin_request(request)
-        elif request.path not in public_paths and not request.path.startswith("/api/files/"):
+        elif (
+            request.path not in public_paths
+            and not request.path.startswith("/api/files/")
+            and not request.path.startswith("/api/stream/")
+        ):
             request["user"] = await authenticate_request(request)
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             _check_same_origin(request)
@@ -919,6 +1367,82 @@ def format_duration(seconds: Any) -> str:
     return f"{minutes}:{remaining:02d}"
 
 
+def tidal_image_url(image_id: Any, *, size: int = 320) -> str:
+    value = str(image_id or "").strip()
+    if not re.fullmatch(r"[0-9a-fA-F-]{32,36}", value):
+        return ""
+    path = value.replace("-", "/")
+    return f"https://resources.tidal.com/images/{path}/{size}x{size}.jpg"
+
+
+def first_image_url(value: Any) -> str:
+    if isinstance(value, str):
+        url = value.strip()
+        if url.startswith("//"):
+            url = f"https:{url}"
+        if url.startswith("https://"):
+            return (
+                url.replace("{w}", "320")
+                .replace("{h}", "320")
+                .replace("{width}", "320")
+                .replace("{height}", "320")
+            )
+    if isinstance(value, dict):
+        for key in ("url", "uri", "dynamic_uri", "large", "small", "thumbnail"):
+            result = first_image_url(value.get(key))
+            if result:
+                return result
+        for nested in value.values():
+            result = first_image_url(nested)
+            if result:
+                return result
+    if isinstance(value, list):
+        for item in value:
+            result = first_image_url(item)
+            if result:
+                return result
+    return ""
+
+
+def normalized_result(
+    *,
+    item_id: str,
+    provider: str,
+    platform: str,
+    title: str,
+    artist: str,
+    album: str,
+    label: str = "",
+    mix: str = "",
+    quality: str = "",
+    bpm: str = "",
+    key: str = "",
+    duration: str = "",
+    cover_url: str = "",
+    source_url: str,
+) -> dict[str, Any]:
+    parts = [part for part in (album, label, mix, quality, bpm, key, duration) if part]
+    return {
+        "id": f"{provider}:track:{item_id}",
+        "provider": provider,
+        "platform": platform,
+        "kind": "track",
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "label": label,
+        "mix": mix,
+        "quality": quality,
+        "bpm": bpm,
+        "key": key,
+        "duration": duration,
+        "details": " · ".join(parts),
+        "cover_url": cover_url,
+        "source_url": source_url,
+        "download_url": source_url,
+    }
+
+
 def normalize_tidal_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
     tracks_block = payload.get("tracks")
     if tracks_block is None:
@@ -961,26 +1485,24 @@ def normalize_tidal_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
         ]
         artist = ", ".join(artist_names)
         album = track.get("album") if isinstance(track.get("album"), dict) else {}
-        details = [str(album.get("title", "")).strip()]
+        album_title = str(album.get("title", "")).strip()
         quality = str(track.get("audioQuality", "")).replace("_", " ").strip()
-        if quality:
-            details.append(quality)
         duration = format_duration(track.get("duration"))
-        if duration:
-            details.append(duration)
+        cover_url = tidal_image_url(album.get("cover")) or first_image_url(album)
         download_url = f"https://listen.tidal.com/track/{track_id}"
         normalized.append(
-            {
-                "id": f"tiddl:track:{track_id}",
-                "provider": "tiddl",
-                "platform": "TIDAL",
-                "kind": "track",
-                "title": title,
-                "artist": artist,
-                "details": " · ".join(part for part in details if part),
-                "source_url": download_url,
-                "download_url": download_url,
-            }
+            normalized_result(
+                item_id=track_id,
+                provider="tiddl",
+                platform="TIDAL",
+                title=title,
+                artist=artist,
+                album=album_title,
+                quality=quality,
+                duration=duration,
+                cover_url=cover_url,
+                source_url=download_url,
+            )
         )
         seen.add(track_id)
         if len(normalized) >= RESULT_LIMIT:
@@ -1015,29 +1537,37 @@ def normalize_beatport_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if mix_name and mix_name.lower() != "original mix":
             details.append(mix_name)
         release = track.get("release") if isinstance(track.get("release"), dict) else {}
-        if release.get("name"):
-            details.append(str(release["name"]).strip())
+        album_title = str(release.get("name", "")).strip()
+        label = ""
+        label_payload = track.get("label") if isinstance(track.get("label"), dict) else {}
+        release_label = release.get("label") if isinstance(release.get("label"), dict) else {}
+        for candidate in (label_payload, release_label):
+            if candidate.get("name"):
+                label = str(candidate["name"]).strip()
+                break
         bpm = track.get("bpm")
-        if isinstance(bpm, (int, float)) and bpm:
-            details.append(f"{int(bpm)} BPM")
+        bpm_label = f"{int(bpm)} BPM" if isinstance(bpm, (int, float)) and bpm else ""
         key = track.get("key") if isinstance(track.get("key"), dict) else {}
-        if key.get("name"):
-            details.append(str(key["name"]).strip())
+        key_label = str(key.get("name", "")).strip()
+        cover_url = first_image_url(track.get("image")) or first_image_url(release.get("image")) or first_image_url(track.get("images")) or first_image_url(release.get("images"))
 
         safe_slug = quote(slug, safe="-")
         download_url = f"https://www.beatport.com/track/{safe_slug}/{track_id}"
         normalized.append(
-            {
-                "id": f"beatport:track:{track_id}",
-                "provider": "beatport",
-                "platform": "Beatport",
-                "kind": "track",
-                "title": title,
-                "artist": ", ".join(artist_names),
-                "details": " · ".join(part for part in details if part),
-                "source_url": download_url,
-                "download_url": download_url,
-            }
+            normalized_result(
+                item_id=track_id,
+                provider="beatport",
+                platform="Beatport",
+                title=title,
+                artist=", ".join(artist_names),
+                album=album_title,
+                label=label,
+                mix=mix_name if mix_name.lower() != "original mix" else "",
+                bpm=bpm_label,
+                key=key_label,
+                cover_url=cover_url,
+                source_url=download_url,
+            )
         )
         seen.add(track_id)
         if len(normalized) >= RESULT_LIMIT:
@@ -1061,30 +1591,34 @@ def normalize_qobuz_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
         performer = track.get("performer") if isinstance(track.get("performer"), dict) else {}
         artist = str(performer.get("name", "")).strip()
         album = track.get("album") if isinstance(track.get("album"), dict) else {}
-        details = [str(album.get("title", "")).strip()]
+        album_title = str(album.get("title", "")).strip()
+        quality = ""
         if track.get("hires_streamable") is True:
             bit_depth = track.get("maximum_bit_depth")
             sampling_rate = track.get("maximum_sampling_rate")
             if bit_depth and sampling_rate:
-                details.append(f"Hi-Res {bit_depth}-bit/{sampling_rate} kHz")
+                quality = f"Hi-Res {bit_depth}-bit/{sampling_rate} kHz"
             else:
-                details.append("Hi-Res")
+                quality = "Hi-Res"
         duration = format_duration(track.get("duration"))
-        if duration:
-            details.append(duration)
+        label_payload = album.get("label") if isinstance(album.get("label"), dict) else {}
+        label = str(label_payload.get("name", "")).strip()
+        cover_url = first_image_url(album.get("image")) or first_image_url(track.get("image"))
         download_url = f"https://play.qobuz.com/track/{quote(track_id, safe='')}"
         normalized.append(
-            {
-                "id": f"qobuz:track:{track_id}",
-                "provider": "qobuz",
-                "platform": "Qobuz",
-                "kind": "track",
-                "title": title,
-                "artist": artist,
-                "details": " · ".join(part for part in details if part),
-                "source_url": download_url,
-                "download_url": download_url,
-            }
+            normalized_result(
+                item_id=track_id,
+                provider="qobuz",
+                platform="Qobuz",
+                title=title,
+                artist=artist,
+                album=album_title,
+                label=label,
+                quality=quality,
+                duration=duration,
+                cover_url=cover_url,
+                source_url=download_url,
+            )
         )
         seen.add(track_id)
         if len(normalized) >= RESULT_LIMIT:
@@ -1856,6 +2390,165 @@ async def history_handler(request: web.Request) -> web.Response:
     return web.json_response({"history": rows})
 
 
+async def library_handler(request: web.Request) -> web.Response:
+    user_id = request["user"]["id"]
+    tracks, playlists, tags = await asyncio.gather(
+        asyncio.to_thread(local_library_tracks, user_id),
+        asyncio.to_thread(local_playlists, user_id),
+        asyncio.to_thread(local_tags, user_id),
+    )
+    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags})
+
+
+async def cover_handler(request: web.Request) -> web.StreamResponse:
+    job_id = request.match_info.get("job_id", "")
+    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+        raise PublicError("Pochette introuvable.", status=404)
+    cover = await asyncio.to_thread(cover_for_job, job_id, request["user"]["id"])
+    if not cover:
+        raise PublicError("Pochette introuvable.", status=404)
+    if "data" in cover:
+        return web.Response(
+            body=cover["data"],
+            headers={
+                "Content-Type": cover["mime_type"],
+                "Cache-Control": "private, max-age=3600",
+            },
+        )
+    response = web.FileResponse(cover["path"], headers={"Content-Type": cover["mime_type"]})
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response
+
+
+async def playlist_create_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    name = payload.get("name")
+    if not isinstance(name, str):
+        raise PublicError("Nom de playlist invalide.")
+    playlist = await asyncio.to_thread(
+        local_create_playlist,
+        request["user"]["id"],
+        name,
+    )
+    return web.json_response({"playlist": playlist}, status=201)
+
+
+async def playlist_delete_handler(request: web.Request) -> web.Response:
+    playlist_id = request.match_info.get("playlist_id", "")
+    try:
+        playlist_id = str(uuid.UUID(playlist_id))
+    except ValueError as exc:
+        raise PublicError("Playlist introuvable.", status=404) from exc
+    deleted = await asyncio.to_thread(
+        local_delete_playlist,
+        request["user"]["id"],
+        playlist_id,
+    )
+    if not deleted:
+        raise PublicError("Playlist introuvable.", status=404)
+    return web.json_response({"deleted": True})
+
+
+async def tag_create_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    name = payload.get("name")
+    if not isinstance(name, str):
+        raise PublicError("Nom de tag invalide.")
+    tag = await asyncio.to_thread(
+        local_create_tag,
+        request["user"]["id"],
+        name,
+        payload.get("color"),
+    )
+    return web.json_response({"tag": tag}, status=201)
+
+
+async def tag_delete_handler(request: web.Request) -> web.Response:
+    tag_id = request.match_info.get("tag_id", "")
+    try:
+        tag_id = str(uuid.UUID(tag_id))
+    except ValueError as exc:
+        raise PublicError("Tag introuvable.", status=404) from exc
+    deleted = await asyncio.to_thread(
+        local_delete_tag,
+        request["user"]["id"],
+        tag_id,
+    )
+    if not deleted:
+        raise PublicError("Tag introuvable.", status=404)
+    return web.json_response({"deleted": True})
+
+
+async def playlist_track_add_handler(request: web.Request) -> web.Response:
+    playlist_id = request.match_info.get("playlist_id", "")
+    try:
+        playlist_id = str(uuid.UUID(playlist_id))
+    except ValueError as exc:
+        raise PublicError("Playlist introuvable.", status=404) from exc
+    payload = await read_json_object(request)
+    job_id = payload.get("job_id")
+    if not isinstance(job_id, str):
+        raise PublicError("Morceau invalide.", status=404)
+    await asyncio.to_thread(
+        local_playlist_add_track,
+        request["user"]["id"],
+        playlist_id,
+        job_id,
+    )
+    return web.json_response({"added": True})
+
+
+async def tag_track_add_handler(request: web.Request) -> web.Response:
+    tag_id = request.match_info.get("tag_id", "")
+    try:
+        tag_id = str(uuid.UUID(tag_id))
+    except ValueError as exc:
+        raise PublicError("Tag introuvable.", status=404) from exc
+    payload = await read_json_object(request)
+    job_id = payload.get("job_id")
+    if not isinstance(job_id, str):
+        raise PublicError("Morceau invalide.", status=404)
+    await asyncio.to_thread(
+        local_tag_add_track,
+        request["user"]["id"],
+        tag_id,
+        job_id,
+    )
+    return web.json_response({"added": True})
+
+
+async def playlist_track_delete_handler(request: web.Request) -> web.Response:
+    playlist_id = request.match_info.get("playlist_id", "")
+    job_id = request.match_info.get("job_id", "")
+    try:
+        playlist_id = str(uuid.UUID(playlist_id))
+    except ValueError as exc:
+        raise PublicError("Playlist introuvable.", status=404) from exc
+    await asyncio.to_thread(
+        local_playlist_remove_track,
+        request["user"]["id"],
+        playlist_id,
+        job_id,
+    )
+    return web.json_response({"removed": True})
+
+
+async def tag_track_delete_handler(request: web.Request) -> web.Response:
+    tag_id = request.match_info.get("tag_id", "")
+    job_id = request.match_info.get("job_id", "")
+    try:
+        tag_id = str(uuid.UUID(tag_id))
+    except ValueError as exc:
+        raise PublicError("Tag introuvable.", status=404) from exc
+    await asyncio.to_thread(
+        local_tag_remove_track,
+        request["user"]["id"],
+        tag_id,
+        job_id,
+    )
+    return web.json_response({"removed": True})
+
+
 def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         raise SourceError("Réponse statistiques invalide.")
@@ -2000,6 +2693,26 @@ async def ticket_handler(request: web.Request) -> web.Response:
     return web.json_response({"url": f"/api/files/{job_id}?ticket={quote(token)}"})
 
 
+async def stream_ticket_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    job_id = payload.get("job_id")
+    if not isinstance(job_id, str):
+        raise PublicError("Morceau invalide.")
+    path, job = find_done_job(job_id)
+    if job.get("owner_id") != request["user"]["id"]:
+        raise PublicError("Morceau introuvable.", status=404)
+    delivery = delivery_for_job(job_id, request["user"]["id"])
+    if not delivery:
+        raise PublicError("Morceau introuvable.", status=404)
+    if not delivery["mime_type"]:
+        raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
+    token = secrets.token_urlsafe(32)
+    job["stream_ticket_hash"] = hashlib.sha256(token.encode()).hexdigest()
+    job["stream_ticket_expires"] = int(time.time()) + DOWNLOAD_TICKET_SECONDS
+    musicdl.atomic_write_json(path, job)
+    return web.json_response({"url": f"/api/stream/{job_id}?ticket={quote(token)}"})
+
+
 async def file_handler(request: web.Request) -> web.StreamResponse:
     job_id = request.match_info.get("job_id", "")
     ticket = request.query.get("ticket", "")
@@ -2043,24 +2756,76 @@ async def file_handler(request: web.Request) -> web.StreamResponse:
         }
     )
     await response.prepare(request)
-    completed = False
+    with candidate.open("rb") as handle:
+        while chunk := await asyncio.to_thread(handle.read, 1024 * 1024):
+            await response.write(chunk)
+    await response.write_eof()
+    job["delivered_at"] = musicdl.utc_now()
+    job["delivery_deleted"] = False
+    musicdl.atomic_write_json(path, job)
+    return response
+
+
+async def zip_audio_response(
+    request: web.Request,
+    path: Path,
+    member: zipfile.ZipInfo,
+) -> web.StreamResponse:
+    content_type = audio_mime_type(Path(member.filename).name)
+    if not content_type:
+        raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
+    response = web.StreamResponse(
+        headers={
+            "Content-Type": content_type,
+            "Content-Length": str(member.file_size),
+            "Accept-Ranges": "none",
+        }
+    )
+    await response.prepare(request)
     try:
-        with candidate.open("rb") as handle:
-            while chunk := await asyncio.to_thread(handle.read, 1024 * 1024):
-                await response.write(chunk)
-        await response.write_eof()
-        completed = True
-        return response
-    finally:
-        if completed:
-            owner_id = str(uuid.UUID(str(job["owner_id"])))
-            job_root = musicdl.DELIVERY_ROOT / owner_id / job_id
-            if job_root.is_dir():
-                shutil.rmtree(job_root)
-            job["delivered_at"] = musicdl.utc_now()
-            job["delivery_deleted"] = True
-            job.pop("delivery", None)
-            musicdl.atomic_write_json(path, job)
+        with zipfile.ZipFile(path) as archive:
+            with archive.open(member) as handle:
+                while chunk := await asyncio.to_thread(handle.read, 1024 * 1024):
+                    await response.write(chunk)
+    except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        raise PublicError("Fichier audio illisible.", status=404) from exc
+    await response.write_eof()
+    return response
+
+
+async def stream_handler(request: web.Request) -> web.StreamResponse:
+    job_id = request.match_info.get("job_id", "")
+    ticket = request.query.get("ticket", "")
+    _path, job = find_done_job(job_id)
+    expected = str(job.get("stream_ticket_hash", ""))
+    expires = int(job.get("stream_ticket_expires", 0))
+    actual = hashlib.sha256(ticket.encode()).hexdigest() if ticket else ""
+    if (
+        not expected
+        or expires < int(time.time())
+        or not secrets.compare_digest(expected, actual)
+    ):
+        raise PublicError("Lien de lecture invalide ou expiré.", status=403)
+    delivery = job.get("delivery")
+    if not isinstance(delivery, dict) or not isinstance(delivery.get("path"), str):
+        raise PublicError("Morceau introuvable.", status=404)
+    candidate = (musicdl.DELIVERY_ROOT / delivery["path"]).resolve()
+    root = musicdl.DELIVERY_ROOT.resolve()
+    if (
+        not candidate.is_relative_to(root)
+        or not candidate.is_file()
+        or candidate.is_symlink()
+    ):
+        raise PublicError("Fichier introuvable.", status=404)
+    name = str(delivery.get("name") or candidate.name)
+    content_type = audio_mime_type(name)
+    if not content_type and candidate.suffix.lower() == ".zip":
+        member = single_zip_audio(candidate)
+        if member:
+            return await zip_audio_response(request, candidate, member)
+    if not content_type:
+        raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
+    return web.FileResponse(candidate, headers={"Content-Type": content_type})
 
 
 async def config_handler(_request: web.Request) -> web.Response:
@@ -2117,6 +2882,22 @@ def create_app() -> web.Application:
     app.router.add_post("/api/logout", logout_handler)
     app.router.add_post("/api/history", history_sync_handler)
     app.router.add_get("/api/history", history_handler)
+    app.router.add_get("/api/library", library_handler)
+    app.router.add_get("/api/covers/{job_id}", cover_handler)
+    app.router.add_post("/api/playlists", playlist_create_handler)
+    app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)
+    app.router.add_post("/api/tags", tag_create_handler)
+    app.router.add_delete("/api/tags/{tag_id}", tag_delete_handler)
+    app.router.add_post("/api/playlists/{playlist_id}/tracks", playlist_track_add_handler)
+    app.router.add_delete(
+        "/api/playlists/{playlist_id}/tracks/{job_id}",
+        playlist_track_delete_handler,
+    )
+    app.router.add_post("/api/tags/{tag_id}/tracks", tag_track_add_handler)
+    app.router.add_delete(
+        "/api/tags/{tag_id}/tracks/{job_id}",
+        tag_track_delete_handler,
+    )
     app.router.add_post("/api/admin/login", admin_login_handler)
     app.router.add_get("/api/admin/profiles", admin_profiles_handler)
     app.router.add_patch("/api/admin/profiles/{user_id}", admin_profile_handler)
@@ -2129,7 +2910,9 @@ def create_app() -> web.Application:
     app.router.add_post("/api/download", download_handler)
     app.router.add_post("/api/downloads", batch_download_handler)
     app.router.add_post("/api/download-ticket", ticket_handler)
+    app.router.add_post("/api/stream-ticket", stream_ticket_handler)
     app.router.add_get("/api/files/{job_id}", file_handler)
+    app.router.add_get("/api/stream/{job_id}", stream_handler)
     return app
 
 

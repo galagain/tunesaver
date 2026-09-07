@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -132,7 +133,10 @@ class WebAppFunctionTests(unittest.TestCase):
                         "streamReady": True,
                         "audioQuality": "LOSSLESS",
                         "artists": [{"name": "Artist"}],
-                        "album": {"title": "Album"},
+                        "album": {
+                            "title": "Album",
+                            "cover": "12345678-1234-1234-1234-123456789abc",
+                        },
                     },
                     {
                         "id": 999,
@@ -147,6 +151,9 @@ class WebAppFunctionTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["title"], "Example")
         self.assertEqual(results[0]["artist"], "Artist")
+        self.assertEqual(results[0]["album"], "Album")
+        self.assertEqual(results[0]["quality"], "LOSSLESS")
+        self.assertTrue(results[0]["cover_url"].endswith("/320x320.jpg"))
         self.assertIn("3:07", results[0]["details"])
 
     def test_tidal_top_hit_is_included_and_null_tracks_are_safe(self) -> None:
@@ -175,7 +182,11 @@ class WebAppFunctionTests(unittest.TestCase):
                     "slug": "example",
                     "bpm": 128,
                     "artists": [{"name": "Producer"}],
-                    "release": {"name": "Release"},
+                    "release": {
+                        "name": "Release",
+                        "image": {"uri": "https://img.example/cover.jpg"},
+                    },
+                    "label": {"name": "Label"},
                     "key": {"name": "A Minor"},
                 }
             ]
@@ -183,6 +194,11 @@ class WebAppFunctionTests(unittest.TestCase):
         result = webapp.normalize_beatport_results(payload)[0]
         self.assertEqual(result["provider"], "beatport")
         self.assertEqual(result["artist"], "Producer")
+        self.assertEqual(result["album"], "Release")
+        self.assertEqual(result["label"], "Label")
+        self.assertEqual(result["bpm"], "128 BPM")
+        self.assertEqual(result["key"], "A Minor")
+        self.assertEqual(result["cover_url"], "https://img.example/cover.jpg")
         self.assertIn("128 BPM", result["details"])
         self.assertTrue(result["download_url"].endswith("/example/456"))
 
@@ -203,12 +219,19 @@ class WebAppFunctionTests(unittest.TestCase):
                 "maximum_bit_depth": 24,
                 "maximum_sampling_rate": 96,
                 "performer": {"name": "Artist"},
-                "album": {"title": "Album"},
+                "album": {
+                    "title": "Album",
+                    "label": {"name": "Qobuz Label"},
+                    "image": {"large": "https://img.example/qobuz.jpg"},
+                },
             }]}
         }
         result = webapp.normalize_qobuz_results(payload)[0]
         self.assertEqual(result["provider"], "qobuz")
         self.assertEqual(result["artist"], "Artist")
+        self.assertEqual(result["album"], "Album")
+        self.assertEqual(result["label"], "Qobuz Label")
+        self.assertEqual(result["cover_url"], "https://img.example/qobuz.jpg")
         self.assertIn("Hi-Res", result["details"])
         self.assertTrue(result["download_url"].endswith("/789"))
 
@@ -686,7 +709,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             "https://tunesaver.galagain.com",
         )
 
-    async def test_browser_delivery_is_private_one_time_and_deleted(self) -> None:
+    async def test_browser_delivery_is_private_and_kept_for_library(self) -> None:
         job_id = musicdl.enqueue(
             "tiddl",
             ["track/123"],
@@ -742,11 +765,196 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(await response.read(), b"test-audio")
 
-        self.assertFalse(job_root.exists())
+        self.assertTrue(job_root.exists())
         delivered = musicdl.load_job(done, expected_provider="tiddl")
-        self.assertNotIn("delivery", delivered)
-        self.assertTrue(delivered["delivery_deleted"])
+        self.assertIn("delivery", delivered)
+        self.assertFalse(delivered["delivery_deleted"])
         self.assertIn("delivered_at", delivered)
+
+    async def test_library_stream_and_playlists_use_owned_deliveries(self) -> None:
+        user = webapp.local_create_user("library@example.com", "secret123")
+        user_id = user["id"]
+        job_id = musicdl.enqueue(
+            "tiddl",
+            ["track/123"],
+            metadata={"title": "Library track", "artist": "Artist", "kind": "track"},
+            owner_id=user_id,
+            ephemeral=True,
+        )
+        pending = musicdl.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
+        done = musicdl.QUEUE_ROOT / "done" / "tiddl" / f"{job_id}.json"
+        job = musicdl.load_job(pending, expected_provider="tiddl")
+        job_root = musicdl.DELIVERY_ROOT / user_id / job_id
+        delivery_path = job_root / "TuneSaver-test.flac"
+        delivery_path.parent.mkdir(parents=True)
+        delivery_path.write_bytes(b"test-audio")
+        cover_path = job_root / "cover.jpg"
+        cover_path.write_bytes(b"fake-cover")
+        job["delivery"] = {
+            "name": delivery_path.name,
+            "path": str(delivery_path.relative_to(musicdl.DELIVERY_ROOT)),
+            "size": delivery_path.stat().st_size,
+        }
+        musicdl.atomic_write_json(done, job)
+        pending.unlink()
+        webapp.local_upsert_history(user_id, [{
+            "job_id": job_id,
+            "provider": "tiddl",
+            "title": "Library track",
+            "artist": "Artist",
+            "resource_kind": "track",
+            "state": "done",
+            "created_at": job["created_at"],
+        }])
+
+        self.app_state[webapp.AUTH_CACHE_KEY] = {
+            hashlib.sha256(TEST_TOKEN.encode()).hexdigest(): (
+                time.monotonic() + 3600,
+                {"id": user_id, "email": "library@example.com"},
+            )
+        }
+        app = webapp.create_app()
+        app[webapp.AUTH_CACHE_KEY].update(self.app_state[webapp.AUTH_CACHE_KEY])
+        async with TestClient(TestServer(app)) as client:
+            library = await client.get(
+                "/api/library",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(library.status, 200)
+            library_payload = await library.json()
+            self.assertEqual(library_payload["tracks"][0]["job_id"], job_id)
+            self.assertTrue(library_payload["tracks"][0]["streamable"])
+            self.assertEqual(library_payload["tracks"][0]["cover_url"], f"/api/covers/{job_id}")
+
+            playlist = await client.post(
+                "/api/playlists",
+                json={"name": "Favorites"},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            playlist_id = (await playlist.json())["playlist"]["id"]
+            added = await client.post(
+                f"/api/playlists/{playlist_id}/tracks",
+                json={"job_id": job_id},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(added.status, 200)
+
+            tag = await client.post(
+                "/api/tags",
+                json={"name": "Peak time"},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(tag.status, 201)
+            tag_id = (await tag.json())["tag"]["id"]
+            tagged = await client.post(
+                f"/api/tags/{tag_id}/tracks",
+                json={"job_id": job_id},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(tagged.status, 200)
+
+            updated_library = await client.get(
+                "/api/library",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            updated_payload = await updated_library.json()
+            self.assertEqual(updated_payload["tags"][0]["track_ids"], [job_id])
+            self.assertEqual(updated_payload["tracks"][0]["tags"][0]["name"], "Peak time")
+
+            cover = await client.get(
+                f"/api/covers/{job_id}",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(cover.status, 200)
+            self.assertEqual(await cover.read(), b"fake-cover")
+
+            removed_tag = await client.delete(
+                f"/api/tags/{tag_id}/tracks/{job_id}",
+                json={},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(removed_tag.status, 200)
+
+            ticket = await client.post(
+                "/api/stream-ticket",
+                json={"job_id": job_id},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(ticket.status, 200)
+            stream_url = (await ticket.json())["url"]
+            streamed = await client.get(stream_url)
+            self.assertEqual(streamed.status, 200)
+            self.assertEqual(await streamed.read(), b"test-audio")
+
+    async def test_library_can_stream_single_audio_zip_and_read_cover(self) -> None:
+        user = webapp.local_create_user("zip-library@example.com", "secret123")
+        user_id = user["id"]
+        job_id = musicdl.enqueue(
+            "qobuz",
+            ["https://play.qobuz.com/track/789"],
+            metadata={"title": "Zip track", "artist": "Artist", "kind": "track"},
+            owner_id=user_id,
+            ephemeral=True,
+        )
+        pending = musicdl.QUEUE_ROOT / "pending" / "qobuz" / f"{job_id}.json"
+        done = musicdl.QUEUE_ROOT / "done" / "qobuz" / f"{job_id}.json"
+        job = musicdl.load_job(pending, expected_provider="qobuz")
+        job_root = musicdl.DELIVERY_ROOT / user_id / job_id
+        delivery_path = job_root / "TuneSaver-test.zip"
+        delivery_path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(delivery_path, "w") as archive:
+            archive.writestr("Album/track.m4a", b"zip-audio")
+            archive.writestr("Album/cover.jpg", b"zip-cover")
+        job["delivery"] = {
+            "name": delivery_path.name,
+            "path": str(delivery_path.relative_to(musicdl.DELIVERY_ROOT)),
+            "size": delivery_path.stat().st_size,
+        }
+        musicdl.atomic_write_json(done, job)
+        pending.unlink()
+        webapp.local_upsert_history(user_id, [{
+            "job_id": job_id,
+            "provider": "qobuz",
+            "title": "Zip track",
+            "artist": "Artist",
+            "resource_kind": "track",
+            "state": "done",
+            "created_at": job["created_at"],
+        }])
+
+        app = webapp.create_app()
+        app[webapp.AUTH_CACHE_KEY] = {
+            hashlib.sha256(TEST_TOKEN.encode()).hexdigest(): (
+                time.monotonic() + 3600,
+                {"id": user_id, "email": "zip-library@example.com"},
+            )
+        }
+        async with TestClient(TestServer(app)) as client:
+            library = await client.get(
+                "/api/library",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(library.status, 200)
+            payload = await library.json()
+            self.assertTrue(payload["tracks"][0]["streamable"])
+            self.assertEqual(payload["tracks"][0]["cover_url"], f"/api/covers/{job_id}")
+
+            cover = await client.get(
+                f"/api/covers/{job_id}",
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(cover.status, 200)
+            self.assertEqual(await cover.read(), b"zip-cover")
+
+            ticket = await client.post(
+                "/api/stream-ticket",
+                json={"job_id": job_id},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(ticket.status, 200)
+            streamed = await client.get((await ticket.json())["url"])
+            self.assertEqual(streamed.status, 200)
+            self.assertEqual(await streamed.read(), b"zip-audio")
 
     async def test_tidal_refresh_reuses_a_newer_token_from_disk(self) -> None:
         auth = {

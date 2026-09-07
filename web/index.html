@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light">
+    <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css?v=20260906-8">
-    <script src="/app.js?v=20260906-8" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260907-8">
+    <script src="/app.js?v=20260907-8" defer></script>
   </head>
   <body>
     <header class="site-header">
@@ -46,6 +46,7 @@
           <span id="qobuz-health" class="health-badge" aria-label="Vérification Qobuz">…</span>
         </div>
       </div>
+        <button id="history-toggle" class="history-toggle" type="button" hidden>Historique</button>
         <button id="logout-button" class="account-button" type="button" hidden>
           <span id="user-email"></span>
           <span>Déconnexion</span>
@@ -99,8 +100,17 @@
               required
             ></textarea>
             <button id="search-button" class="primary-button" type="submit">Rechercher</button>
+            <button id="import-playlist-button" class="secondary-button import-button" type="button">Importer une playlist</button>
           </div>
         </form>
+        <div id="import-panel" class="import-panel" hidden>
+          <label class="sr-only" for="import-links">Liens de playlist</label>
+          <textarea id="import-links" rows="7" spellcheck="false" placeholder="Colle un lien TIDAL, Beatport ou Qobuz par ligne"></textarea>
+          <div class="import-actions">
+            <button id="import-cancel" class="text-button compact" type="button">Annuler</button>
+            <button id="import-submit" class="primary-button" type="button">Importer</button>
+          </div>
+        </div>
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
         <p class="search-help">Pour une liste, colle un lien TIDAL, Beatport ou Qobuz par ligne.</p>
       </section>
@@ -141,7 +151,7 @@
         </div>
       </section>
 
-      <section class="queue-section" aria-labelledby="queue-title">
+      <section id="queue-section" class="queue-section" aria-labelledby="queue-title" hidden>
         <div class="section-heading">
           <h2 id="queue-title">Téléchargements</h2>
           <div class="queue-actions">
@@ -161,7 +171,54 @@
           <p class="empty-copy">Aucune tâche pour le moment.</p>
         </div>
       </section>
+
+      <section class="library-section" aria-labelledby="library-title">
+        <div class="section-heading library-heading">
+          <div>
+            <h2 id="library-title">Bibliothèque</h2>
+            <p id="library-count" class="library-subtitle"></p>
+          </div>
+          <div class="library-actions">
+            <button id="refresh-library" class="refresh-button" type="button" aria-label="Actualiser la bibliothèque">↻</button>
+          </div>
+        </div>
+        <div class="library-layout">
+          <aside class="library-sidebar" aria-label="Navigation bibliothèque">
+            <h3>Sections</h3>
+            <button class="playlist-filter" data-playlist-id="" data-selected="true" type="button">Mes sons</button>
+            <div class="sidebar-heading">
+              <h3 id="playlist-title">Mes playlists</h3>
+              <button id="create-playlist" class="sidebar-create" type="button">+</button>
+            </div>
+            <div id="playlist-list" class="playlist-list"></div>
+            <div class="tag-panel-heading">
+              <h3>Mes tags</h3>
+              <button id="create-tag" class="sidebar-create" type="button">+</button>
+            </div>
+            <div id="tag-list" class="tag-list"></div>
+          </aside>
+          <div class="library-main">
+            <div class="library-table-head" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span>Titre / Artiste</span>
+              <span></span>
+            </div>
+            <div id="library-tracks" class="library-tracks">
+              <p class="empty-copy">Aucun son disponible.</p>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
+      <div id="player-bar" class="player-bar" hidden>
+        <div class="player-cover" id="player-cover"><span>?</span></div>
+        <div class="player-info">
+          <strong id="player-title">Aucun son</strong>
+          <span id="player-artist">Sélectionne un morceau</span>
+        </div>
+        <audio id="audio-player" class="audio-player" controls preload="none"></audio>
+      </div>
     </div>
 
     <div id="admin-view" hidden>

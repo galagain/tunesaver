@@ -15,6 +15,7 @@ const kindLabels = {
   release: "la release complète",
   chart: "le chart complet",
 };
+const downloadButtonByJob = new Map();
 
 const authView = document.querySelector("#auth-view");
 const authForm = document.querySelector("#auth-form");
@@ -32,14 +33,33 @@ const appView = document.querySelector("#app-view");
 const adminView = document.querySelector("#admin-view");
 const services = document.querySelector("#services");
 const logoutButton = document.querySelector("#logout-button");
+const historyToggle = document.querySelector("#history-toggle");
 const userEmail = document.querySelector("#user-email");
 const form = document.querySelector("#search-form");
 const input = document.querySelector("#search-input");
 const searchButton = document.querySelector("#search-button");
+const importPlaylistButton = document.querySelector("#import-playlist-button");
+const importPanel = document.querySelector("#import-panel");
+const importLinks = document.querySelector("#import-links");
+const importCancel = document.querySelector("#import-cancel");
+const importSubmit = document.querySelector("#import-submit");
 const searchMessage = document.querySelector("#search-message");
 const resultsSection = document.querySelector("#results-section");
 const resultsQuery = document.querySelector("#results-query");
+const queueSection = document.querySelector("#queue-section");
 const refreshStatusButton = document.querySelector("#refresh-status");
+const refreshLibraryButton = document.querySelector("#refresh-library");
+const createPlaylistButton = document.querySelector("#create-playlist");
+const createTagButton = document.querySelector("#create-tag");
+const playlistList = document.querySelector("#playlist-list");
+const tagList = document.querySelector("#tag-list");
+const libraryTracks = document.querySelector("#library-tracks");
+const libraryCount = document.querySelector("#library-count");
+const playerBar = document.querySelector("#player-bar");
+const playerCover = document.querySelector("#player-cover");
+const playerTitle = document.querySelector("#player-title");
+const playerArtist = document.querySelector("#player-artist");
+const audioPlayer = document.querySelector("#audio-player");
 const adminRefreshButton = document.querySelector("#admin-refresh");
 const adminMessage = document.querySelector("#admin-message");
 const adminUsers = document.querySelector("#admin-users");
@@ -63,6 +83,13 @@ let queueRefreshPromise = null;
 let selectedAdminUserId = "";
 let adminChartMode = "tracks";
 let adminDailyStats = [];
+let selectedPlaylistId = "";
+let selectedTagId = "";
+let libraryState = { tracks: [], playlists: [], tags: [] };
+let liveQueueTracks = [];
+let renderedTracks = [];
+let currentTrackId = "";
+const coverUrlCache = new Map();
 let historyWarningShown = false;
 let lastHistoryFingerprint = "";
 const activeProviders = { tiddl: null, beatport: null, qobuz: null };
@@ -216,6 +243,38 @@ async function requestJson(path, options = {}) {
   return parseResponse(response);
 }
 
+async function loadPrivateImage(image, url) {
+  if (coverUrlCache.has(url)) {
+    image.src = coverUrlCache.get(url);
+    return;
+  }
+  try {
+    const response = await authenticatedFetch(url, {
+      headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8" },
+    });
+    if (!response.ok) return;
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    coverUrlCache.set(url, objectUrl);
+    image.src = objectUrl;
+  } catch (_error) {
+    image.remove();
+  }
+}
+
+function resetPlayer() {
+  audioPlayer.pause();
+  audioPlayer.removeAttribute("src");
+  audioPlayer.load();
+  currentTrackId = "";
+  playerBar.hidden = true;
+}
+
+function clearCoverCache() {
+  for (const objectUrl of coverUrlCache.values()) URL.revokeObjectURL(objectUrl);
+  coverUrlCache.clear();
+}
+
 function showAuth(message = "") {
   window.clearInterval(queueTimer);
   queueTimer = null;
@@ -226,6 +285,10 @@ function showAuth(message = "") {
   adminView.hidden = true;
   services.hidden = true;
   logoutButton.hidden = true;
+  historyToggle.hidden = true;
+  queueSection.hidden = true;
+  resetPlayer();
+  clearCoverCache();
   authMessage.textContent = message;
 }
 
@@ -236,8 +299,13 @@ function showApp() {
   adminView.hidden = true;
   services.hidden = false;
   logoutButton.hidden = false;
+  historyToggle.hidden = false;
+  queueSection.hidden = true;
+  historyToggle.dataset.open = "false";
+  historyToggle.textContent = "Historique";
   userEmail.textContent = session?.user?.email || "Mon compte";
   refreshQueue();
+  refreshLibrary();
   window.clearInterval(queueTimer);
   queueTimer = window.setInterval(refreshQueue, 5000);
 }
@@ -251,6 +319,10 @@ function showAdmin() {
   adminView.hidden = false;
   services.hidden = true;
   logoutButton.hidden = false;
+  historyToggle.hidden = true;
+  queueSection.hidden = true;
+  resetPlayer();
+  clearCoverCache();
   userEmail.textContent = "Admin";
   refreshAdmin();
 }
@@ -409,9 +481,34 @@ function setPlatformError(provider, message) {
   elements.state.textContent = message;
 }
 
+function resultCover(result) {
+  const cover = document.createElement("div");
+  cover.className = "result-cover";
+  const fallback = document.createElement("span");
+  fallback.textContent = (result.title || result.platform || "?").trim().slice(0, 1).toUpperCase() || "?";
+  cover.append(fallback);
+  if (result.cover_url) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.loading = "lazy";
+    image.src = result.cover_url;
+    image.addEventListener("load", () => { cover.dataset.loaded = "true"; });
+    cover.append(image);
+  }
+  return cover;
+}
+
+function resultInfo(label, value) {
+  const item = document.createElement("span");
+  item.className = "result-info";
+  item.textContent = value ? `${label}: ${value}` : `${label}: -`;
+  return item;
+}
+
 function makeResultCard(result) {
   const card = document.createElement("article");
   card.className = "result-card";
+  card.append(resultCover(result));
   const body = document.createElement("div");
   body.className = "result-body";
   const meta = document.createElement("div");
@@ -427,7 +524,15 @@ function makeResultCard(result) {
   artist.textContent = result.artist || result.platform;
   const details = document.createElement("p");
   details.className = "result-details";
-  details.textContent = result.details || "Disponible";
+  details.append(
+    resultInfo("Album", result.album),
+    resultInfo("Label", result.label),
+    resultInfo("Mix", result.mix),
+    resultInfo("Qualité", result.quality),
+    resultInfo("BPM", result.bpm),
+    resultInfo("Clé", result.key),
+    resultInfo("Durée", result.duration)
+  );
   body.append(meta, title, artist, details);
 
   const actions = document.createElement("div");
@@ -469,9 +574,14 @@ function makeResultCard(result) {
           confirm_complete: result.requires_confirmation === true,
         }),
       });
-      download.textContent = response.duplicate ? "Déjà en file" : "Ajouté ✓";
-      showToast("Le fichier sera disponible dans ton historique.");
+      download.dataset.jobId = response.job_id;
+      downloadButtonByJob.set(response.job_id, download);
+      download.textContent = response.duplicate ? "Déjà en file" : "En attente";
+      showToast("Le son est ajouté dans Mes sons.");
       await refreshQueue();
+      selectedPlaylistId = "";
+      selectedTagId = "";
+      renderLibrary();
     } catch (error) {
       download.disabled = false;
       download.textContent = "Réessayer";
@@ -541,7 +651,53 @@ async function enqueueList(links) {
   showToast(`${payload.jobs.length} téléchargement${payload.jobs.length > 1 ? "s" : ""} ajouté${payload.jobs.length > 1 ? "s" : ""}.`);
   resultsSection.hidden = true;
   await refreshQueue();
+  await refreshLibrary();
 }
+
+function playlistLinksFromText(value) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+importPlaylistButton.addEventListener("click", () => {
+  importPanel.hidden = !importPanel.hidden;
+  if (!importPanel.hidden) importLinks.focus();
+});
+
+importCancel.addEventListener("click", () => {
+  importPanel.hidden = true;
+  importLinks.value = "";
+});
+
+importSubmit.addEventListener("click", async () => {
+  const links = playlistLinksFromText(importLinks.value);
+  if (!links.length) {
+    searchMessage.textContent = "Colle au moins un lien à importer.";
+    importLinks.focus();
+    return;
+  }
+  importSubmit.disabled = true;
+  searchMessage.textContent = "";
+  try {
+    await enqueueList(links);
+    importPanel.hidden = true;
+    importLinks.value = "";
+  } catch (error) {
+    searchMessage.textContent = error.message;
+  } finally {
+    importSubmit.disabled = false;
+  }
+});
+
+input.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey) return;
+  event.preventDefault();
+  form.requestSubmit();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || appView.hidden || resultsSection.hidden) return;
+  resultsSection.hidden = true;
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -605,6 +761,24 @@ async function syncHistory(items) {
   lastHistoryFingerprint = fingerprint;
 }
 
+function updateDownloadButtons(jobs) {
+  const activeJobIds = new Set();
+  for (const job of jobs) {
+    if (!job?.id) continue;
+    activeJobIds.add(job.id);
+    const button = downloadButtonByJob.get(job.id);
+    if (!button) continue;
+    button.textContent = stateLabels[job.state] || job.state || "En file";
+    button.disabled = job.state !== "failed";
+    if (job.state === "failed") button.textContent = "Réessayer";
+  }
+  for (const [jobId, button] of downloadButtonByJob.entries()) {
+    if (activeJobIds.has(jobId)) continue;
+    if (button.textContent !== "Terminé") button.textContent = "Terminé";
+    button.disabled = true;
+  }
+}
+
 async function fetchHistory() {
   const history = [];
   const pageSize = 500;
@@ -626,6 +800,473 @@ async function downloadReadyJob(jobId) {
   window.location.assign(response.url);
   window.setTimeout(refreshQueue, 2500);
 }
+
+function setPlayerCover(track) {
+  playerCover.replaceChildren();
+  const fallback = document.createElement("span");
+  fallback.textContent = (track.title || track.file_name || "?").trim().slice(0, 1).toUpperCase() || "?";
+  playerCover.append(fallback);
+  playerCover.dataset.loaded = "false";
+  if (!track.cover_url) return;
+  const image = document.createElement("img");
+  image.alt = "";
+  if (coverUrlCache.has(track.cover_url)) playerCover.dataset.loaded = "true";
+  image.addEventListener("load", () => { playerCover.dataset.loaded = "true"; });
+  playerCover.append(image);
+  loadPrivateImage(image, track.cover_url);
+}
+
+function setPlayerTrack(track) {
+  currentTrackId = track.job_id;
+  playerTitle.textContent = track.title || track.file_name || track.job_id;
+  playerArtist.textContent = track.artist || providerLabels[track.provider] || "TuneSaver";
+  setPlayerCover(track);
+  playerBar.hidden = false;
+}
+
+async function streamTrack(track) {
+  const jobId = typeof track === "string" ? track : track.job_id;
+  const fullTrack = typeof track === "string"
+    ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
+    : track;
+  const response = await requestJson("/api/stream-ticket", {
+    method: "POST",
+    body: JSON.stringify({ job_id: jobId }),
+  });
+  setPlayerTrack(fullTrack);
+  audioPlayer.src = response.url;
+  await audioPlayer.play();
+}
+
+async function playNextTrack() {
+  const currentIndex = renderedTracks.findIndex((track) => track.job_id === currentTrackId);
+  const next = renderedTracks
+    .slice(Math.max(0, currentIndex + 1))
+    .find((track) => track.streamable);
+  if (!next) return;
+  try {
+    await streamTrack(next);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function fetchLibrary() {
+  return requestJson("/api/library", { method: "GET" });
+}
+
+function trackInPlaylist(track, playlistId) {
+  if (!playlistId) return true;
+  const playlist = libraryState.playlists.find((item) => item.id === playlistId);
+  return playlist ? playlist.track_ids.includes(track.job_id) : true;
+}
+
+function trackInTag(track, tagId) {
+  if (!tagId) return true;
+  const tag = libraryState.tags.find((item) => item.id === tagId);
+  return tag ? tag.track_ids.includes(track.job_id) : true;
+}
+
+function currentLibraryTitle() {
+  if (selectedPlaylistId) {
+    const playlist = libraryState.playlists.find((item) => item.id === selectedPlaylistId);
+    return playlist ? playlist.name : "Mes playlists";
+  }
+  if (selectedTagId) {
+    const tag = libraryState.tags.find((item) => item.id === selectedTagId);
+    return tag ? `# ${tag.name}` : "Mes tags";
+  }
+  return "Mes sons";
+}
+
+function liveTracksForLibrary() {
+  if (selectedPlaylistId || selectedTagId) return [];
+  const existing = new Set(libraryState.tracks.map((track) => track.job_id));
+  return liveQueueTracks
+    .filter((job) => !existing.has(job.id) && ["pending", "running", "failed"].includes(job.state))
+    .map((job) => ({
+      job_id: job.id,
+      provider: job.provider,
+      title: job.title || job.source_url || job.id,
+      artist: job.artist || "",
+      source_url: job.source_url || "",
+      created_at: job.created_at || "",
+      state: job.state,
+      tags: [],
+      streamable: false,
+      download_ready: false,
+      is_live: true,
+    }));
+}
+
+function applyTagStyle(element, tag) {
+  element.style.setProperty("--tag-color", tag.color || "#665cff");
+}
+
+function providerShortLabel(provider) {
+  if (provider === "beatport") return "b";
+  if (provider === "qobuz") return "Q";
+  return "T";
+}
+
+function makeSourceBadge(track) {
+  const label = providerLabels[track.provider] || track.provider || "Source";
+  const element = track.source_url ? document.createElement("a") : document.createElement("span");
+  element.className = `source-badge ${track.provider || ""}`;
+  element.textContent = providerShortLabel(track.provider);
+  element.title = track.source_url ? `Ouvrir sur ${label}` : label;
+  element.setAttribute("aria-label", element.title);
+  if (track.source_url) {
+    element.href = track.source_url;
+    element.target = "_blank";
+    element.rel = "noopener noreferrer";
+  }
+  return element;
+}
+
+async function addTagToTrack(tagId, jobId) {
+  if (!tagId || !jobId) return;
+  await requestJson(`/api/tags/${tagId}/tracks`, {
+    method: "POST",
+    body: JSON.stringify({ job_id: jobId }),
+  });
+  await refreshLibrary();
+}
+
+function renderPlaylists() {
+  playlistList.replaceChildren();
+  for (const playlist of libraryState.playlists) {
+    const row = document.createElement("div");
+    row.className = "playlist-row";
+    const button = document.createElement("button");
+    button.className = "playlist-filter";
+    button.type = "button";
+    button.dataset.playlistId = playlist.id;
+    button.dataset.selected = playlist.id === selectedPlaylistId ? "true" : "false";
+    button.textContent = `${playlist.name} (${playlist.track_ids.length})`;
+    button.addEventListener("dragover", (event) => {
+      if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-job")) return;
+      event.preventDefault();
+      button.dataset.drop = "true";
+    });
+    button.addEventListener("dragleave", () => {
+      button.dataset.drop = "false";
+    });
+    button.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      button.dataset.drop = "false";
+      const jobId = event.dataTransfer.getData("application/x-tunesaver-job");
+      if (!jobId || playlist.track_ids.includes(jobId)) return;
+      try {
+        await requestJson(`/api/playlists/${playlist.id}/tracks`, {
+          method: "POST",
+          body: JSON.stringify({ job_id: jobId }),
+        });
+        selectedPlaylistId = playlist.id;
+        selectedTagId = "";
+        await refreshLibrary();
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+    button.addEventListener("click", () => {
+      selectedPlaylistId = playlist.id;
+      selectedTagId = "";
+      renderLibrary();
+    });
+    const remove = document.createElement("button");
+    remove.className = "playlist-delete";
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.addEventListener("click", async () => {
+      if (!window.confirm(`Supprimer la playlist ${playlist.name} ?`)) return;
+      await requestJson(`/api/playlists/${playlist.id}`, { method: "DELETE" });
+      if (selectedPlaylistId === playlist.id) selectedPlaylistId = "";
+      await refreshLibrary();
+    });
+    row.append(button, remove);
+    playlistList.append(row);
+  }
+  const all = document.querySelector(".playlist-filter[data-playlist-id='']");
+  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId ? "false" : "true";
+}
+
+function renderTags() {
+  tagList.replaceChildren();
+  for (const tag of libraryState.tags) {
+    const row = document.createElement("div");
+    row.className = "tag-row";
+    const button = document.createElement("button");
+    button.className = "tag-filter";
+    button.type = "button";
+    button.draggable = true;
+    applyTagStyle(button, tag);
+    button.dataset.tagId = tag.id;
+    button.dataset.selected = tag.id === selectedTagId ? "true" : "false";
+    button.textContent = `${tag.name} (${tag.track_ids.length})`;
+    button.addEventListener("dragstart", (event) => {
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/x-tunesaver-tag", tag.id);
+      button.dataset.dragging = "true";
+    });
+    button.addEventListener("dragend", () => {
+      button.dataset.dragging = "false";
+    });
+    button.addEventListener("dragover", (event) => {
+      if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-job")) return;
+      event.preventDefault();
+      button.dataset.drop = "true";
+    });
+    button.addEventListener("dragleave", () => {
+      button.dataset.drop = "false";
+    });
+    button.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      button.dataset.drop = "false";
+      const jobId = event.dataTransfer.getData("application/x-tunesaver-job");
+      if (!jobId || tag.track_ids.includes(jobId)) return;
+      try {
+        await addTagToTrack(tag.id, jobId);
+        selectedTagId = tag.id;
+        selectedPlaylistId = "";
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+    button.addEventListener("click", () => {
+      selectedTagId = tag.id;
+      selectedPlaylistId = "";
+      renderLibrary();
+    });
+    const remove = document.createElement("button");
+    remove.className = "tag-delete";
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.addEventListener("click", async () => {
+      if (!window.confirm(`Supprimer le tag ${tag.name} ?`)) return;
+      await requestJson(`/api/tags/${tag.id}`, { method: "DELETE" });
+      if (selectedTagId === tag.id) selectedTagId = "";
+      await refreshLibrary();
+    });
+    row.append(button, remove);
+    tagList.append(row);
+  }
+}
+
+function renderLibrary() {
+  renderPlaylists();
+  renderTags();
+  libraryTracks.replaceChildren();
+  const storedTracks = libraryState.tracks
+    .filter((track) => trackInPlaylist(track, selectedPlaylistId))
+    .filter((track) => trackInTag(track, selectedTagId));
+  const tracks = [...liveTracksForLibrary(), ...storedTracks];
+  renderedTracks = tracks;
+  document.querySelector("#library-title").textContent = currentLibraryTitle();
+  libraryCount.textContent = `${libraryState.tracks.length} son${libraryState.tracks.length > 1 ? "s" : ""} disponible${libraryState.tracks.length > 1 ? "s" : ""}`;
+  if (!tracks.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-copy";
+    empty.textContent = selectedPlaylistId
+      ? "Aucun son dans cette playlist."
+      : selectedTagId
+        ? "Aucun son avec ce tag."
+        : "Aucun son disponible.";
+    libraryTracks.append(empty);
+    return;
+  }
+  tracks.forEach((track, index) => {
+    const row = document.createElement("article");
+    row.className = "library-track";
+    row.draggable = !track.is_live && track.state !== "failed";
+    row.dataset.jobId = track.job_id;
+    row.dataset.state = track.state || "done";
+    row.addEventListener("dragstart", (event) => {
+      if (track.is_live || track.state === "failed") {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("application/x-tunesaver-job", track.job_id);
+      event.dataTransfer.setData("text/plain", track.job_id);
+      row.dataset.dragging = "true";
+    });
+    row.addEventListener("dragend", () => {
+      row.dataset.dragging = "false";
+    });
+    row.addEventListener("dragover", (event) => {
+      if (track.is_live || track.state === "failed") return;
+      if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-tag")) return;
+      event.preventDefault();
+      row.dataset.drop = "true";
+    });
+    row.addEventListener("dragleave", () => {
+      row.dataset.drop = "false";
+    });
+    row.addEventListener("drop", async (event) => {
+      row.dataset.drop = "false";
+      if (track.is_live || track.state === "failed") return;
+      const tagId = event.dataTransfer.getData("application/x-tunesaver-tag");
+      if (!tagId) return;
+      event.preventDefault();
+      try {
+        await addTagToTrack(tagId, track.job_id);
+      } catch (error) {
+        showToast(error.message, "error");
+      }
+    });
+    const cover = document.createElement("div");
+    cover.className = "library-cover";
+    const coverText = document.createElement("span");
+    coverText.textContent = (track.title || track.file_name || "?").trim().slice(0, 1).toUpperCase() || "?";
+    cover.append(coverText);
+    if (track.cover_url) {
+      const image = document.createElement("img");
+      image.alt = "";
+      image.loading = "lazy";
+      if (coverUrlCache.has(track.cover_url)) cover.dataset.loaded = "true";
+      image.addEventListener("load", () => cover.dataset.loaded = "true");
+      cover.append(image);
+      loadPrivateImage(image, track.cover_url);
+    }
+    const rank = document.createElement("span");
+    rank.className = "track-rank";
+    rank.textContent = String(index + 1);
+    const body = document.createElement("div");
+    body.className = "library-track-body";
+    const title = document.createElement("strong");
+    title.textContent = track.title || track.file_name || track.job_id;
+    const meta = document.createElement("span");
+    meta.textContent = `${track.artist || "Artiste inconnu"}${track.created_at ? ` · ${formatAdminDate(track.created_at)}` : ""}`;
+    const badges = document.createElement("div");
+    badges.className = "track-tags";
+    for (const tag of track.tags || []) {
+      const badge = document.createElement("span");
+      badge.className = "track-tag";
+      applyTagStyle(badge, tag);
+      badge.textContent = tag.name;
+      badges.append(badge);
+    }
+    body.append(title, meta, badges);
+    const actions = document.createElement("div");
+    actions.className = "library-track-actions";
+    if (track.streamable) {
+      const play = document.createElement("button");
+      play.className = "play-button";
+      play.type = "button";
+      play.textContent = "▶";
+      play.setAttribute("aria-label", `Lire ${track.title || track.file_name || "ce son"}`);
+      play.title = "Lire";
+      play.addEventListener("click", async () => {
+        play.disabled = true;
+        try { await streamTrack(track); }
+        catch (error) { showToast(error.message, "error"); }
+        finally { play.disabled = false; }
+      });
+      actions.append(play);
+    }
+    actions.append(makeSourceBadge(track));
+    if (track.is_live || track.state === "failed") {
+      const statusButton = document.createElement("button");
+      statusButton.className = `download-status-button ${track.state || "pending"}`;
+      statusButton.type = "button";
+      statusButton.disabled = true;
+      statusButton.textContent = stateLabels[track.state || "pending"] || "En file";
+      actions.append(statusButton);
+    } else if (!selectedPlaylistId && !selectedTagId) {
+      const download = document.createElement("button");
+      download.className = "history-download";
+      download.type = "button";
+      download.textContent = "Télécharger";
+      download.addEventListener("click", async () => {
+        download.disabled = true;
+        try { await downloadReadyJob(track.job_id); }
+        catch (error) { showToast(error.message, "error"); download.disabled = false; }
+      });
+      actions.append(download);
+    }
+    if (selectedPlaylistId || selectedTagId) {
+      const remove = document.createElement("button");
+      remove.className = "playlist-remove-track";
+      remove.type = "button";
+      remove.textContent = "Retirer";
+      remove.addEventListener("click", async () => {
+        const url = selectedPlaylistId
+          ? `/api/playlists/${selectedPlaylistId}/tracks/${track.job_id}`
+          : `/api/tags/${selectedTagId}/tracks/${track.job_id}`;
+        await requestJson(url, { method: "DELETE" });
+        await refreshLibrary();
+      });
+      actions.append(remove);
+    }
+    row.append(rank, cover, body, actions);
+    libraryTracks.append(row);
+  });
+}
+
+async function refreshLibrary() {
+  if (!session) return;
+  refreshLibraryButton.disabled = true;
+  try {
+    libraryState = await fetchLibrary();
+    if (selectedPlaylistId && !libraryState.playlists.some((playlist) => playlist.id === selectedPlaylistId)) {
+      selectedPlaylistId = "";
+    }
+    if (selectedTagId && !libraryState.tags.some((tag) => tag.id === selectedTagId)) {
+      selectedTagId = "";
+    }
+    renderLibrary();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    refreshLibraryButton.disabled = false;
+  }
+}
+
+document.querySelector(".playlist-filter[data-playlist-id='']").addEventListener("click", () => {
+  selectedPlaylistId = "";
+  selectedTagId = "";
+  renderLibrary();
+});
+
+createPlaylistButton.addEventListener("click", async () => {
+  const name = window.prompt("Nom de la playlist");
+  if (!name) return;
+  createPlaylistButton.disabled = true;
+  try {
+    const result = await requestJson("/api/playlists", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    selectedPlaylistId = result.playlist.id;
+    await refreshLibrary();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    createPlaylistButton.disabled = false;
+  }
+});
+
+createTagButton.addEventListener("click", async () => {
+  const name = window.prompt("Nom du tag");
+  if (!name) return;
+  createTagButton.disabled = true;
+  try {
+    const result = await requestJson("/api/tags", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    selectedTagId = result.tag.id;
+    selectedPlaylistId = "";
+    await refreshLibrary();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    createTagButton.disabled = false;
+  }
+});
+
+audioPlayer.addEventListener("ended", playNextTrack);
 
 function renderHistory(history, localJobs) {
   const localById = new Map(localJobs.map((job) => [job.id, job]));
@@ -706,6 +1347,8 @@ async function refreshQueueOnce() {
     for (const state of ["pending", "running", "done", "failed"]) {
       document.querySelector(`#${state}-count`).textContent = String(totalForState(counts, state));
     }
+    liveQueueTracks = payload.recent || [];
+    updateDownloadButtons(liveQueueTracks);
     let history = (payload.recent || []).map((job) => ({ ...job, job_id: job.id }));
     try {
       await syncHistory(payload.recent || []);
@@ -717,6 +1360,7 @@ async function refreshQueueOnce() {
       }
     }
     renderHistory(history, payload.recent || []);
+    await refreshLibrary();
   } catch (error) {
     for (const provider of providers) {
       activeProviders[provider] = false;
@@ -729,6 +1373,14 @@ async function refreshQueueOnce() {
 }
 
 refreshStatusButton.addEventListener("click", refreshQueue);
+
+historyToggle.addEventListener("click", async () => {
+  const open = queueSection.hidden;
+  queueSection.hidden = !open;
+  historyToggle.dataset.open = open ? "true" : "false";
+  historyToggle.textContent = open ? "Masquer l’historique" : "Historique";
+  if (open) await refreshQueue();
+});
 
 function formatAdminDate(value) {
   if (!value) return "";

@@ -220,6 +220,32 @@ class MusicDLTests(unittest.TestCase):
         delivery = musicdl.DELIVERY_ROOT / payload["delivery"]["path"]
         self.assertEqual(delivery.read_bytes(), b"audio")
 
+    def test_single_audio_with_cover_keeps_audio_as_delivery(self) -> None:
+        owner_id = "11111111-1111-4111-8111-111111111111"
+        job_id = musicdl.enqueue(
+            "tiddl",
+            ["https://tidal.com/track/123"],
+            owner_id=owner_id,
+            ephemeral=True,
+        )
+        pending = musicdl.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
+
+        def fake_download(_provider, _urls, _log, *, output_dir=None):
+            assert output_dir is not None
+            (output_dir / "track.flac").write_bytes(b"audio")
+            (output_dir / "cover.jpg").write_bytes(b"cover")
+            return 0
+
+        with mock.patch.object(musicdl, "run_provider", side_effect=fake_download):
+            musicdl.process_job("tiddl", pending)
+
+        done = musicdl.QUEUE_ROOT / "done" / "tiddl" / f"{job_id}.json"
+        payload = json.loads(done.read_text(encoding="utf-8"))
+        delivery = musicdl.DELIVERY_ROOT / payload["delivery"]["path"]
+        self.assertEqual(delivery.name, "track.flac")
+        self.assertEqual(delivery.read_bytes(), b"audio")
+        self.assertTrue((delivery.parent / "cover.jpg").is_file())
+
     def test_ephemeral_job_requires_a_valid_owner(self) -> None:
         with self.assertRaises(ValueError):
             musicdl.enqueue(
