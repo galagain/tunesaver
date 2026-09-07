@@ -645,9 +645,15 @@ h1 {
 
 
 .queue-section {
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }
+
+.queue-section .section-heading { gap: 12px; flex-wrap: wrap; }
+.queue-section .queue-actions { flex-wrap: wrap; }
+.queue-section .queue-stats,
+.queue-section .recent-jobs { background: transparent; border-radius: 4px; }
 
 .refresh-button {
   display: grid;
@@ -1089,8 +1095,8 @@ h1 {
 }
 
 .history-toggle[data-open="true"] {
-  color: #101010;
-  background: var(--accent);
+  color: var(--accent);
+  background: #242424;
   border-color: var(--accent);
 }
 
@@ -1285,12 +1291,30 @@ h1 {
 
 .track-tag {
   padding: 2px 6px;
+  cursor: grab;
   color: #f6f6f0;
   font-size: 0.58rem;
   background: color-mix(in srgb, var(--tag-color, var(--accent)) 42%, #222);
   border-color: color-mix(in srgb, var(--tag-color, var(--accent)) 58%, #222);
   border-radius: 3px;
 }
+
+.track-tag[data-dragging="true"] { opacity: 0.45; cursor: grabbing; }
+
+.track-delete {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+  color: #ff8da0;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.track-delete svg { width: 15px; height: 15px; }
 
 .mini-provider {
   font-size: 0.66rem;

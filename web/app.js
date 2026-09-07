@@ -89,6 +89,29 @@ let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
 let renderedTracks = [];
 let currentTrackId = "";
+let draggedTrackTag = null;
+
+document.addEventListener("dragover", (event) => {
+  if (!draggedTrackTag) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+});
+
+document.addEventListener("drop", async (event) => {
+  if (!draggedTrackTag) return;
+  event.preventDefault();
+  const { tagId, jobId } = draggedTrackTag;
+  draggedTrackTag = null;
+  if (event.target.closest(".library-track")?.dataset.jobId === jobId) return;
+  await removeTrackTag(tagId, jobId);
+});
+
+async function removeTrackTag(tagId, jobId) {
+  try {
+    await requestJson(`/api/tags/${tagId}/tracks/${jobId}`, { method: "DELETE" });
+    await refreshLibrary();
+  } catch (error) { showToast(error.message, "error"); }
+}
 const coverUrlCache = new Map();
 let historyWarningShown = false;
 let lastHistoryFingerprint = "";
@@ -302,6 +325,7 @@ function showApp() {
   historyToggle.hidden = false;
   queueSection.hidden = true;
   historyToggle.dataset.open = "false";
+  historyToggle.setAttribute("aria-expanded", "false");
   historyToggle.textContent = "Historique";
   userEmail.textContent = session?.user?.email || "Mon compte";
   refreshQueue();
@@ -1056,6 +1080,7 @@ function renderTags() {
 }
 
 function renderLibrary() {
+  if (draggedTrackTag) return;
   renderPlaylists();
   renderTags();
   libraryTracks.replaceChildren();
@@ -1143,8 +1168,24 @@ function renderLibrary() {
     const badges = document.createElement("div");
     badges.className = "track-tags";
     for (const tag of track.tags || []) {
-      const badge = document.createElement("span");
+      const badge = document.createElement("button");
+      badge.type = "button";
       badge.className = "track-tag";
+      badge.draggable = true;
+      badge.title = `Retirer le tag ${tag.name}`;
+      badge.setAttribute("aria-label", badge.title);
+      badge.addEventListener("click", () => removeTrackTag(tag.id, track.job_id));
+      badge.addEventListener("dragstart", (event) => {
+        event.stopPropagation();
+        draggedTrackTag = { tagId: tag.id, jobId: track.job_id };
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("application/x-tunesaver-remove-tag", tag.id);
+        badge.dataset.dragging = "true";
+      });
+      badge.addEventListener("dragend", () => {
+        draggedTrackTag = null;
+        badge.dataset.dragging = "false";
+      });
       applyTagStyle(badge, tag);
       badge.textContent = tag.name;
       badges.append(badge);
@@ -1186,6 +1227,23 @@ function renderLibrary() {
         catch (error) { showToast(error.message, "error"); download.disabled = false; }
       });
       actions.append(download);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "track-delete";
+      remove.title = "Supprimer de Mes sons";
+      remove.setAttribute("aria-label", `${remove.title} : ${track.title || track.file_name || "ce son"}`);
+      remove.append(document.getElementById("icon-trash").content.cloneNode(true));
+      remove.addEventListener("click", async () => {
+        if (!window.confirm("Supprimer ce morceau de Mes sons et de ses playlists ?")) return;
+        remove.disabled = true;
+        try {
+          await requestJson(`/api/library/${track.job_id}`, { method: "DELETE" });
+          if (currentTrackId === track.job_id) resetPlayer();
+          await refreshLibrary();
+        } catch (error) { showToast(error.message, "error"); }
+        finally { remove.disabled = false; }
+      });
+      actions.append(remove);
     }
     if (selectedPlaylistId || selectedTagId) {
       const remove = document.createElement("button");
@@ -1380,7 +1438,7 @@ historyToggle.addEventListener("click", async () => {
   const open = queueSection.hidden;
   queueSection.hidden = !open;
   historyToggle.dataset.open = open ? "true" : "false";
-  historyToggle.textContent = open ? "Masquer l’historique" : "Historique";
+  historyToggle.setAttribute("aria-expanded", String(open));
   if (open) await refreshQueue();
 });
 

@@ -267,6 +267,12 @@ def init_local_store() -> None:
             create index if not exists download_history_state_created_idx
               on download_history (state, created_at desc);
 
+            create table if not exists library_removed (
+              user_id text not null references users(id) on delete cascade,
+              job_id text not null,
+              primary key (user_id, job_id)
+            );
+
             create table if not exists playlists (
               id text primary key,
               user_id text not null references users(id) on delete cascade,
@@ -939,9 +945,13 @@ def cover_for_job(job_id: str, owner_id: str) -> dict[str, Any] | None:
 
 def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
     tracks = []
+    with local_db() as db:
+        removed = {row["job_id"] for row in db.execute(
+            "select job_id from library_removed where user_id = ?", (user_id,)
+        )}
     tags_by_job = local_track_tag_map(user_id)
     for row in local_user_history(user_id, limit=500, offset=0):
-        if row["state"] != "done":
+        if row["state"] != "done" or row["job_id"] in removed:
             continue
         delivery = delivery_for_job(row["job_id"], user_id)
         if not delivery:
@@ -956,6 +966,24 @@ def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
             "tags": tags_by_job.get(row["job_id"], []),
         })
     return tracks
+
+
+def local_library_remove_track(user_id: str, job_id: str) -> None:
+    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+        raise PublicError("Morceau introuvable.", status=404)
+    with local_db() as db:
+        owned = db.execute(
+            "select 1 from download_history where user_id = ? and job_id = ? and state = 'done'",
+            (user_id, job_id),
+        ).fetchone()
+        if not owned:
+            raise PublicError("Morceau introuvable.", status=404)
+        db.execute("insert or ignore into library_removed (user_id, job_id) values (?, ?)",
+                   (user_id, job_id))
+        db.execute("delete from playlist_items where job_id = ? and playlist_id in "
+                   "(select id from playlists where user_id = ?)", (job_id, user_id))
+        db.execute("delete from tag_items where job_id = ? and tag_id in "
+                   "(select id from tags where user_id = ?)", (job_id, user_id))
 
 
 def normalize_playlist_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -2390,6 +2418,12 @@ async def history_handler(request: web.Request) -> web.Response:
     return web.json_response({"history": rows})
 
 
+async def library_track_delete_handler(request: web.Request) -> web.Response:
+    await asyncio.to_thread(local_library_remove_track, request["user"]["id"],
+                            request.match_info.get("job_id", ""))
+    return web.json_response({"removed": True})
+
+
 async def library_handler(request: web.Request) -> web.Response:
     user_id = request["user"]["id"]
     tracks, playlists, tags = await asyncio.gather(
@@ -2883,6 +2917,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/history", history_sync_handler)
     app.router.add_get("/api/history", history_handler)
     app.router.add_get("/api/library", library_handler)
+    app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
     app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)

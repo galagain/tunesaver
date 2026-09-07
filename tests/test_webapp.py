@@ -886,6 +886,24 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(streamed.status, 200)
             self.assertEqual(await streamed.read(), b"test-audio")
 
+            other = webapp.local_create_user("other-library@example.com", "secret123")
+            with self.assertRaises(webapp.PublicError):
+                webapp.local_library_remove_track(other["id"], job_id)
+            self.assertEqual(len(webapp.local_library_tracks(user_id)), 1)
+            webapp.local_tag_add_track(user_id, tag_id, job_id)
+            removed = await client.delete(
+                f"/api/library/{job_id}",
+                json={},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            self.assertEqual(removed.status, 200)
+            self.assertEqual(webapp.local_library_tracks(user_id), [])
+            self.assertEqual(webapp.local_playlists(user_id)[0]["track_ids"], [])
+            self.assertEqual(webapp.local_tags(user_id)[0]["track_ids"], [])
+            self.assertEqual(len(webapp.local_user_history(user_id, limit=500, offset=0)), 1)
+            self.assertTrue(delivery_path.exists())
+            webapp.local_library_remove_track(user_id, job_id)
+
     async def test_library_can_stream_single_audio_zip_and_read_cover(self) -> None:
         user = webapp.local_create_user("zip-library@example.com", "secret123")
         user_id = user["id"]
