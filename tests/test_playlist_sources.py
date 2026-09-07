@@ -22,17 +22,26 @@ class PlaylistSourceTests(unittest.TestCase):
                 sources.playlist_source(url)
 
     @mock.patch.dict(sources.os.environ, {}, clear=True)
-    def test_spotify_embed_reads_titles_and_refuses_truncated_playlists(self):
-        track = {"title": "Song", "subtitle": "Artist", "duration": 180000, "entityType": "track"}
-        entity = {"name": "Favorites", "trackList": [track]}
-        def page():
-            return mock.Mock(text='<script id="__NEXT_DATA__">' + json.dumps({"props": {"pageProps": {"state": {"data": {"entity": entity}}}}}) + '</script>')
-        with mock.patch.object(sources, "get_page", side_effect=lambda *_a, **_k: page()):
-            result = sources.spotify_playlist("3cEYpjA9oz9GiPac4AsH4n")
-            self.assertEqual(result["tracks"][0]["duration"], 180)
-            entity["trackList"] = [track] * 100
-            with self.assertRaisesRegex(sources.PlaylistError, "100"):
-                sources.spotify_playlist("3cEYpjA9oz9GiPac4AsH4n")
+    def test_spotify_uses_browser_without_api_credentials(self):
+        payload = {"name": "Playlist", "total": 148, "tracks": [{"title": "Song"}] * 148}
+        process = mock.Mock(pid=1234, returncode=0)
+        process.communicate.return_value = (json.dumps(payload), None)
+        with mock.patch.object(sources.subprocess, "Popen", return_value=process) as popen, mock.patch.object(sources.os, "killpg") as kill:
+            result = sources.spotify_playlist("57HAIqxdHbi332994xcOKc")
+            self.assertEqual(len(result["tracks"]), 148)
+            env = popen.call_args.kwargs["env"]
+            self.assertEqual(env["HOME"], env["XDG_CONFIG_HOME"])
+            self.assertEqual(env["HOME"], env["XDG_STATE_HOME"])
+            kill.assert_called_once_with(1234, sources.signal.SIGKILL)
+
+    def test_spotify_browser_timeout_cleans_process_group(self):
+        process = mock.Mock(pid=1234)
+        process.communicate.side_effect = sources.subprocess.TimeoutExpired("browser", 160)
+        with mock.patch.object(sources.subprocess, "Popen", return_value=process), mock.patch.object(sources.os, "killpg") as kill:
+            with self.assertRaises(sources.PlaylistError):
+                sources.spotify_browser_playlist("57HAIqxdHbi332994xcOKc")
+            kill.assert_called_once()
+            process.wait.assert_called_once()
 
     @mock.patch.dict(sources.os.environ, {"TUNESAVER_SPOTIFY_CLIENT_ID": "id", "TUNESAVER_SPOTIFY_CLIENT_SECRET": "secret"}, clear=True)
     def test_spotify_api_paginates(self):

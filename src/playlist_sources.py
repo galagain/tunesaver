@@ -3,11 +3,15 @@
 import json
 import os
 import re
+import signal
+import subprocess
+import sys
+import tempfile
 import unicodedata
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from bs4 import BeautifulSoup
 
 MAX_TRACKS = 500
 
@@ -81,20 +85,36 @@ def spotify_playlist(playlist_id):
         except (requests.RequestException, KeyError, ValueError) as exc:
             raise PlaylistError("Connexion Spotify indisponible. Verifiez la configuration Spotify du serveur.") from exc
 
-    html = get_page(f"https://open.spotify.com/embed/playlist/{playlist_id}").text
-    try:
-        script = BeautifulSoup(html, "html.parser").find("script", id="__NEXT_DATA__")
-        entity = json.loads(script.string)["props"]["pageProps"]["state"]["data"]["entity"]
-        entries = entity["trackList"]
-    except (AttributeError, KeyError, TypeError, ValueError) as exc:
-        raise PlaylistError("Spotify ne rend pas cette playlist accessible. Verifiez qu'elle est publique.") from exc
-    # The public embed exposes at most 100 entries; never import it as a complete larger playlist.
-    if len(entries) >= 100:
-        raise PlaylistError("Cette playlist necessite la connexion API Spotify du serveur pour recuperer tous ses titres (apercu public limite a 100).")
-    return {"name": entity["name"], "tracks": [
-        {"title": t["title"], "artist": t.get("subtitle", ""), "duration": t.get("duration", 0) / 1000}
-        for t in entries if t.get("entityType") == "track"
-    ]}
+    return spotify_browser_playlist(playlist_id)
+
+
+def spotify_browser_playlist(playlist_id):
+    if not re.fullmatch(r"[A-Za-z0-9]{22}", playlist_id):
+        raise PlaylistError("Identifiant Spotify invalide.")
+    with tempfile.TemporaryDirectory(prefix="tunesaver-browser-") as directory:
+        env = {**os.environ, "HOME": directory, "XDG_CACHE_HOME": directory,
+               "XDG_CONFIG_HOME": directory, "XDG_STATE_HOME": directory, "TMPDIR": directory}
+        command = [sys.executable, str(Path(__file__).with_name("spotify_browser.py")), playlist_id]
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                       text=True, start_new_session=True, env=env)
+            try:
+                output, _ = process.communicate(timeout=160)
+            finally:
+                # Kill the isolated process group too, including Chromium children after a timeout/crash.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            payload = json.loads(output)
+            if process.returncode or payload.get("error"):
+                raise PlaylistError(payload.get("error") or "Lecture Spotify impossible.")
+            if payload.get("total") != len(payload.get("tracks", [])):
+                raise PlaylistError("La liste Spotify recue est incomplete.")
+            return payload
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            raise PlaylistError("Lecture Spotify impossible pour le moment. Reessayez l'import.") from exc
 
 
 def soundcloud_metadata(playlist, fetch_missing):

@@ -23,8 +23,15 @@ reutilise les fichiers deja disponibles pour le meme compte.
   Beatport doivent etre accessibles au compte Beatport configure sur le serveur.
 - Maximum : 500 titres et trois imports actifs par compte. Les imports sont
   traites successivement pour limiter la charge et les appels aux plateformes.
-- L'apercu public Spotify expose au maximum 100 titres. Lorsqu'il atteint cette
-  limite, TuneSaver refuse l'import incomplet et demande un acces API Spotify.
+- Sans identifiants API, TuneSaver ouvre la page publique Spotify dans Chromium,
+  sans connexion, et fait defiler la liste pour charger toutes les pages.
+  Les titres sont collectes dans leur ordre, puis leur nombre est compare au
+  total annonce par Spotify. Une liste incomplete n'est pas importee.
+  La limite de 100 titres du lecteur integre ne s'applique plus.
+- Le navigateur est lance uniquement pendant la lecture des metadonnees, avec
+  un profil temporaire, sans chargement audio. Le processus et ses enfants sont
+  fermes apres chaque lecture, y compris en cas de delai depasse (160 secondes).
+  Les imports etant traites successivement, un seul navigateur est necessaire.
 - Avec une application Spotify autorisee, configurer dans `.env` les variables
   `TUNESAVER_SPOTIFY_CLIENT_ID`, `TUNESAVER_SPOTIFY_CLIENT_SECRET` et, si un acces
   utilisateur est requis, `TUNESAVER_SPOTIFY_REFRESH_TOKEN`, puis recreer le

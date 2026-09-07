@@ -2538,15 +2538,17 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
 
 async def process_playlist_import(app: web.Application, record: dict[str, Any]) -> None:
     tracks = json.loads(record["tracks"])
+    source_warning = record["error"]
     if not tracks:
         payload = await asyncio.to_thread(read_import_source, record["source_url"])
         tracks = payload["tracks"]
+        source_warning = payload.get("warning", "")
         with local_db() as db:
             provider = playlist_sources.playlist_source(record["source_url"])[0]
             db.execute("update playlists set name = ? where id = ? and name = ?",
                        (payload["name"][:80], record["playlist_id"], f"Import {provider.title()}"))
-            db.execute("update playlist_imports set tracks = ?, state = 'running' where id = ?",
-                       (json.dumps(tracks), record["id"]))
+            db.execute("update playlist_imports set tracks = ?, error = ?, state = 'running' where id = ?",
+                       (json.dumps(tracks), source_warning, record["id"]))
     failures = json.loads(record["failures"])
     queued = record["queued"]
     for index in range(record["processed"], len(tracks)):
@@ -2585,7 +2587,7 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
         await asyncio.sleep(0.3)
     with local_db() as db:
         db.execute("update playlist_imports set state = ? where id = ?",
-                   ("partial" if failures else "done", record["id"]))
+                   ("partial" if failures or source_warning else "done", record["id"]))
 
 
 async def playlist_import_worker(app: web.Application) -> None:
