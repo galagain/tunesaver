@@ -15,6 +15,7 @@ import secrets
 import smtplib
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 import zipfile
@@ -31,6 +32,7 @@ from mutagen import File as MutagenFile
 
 import musicdl
 import playlist_sources
+import dig_web
 
 
 LOGGER = logging.getLogger("musicdl.web")
@@ -1299,6 +1301,7 @@ async def api_middleware(
         public_paths = {
             "/",
             "/app.js",
+            "/dig.js",
             "/style.css",
             "/api/health",
             "/api/config",
@@ -3157,6 +3160,10 @@ async def javascript_handler(_request: web.Request) -> web.StreamResponse:
     return web.FileResponse(ASSET_ROOT / "app.js", headers={"Content-Type": "text/javascript; charset=utf-8"})
 
 
+async def dig_javascript_handler(_request: web.Request) -> web.StreamResponse:
+    return web.FileResponse(ASSET_ROOT / "dig.js", headers={"Content-Type": "text/javascript; charset=utf-8"})
+
+
 async def stylesheet_handler(_request: web.Request) -> web.StreamResponse:
     return web.FileResponse(ASSET_ROOT / "style.css", headers={"Content-Type": "text/css; charset=utf-8"})
 
@@ -3176,9 +3183,11 @@ def create_app() -> web.Application:
     }
     app[AUTH_CACHE_KEY] = {}
     app[ADMIN_SESSIONS_KEY] = {}
+    dig_web.register(app, sys.modules[__name__])
     app.cleanup_ctx.append(playlist_import_context)
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
+    app.router.add_get("/dig.js", dig_javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)
