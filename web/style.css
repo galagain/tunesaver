@@ -714,7 +714,9 @@ h1 {
 .playlist-imports { margin: 16px 0; border-block: 1px solid var(--line); }
 .playlist-import { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .playlist-import:last-child { border-bottom: 0; }
-.playlist-import summary { cursor: pointer; font-size: 0.78rem; overflow-wrap: anywhere; }
+.playlist-import summary { position: relative; min-height: 28px; padding-right: 38px; cursor: pointer; font-size: 0.78rem; overflow-wrap: anywhere; }
+.import-dismiss { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; }
+.import-dismiss svg { width: 14px; height: 14px; }
 .playlist-import summary strong { margin-right: 12px; }
 .playlist-import summary span { color: var(--muted); }
 .playlist-import progress { width: 100%; height: 5px; accent-color: var(--accent); margin-top: 10px; }

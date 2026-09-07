@@ -1282,9 +1282,17 @@ function renderLibrary() {
   });
 }
 
+const dismissedImports = new Set((() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem("tunesaver.dismissedImports") || "[]");
+    return Array.isArray(stored) ? stored.filter(id => typeof id === "string").slice(-100) : [];
+  } catch (_) { return []; }
+})());
+
 function renderImports() {
   const area = document.querySelector("#playlist-imports");
-  const imports = (libraryState.imports || []).filter(item => !selectedPlaylistId || item.playlist_id === selectedPlaylistId);
+  const imports = (libraryState.imports || []).filter(item => !dismissedImports.has(item.id)
+    && (!selectedPlaylistId || item.playlist_id === selectedPlaylistId));
   area.hidden = !imports.length;
   const expanded = new Set(Array.from(area.querySelectorAll("details[open]")).map(el => el.dataset.id));
   area.replaceChildren();
@@ -1300,6 +1308,26 @@ function renderImports() {
     const status = document.createElement("span");
     status.textContent = `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.queued} en file` : ""}`;
     summary.append(name, status);
+    if (["done", "partial", "failed"].includes(item.state)) {
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "import-dismiss";
+      close.title = "Masquer ce bilan";
+      close.setAttribute("aria-label", `Masquer le bilan de ${item.name}`);
+      close.append(document.getElementById("icon-close").content.cloneNode(true));
+      close.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        dismissedImports.add(item.id);
+        try {
+          localStorage.setItem("tunesaver.dismissedImports", JSON.stringify([...dismissedImports].slice(-100)));
+        } catch (_) { /* Keep dismissal for this session when storage is unavailable. */ }
+        renderImports();
+        document.querySelector(".import-dismiss")?.focus();
+        if (area.hidden) importPlaylistButton.focus();
+      });
+      summary.append(close);
+    }
     const progress = document.createElement("progress");
     progress.max = item.total || 1;
     if (item.total || !["pending", "running"].includes(item.state)) progress.value = item.processed;
