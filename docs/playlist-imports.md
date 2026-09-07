@@ -21,8 +21,9 @@ reutilise les fichiers deja disponibles pour le meme compte.
 
 Les playlists peuvent etre rangees dans des dossiers a un niveau. Le bouton
 dossier a cote de Mes playlists permet d'en creer un. Le deplacement fonctionne
-par glisser-deposer sur un dossier ou via le menu sous chaque playlist.
-La zone Sans dossier permet de sortir une playlist de son dossier.
+par glisser-deposer sur un dossier. Glisser une playlist sur le titre Mes playlists
+ou dans la zone des playlists a la racine permet de la sortir de son dossier.
+Seule l'indentation distingue les playlists rangees de celles a la racine.
 Chaque dossier peut etre renomme, replie ou supprime ; sa suppression conserve
 ses playlists et leurs morceaux. Le rangement et l'etat replie sont enregistres
 dans le compte utilisateur. La section Sons sans playlist affiche les morceaux

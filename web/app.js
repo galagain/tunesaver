@@ -1079,13 +1079,7 @@ function renderPlaylists() {
   }
   const root = document.createElement("div");
   root.className = "root-playlists";
-  if ((libraryState.folders || []).length) {
-    const rootLabel = document.createElement("div");
-    rootLabel.className = "playlist-root-label";
-    rootLabel.textContent = "Sans dossier";
-    folderDropTarget(rootLabel, null);
-    root.append(rootLabel);
-  }
+  folderDropTarget(root, null);
   playlistList.append(root);
   for (const playlist of libraryState.playlists) {
     const row = document.createElement("div");
@@ -1144,24 +1138,6 @@ function renderPlaylists() {
       await refreshLibrary();
     });
     row.append(button, makeRenameButton(playlist, "playlists"), remove);
-    if ((libraryState.folders || []).length) {
-      const move = document.createElement("select");
-      move.className = "playlist-folder-select";
-      move.setAttribute("aria-label", `Dossier de ${playlist.name}`);
-      for (const folder of [{ id: "", name: "Sans dossier" }, ...libraryState.folders]) {
-        const option = document.createElement("option");
-        option.value = folder.id;
-        option.textContent = folder.name;
-        move.append(option);
-      }
-      move.value = playlist.folder_id || "";
-      move.addEventListener("change", async () => {
-        move.disabled = true;
-        await movePlaylist(playlist.id, move.value);
-        move.disabled = false;
-      });
-      row.append(move);
-    }
     (containers.get(playlist.folder_id) || root).append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");
@@ -1526,6 +1502,8 @@ document.querySelector("#create-folder").addEventListener("click", async () => {
     await refreshLibrary();
   } catch (error) { showToast(error.message, "error"); }
 });
+
+folderDropTarget(document.querySelector("#playlist-title"), null);
 
 createPlaylistButton.addEventListener("click", async () => {
   const name = window.prompt("Nom de la playlist");
