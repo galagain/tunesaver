@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css?v=20260907-16">
-    <script src="/app.js?v=20260907-16" defer></script>
-    <script src="/dig.js?v=20260907-16" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260908-1">
+    <script src="/app.js?v=20260908-1" defer></script>
+    <script src="/dig.js?v=20260908-1" defer></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -222,27 +222,10 @@
             </div>
             </div>
             <section id="dig-panel" hidden aria-label="Dig">
-              <div class="dig-toolbar">
-                <label class="sr-only" for="dig-sessions">Recherches sauvegardées</label>
-                <select id="dig-sessions"><option value="">Nouvelle recherche</option></select>
-                <button id="dig-new" class="secondary-button" type="button">Nouvelle recherche</button>
-                <button id="dig-edit" class="secondary-button" type="button" hidden>Modifier les références</button>
-                <button id="dig-rename" class="collection-rename" type="button" title="Renommer la recherche" aria-label="Renommer la recherche"></button>
-                <button id="dig-delete" class="collection-rename" type="button" title="Supprimer la recherche" aria-label="Supprimer la recherche"></button>
-              </div>
-              <form id="dig-form">
-                <label for="dig-name">Nom de la recherche</label>
-                <input id="dig-name" maxlength="80" required placeholder="Mon prochain set" autocomplete="off">
+              <div id="dig-references-panel">
                 <div class="dig-reference-heading"><h3>Références</h3><button id="dig-add" type="button" class="secondary-button">Ajouter des références</button></div>
                 <div id="dig-references" class="dig-references"></div>
-                <div class="dig-form-actions">
-                  <fieldset class="dig-modes"><legend class="sr-only">Orientation</legend>
-                    <label><input type="radio" name="dig-mode" value="close" checked> Proche</label>
-                    <label><input type="radio" name="dig-mode" value="explore"> Exploration</label>
-                  </fieldset>
-                  <button id="dig-generate" class="primary-button" type="submit">Lancer Dig</button>
-                </div>
-              </form>
+              </div>
               <div id="dig-status" role="status" aria-live="polite"></div>
               <details id="dig-details" hidden><summary>Références et sources</summary><div id="dig-detail-content"></div></details>
               <div id="dig-results-toolbar" class="dig-toolbar" hidden>
@@ -258,7 +241,7 @@
               <div id="dig-results"></div>
               <div class="dig-footer">
                 <button id="dig-more" class="secondary-button" type="button" hidden>Afficher 20 de plus</button>
-                <button id="dig-retry" class="secondary-button" type="button" hidden>Relancer</button>
+                <button id="dig-retry" class="secondary-button" type="button" hidden>Réessayer</button>
                 <button id="dig-cancel" class="secondary-button" type="button" hidden>Arrêter</button>
               </div>
             </section>

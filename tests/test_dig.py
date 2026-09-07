@@ -30,18 +30,18 @@ class RankingTests(unittest.TestCase):
     def test_owned_rejected_and_duplicate_candidates_are_filtered(self):
         seed = dig.select_seeds([([{"title": "Seed", "artist": "A"}], True)])[0]
         track = {"title": "New", "artist": "B", "strength": 1, "engine": "ListenBrainz", "reason": "Similar"}
-        ranked = dig.rank([(track, seed)] * 3, [seed], [], {}, "close")
+        ranked = dig.rank([(track, seed)] * 3, [seed], [], {})
         self.assertEqual(len(ranked), 1)
         self.assertEqual(len(ranked[0]["references"]), 1)
-        self.assertEqual(dig.rank([(track, seed)], [seed], [track], {}, "close"), [])
-        self.assertEqual(dig.rank([(track, seed)], [seed], [], {dig.identity(track): {"state": "rejected"}}, "close"), [])
+        self.assertEqual(dig.rank([(track, seed)], [seed], [track], {}), [])
+        self.assertEqual(dig.rank([(track, seed)], [seed], [], {dig.identity(track): {"state": "rejected"}}), [])
 
-    def test_exploration_promotes_new_artists(self):
+    def test_single_ranking_uses_relevance_and_artist_diversity(self):
         seed = dig.select_seeds([([{"title": "Seed", "artist": "A"}], True)])[0]
         a = {"title": "New", "artist": "A", "strength": 1, "engine": "Test", "reason": "Similar"}
         b = {**a, "artist": "B", "strength": 0.9}
-        self.assertEqual(dig.rank([(a, seed), (b, seed)], [seed], [], {}, "close")[0]["artist"], "A")
-        self.assertEqual(dig.rank([(a, seed), (b, seed)], [seed], [], {}, "explore")[0]["artist"], "B")
+        c = {**a, "title": "Another"}
+        self.assertEqual([t["artist"] for t in dig.rank([(a, seed), (b, seed), (c, seed)], [seed], [], {})], ["A", "B", "A"])
 
 
 class DigHTTPTests(unittest.IsolatedAsyncioTestCase):
@@ -55,6 +55,54 @@ class DigHTTPTests(unittest.IsolatedAsyncioTestCase):
         app[webapp.AUTH_CACHE_KEY][hashlib.sha256(helpers.TEST_TOKEN.encode()).hexdigest()] = (
             time.monotonic() + 3600, {"id": user["id"], "email": user["email"]})
         return user, app, {"Authorization": f"Bearer {helpers.TEST_TOKEN}"}
+
+    async def test_live_edits_reuse_workspace_and_invalidate_old_worker(self):
+        user, app, headers = self.fixture()
+        service = dig_web.DigService(webapp)
+        tracks = [{"job_id": str(i), "title": f"Seed {i}", "artist": "A"} for i in range(2)]
+        async with TestClient(TestServer(app)) as client, context_patch(tracks):
+            self.assertIsNone((await (await client.get("/api/dig/live", headers=headers)).json())["dig"])
+            response = await client.put("/api/dig/live", json={"references": [{"kind": "track", "id": "0"}], "revision": None}, headers=headers)
+            first = (await response.json())["dig"]
+            self.assertEqual(first["revision"], 0)
+            self.assertNotIn("mode", first["config"])
+            with webapp.local_db() as db:
+                old = dict(db.execute("select * from dig_sessions where id = ?", (first["id"],)).fetchone())
+            response = await client.put("/api/dig/live", json={"references": [{"kind": "track", "id": "1"}], "revision": 0}, headers=headers)
+            second = (await response.json())["dig"]
+            self.assertEqual(second["id"], first["id"])
+            self.assertEqual(second["revision"], 1)
+            self.assertEqual(second["seeds"][0]["title"], "Seed 1")
+            service.save(first["id"], 0, state="done", results='[{"stale":true}]')
+            with mock.patch.object(service.sources, "listenbrainz") as source:
+                await service.process(app, old)
+                source.assert_not_called()
+            detail = (await (await client.get("/api/dig/live", headers=headers)).json())["dig"]
+            self.assertEqual(detail["state"], "pending")
+            self.assertEqual(detail["results"], [])
+            stale = await client.put("/api/dig/live", json={"references": [], "revision": 0}, headers=headers)
+            self.assertEqual(stale.status, 409)
+            bad = await client.put("/api/dig/live", json={"references": [{"kind": "track", "id": "foreign"}], "revision": 1}, headers=headers)
+            self.assertEqual(bad.status, 400)
+            response = await client.put("/api/dig/live", json={"references": [], "revision": 1}, headers=headers)
+            empty = (await response.json())["dig"]
+            self.assertEqual(empty["state"], "idle")
+            self.assertEqual(empty["config"]["references"], [])
+            with webapp.local_db() as db:
+                self.assertEqual(db.execute("select count(*) from dig_sessions where user_id = ?", (user["id"],)).fetchone()[0], 1)
+
+    async def test_live_suggestion_reference_survives_result_replacement(self):
+        _, app, headers = self.fixture()
+        async with TestClient(TestServer(app)) as client, context_patch([{"job_id": "0", "title": "Seed", "artist": "A"}]):
+            response = await client.put("/api/dig/live", json={"references": [{"kind": "track", "id": "0"}]}, headers=headers)
+            first = (await response.json())["dig"]
+            with webapp.local_db() as db:
+                db.execute("update dig_sessions set results = ? where id = ?", (json.dumps([{"id": "new", "title": "New", "artist": "B"}]), first["id"]))
+            ref = {"kind": "suggestion", "id": f"{first['id']}:new"}
+            for revision in (0, 1):
+                response = await client.put("/api/dig/live", json={"references": [ref], "revision": revision}, headers=headers)
+                self.assertEqual(response.status, 200)
+                self.assertEqual((await response.json())["dig"]["seeds"][0]["title"], "New")
 
     async def test_reference_ownership_and_mixed_selection(self):
         user, app, headers = self.fixture()

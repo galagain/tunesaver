@@ -2057,27 +2057,23 @@ h1 {
     animation-iteration-count: 1 !important;
   }
 }
-.dig-toolbar, .dig-form-actions, .dig-reference-heading, .dig-footer {
+.dig-toolbar, .dig-reference-heading, .dig-footer {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 #dig-panel { min-width: 0; padding: 0 16px 20px; }
 #dig-panel h3 { font-size: 0.85rem; margin: 0; }
 .dig-toolbar { margin-bottom: 16px; }
 .dig-toolbar select, .dig-toolbar input { flex: 1 1 160px; min-width: 0; max-width: 100%; }
-#dig-panel input:not([type="checkbox"]):not([type="radio"]), #dig-panel select,
+#dig-panel input:not([type="checkbox"]), #dig-panel select,
 .dig-picker input[type="search"], .dig-picker select {
   min-height: 36px; padding: 7px 10px; border: 1px solid #3c3c3c; border-radius: 4px;
   color: #eeeeee; background: #232323; font-size: 0.8rem; box-sizing: border-box;
 }
-#dig-name { width: 100%; margin: 8px 0 22px; }
-#dig-form > label { font-size: 0.78rem; color: var(--muted); }
 .dig-reference-heading { justify-content: space-between; }
 .dig-references { margin: 12px 0 20px; display: flex; gap: 8px; flex-wrap: wrap; }
 .dig-reference { display: flex; align-items: center; gap: 8px; padding-left: 10px; border: 1px solid #414141; border-radius: 4px; max-width: 100%; }
 .dig-reference span { font-size: 0.76rem; overflow-wrap: anywhere; min-width: 0; }
-.dig-modes { border: 0; margin: 0; padding: 0; display: flex; gap: 16px; }
-.dig-modes label, .dig-checkbox { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
-.dig-form-actions { justify-content: space-between; }
+.dig-checkbox { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
 #dig-status { margin: 18px 0 12px; font-size: 0.8rem; color: var(--muted); }
 #dig-status.dig-running { color: var(--accent); }
 #dig-details { border-block: 1px solid var(--line); padding: 10px 0; margin-bottom: 16px; font-size: 0.75rem; color: var(--muted); }
@@ -2107,7 +2103,7 @@ h1 {
 .dig-picker-row { display: flex; gap: 12px; align-items: center; min-height: 44px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 0.8rem; }
 .dig-picker-row span { overflow-wrap: anywhere; min-width: 0; }
 .dig-picker-row img { width: 34px; height: 34px; object-fit: cover; }
-.dig-picker input[type="checkbox"], #dig-panel input[type="checkbox"], #dig-panel input[type="radio"] { accent-color: var(--accent); flex: 0 0 auto; width: 16px; height: 16px; }
+.dig-picker input[type="checkbox"], #dig-panel input[type="checkbox"] { accent-color: var(--accent); flex: 0 0 auto; width: 16px; height: 16px; }
 @media (max-width: 1000px) {
   .dig-result { grid-template-columns: 44px minmax(0, 1fr); gap: 10px; }
   .dig-cover { width: 44px; height: 44px; }
@@ -2115,6 +2111,5 @@ h1 {
 }
 @media (max-width: 600px) {
   #dig-panel { padding: 0 0 16px; }
-  .dig-form-actions { align-items: stretch; }
   .dig-picker { padding: 14px; }
 }

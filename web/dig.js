@@ -3,6 +3,7 @@ window.Dig = (() => {
   const $ = (id) => document.getElementById(id);
   let active = false, current = null, references = [], selection = new Map();
   let timer = null, loading = false, generation = 0, listSignature = "", resultSignature = "";
+  let editTimer = null, saving = false, dirty = false;
   const queued = new Map();
   const kinds = { track: "Son", playlist: "Playlist", tag: "Tag", folder: "Dossier", suggestion: "Suggestion" };
   const el = (tag, cls, text) => {
@@ -36,11 +37,45 @@ window.Dig = (() => {
       const row = el("div", "dig-reference");
       row.append(el("span", "", `${kinds[ref.kind]} · ${ref.name}`), command(`Retirer ${ref.name}`, "close", () => {
         references = references.filter(r => !(r.kind === ref.kind && r.id === ref.id));
-        paintReferences();
+        changed();
       }));
       $("dig-references").append(row);
     }
-    $("dig-generate").disabled = !references.length;
+  }
+  function changed() {
+    generation++;
+    dirty = true;
+    paintReferences(); paint();
+    clearTimeout(editTimer);
+    editTimer = setTimeout(saveReferences, 400);
+  }
+  async function saveReferences() {
+    if (saving || !dirty || !session) return;
+    saving = true; dirty = false;
+    const version = generation, token = session.access_token;
+    try {
+      const response = await requestJson("/api/dig/live", { method: "PUT", body: JSON.stringify({
+        references, revision: current?.revision ?? null,
+      }) });
+      if (session?.access_token !== token) return;
+      current = response.dig;
+      if (version === generation) references = current.config.references;
+    } catch (error) {
+      if (session?.access_token !== token) return;
+      showToast(error.message, "error");
+      try {
+        const response = await requestJson("/api/dig/live", { method: "GET" });
+        if (session?.access_token !== token) return;
+        current = response.dig;
+        if (version === generation) references = current?.config.references || [];
+      } catch (_) { /* Keep the selection editable when the server is unavailable. */ }
+    } finally {
+      saving = false;
+      if (session?.access_token === token) {
+        paintReferences(); paint();
+        if (dirty) saveReferences();
+      }
+    }
   }
   function paintPicker() {
     const kind = $("dig-picker-kind").value;
@@ -74,7 +109,7 @@ window.Dig = (() => {
   function sync() {
     if (!active) return;
     $("library-title").textContent = "Dig";
-    $("library-count").textContent = current?.name || "Nouvelle recherche";
+    $("library-count").textContent = "";
     $("dig-nav").dataset.selected = "true";
     document.querySelectorAll('.library-sidebar [data-selected="true"]').forEach(node => {
       if (node.id !== "dig-nav") node.dataset.selected = "false";
@@ -89,32 +124,31 @@ window.Dig = (() => {
     if (current) paintResults();
   }
   async function refresh() {
-    if (!active || !session || loading) return;
+    if (!active || !session || loading || saving || dirty) return;
     loading = true;
     const version = generation;
     try {
-      const list = await requestJson("/api/dig", { method: "GET" });
-      const detail = current?.id ? await requestJson(`/api/dig/${current.id}`, { method: "GET" }) : null;
+      const response = await requestJson("/api/dig/live", { method: "GET" });
       if (!active || version !== generation) return;
-      $("dig-sessions").replaceChildren(new Option("Nouvelle recherche", ""), ...list.sessions.map(s => new Option(`${s.name}${["running", "pending"].includes(s.state) ? " · En cours" : ""}`, s.id)));
-      if (detail) current = detail;
-      $("dig-sessions").value = current?.id || "";
+      current = response.dig;
+      references = current?.config.references || [];
+      if (!$("dig-picker").open) paintReferences();
       paint();
     } catch (error) { if (version === generation) showToast(error.message, "error"); }
     finally { loading = false; }
   }
   function paint() {
-    $("dig-form").hidden = Boolean(current);
-    for (const id of ["dig-rename", "dig-delete", "dig-edit", "dig-results-toolbar", "dig-details"]) $(id).hidden = !current;
+    const hasReferences = references.length > 0;
+    for (const id of ["dig-results-toolbar", "dig-details"]) $(id).hidden = !hasReferences;
     const running = current && ["running", "pending"].includes(current.state);
-    $("dig-cancel").hidden = !running;
-    $("dig-retry").hidden = !current || running;
-    $("dig-more").hidden = !current || running || current.target >= current.available;
-    $("dig-status").textContent = current ? current.progress || "En attente" : "";
+    $("dig-cancel").hidden = !running || saving || dirty;
+    $("dig-retry").hidden = !current || !["failed", "cancelled"].includes(current.state) || saving || dirty;
+    $("dig-more").hidden = !current || running || saving || dirty || !hasReferences || current.target >= current.available;
+    $("dig-status").textContent = saving || dirty ? "Mise à jour…" : hasReferences ? current?.progress || "En attente" : "";
     $("dig-status").classList.toggle("dig-running", Boolean(running));
     $("dig-detail-content").replaceChildren();
     if (current?.seeds) {
-      $("dig-detail-content").append(el("p", "", `${current.seeds.length} morceaux de référence · ${current.config.mode === "explore" ? "Exploration" : "Proche"}`));
+      $("dig-detail-content").append(el("p", "", `${current.seeds.length} morceaux de référence`));
       for (const seed of current.seeds) $("dig-detail-content").append(el("p", "", `${seed.artist} · ${seed.title}`));
       for (const message of current.warnings) $("dig-detail-content").append(el("p", "dig-warning", message));
       if (current.warnings.length) $("dig-details").open = true;
@@ -145,13 +179,13 @@ window.Dig = (() => {
     paintResults();
   }
   function paintResults() {
-    const signature = JSON.stringify([current?.results, $("dig-filter").value, $("dig-text-filter").value, $("dig-available").checked,
+    const signature = JSON.stringify([saving, dirty, references.length, current?.results, $("dig-filter").value, $("dig-text-filter").value, $("dig-available").checked,
       $("dig-destination").value, libraryState.tracks.map(t => t.job_id), liveQueueTracks.map(t => [t.id, t.state]), [...queued]]);
     if (signature === resultSignature) return;
     resultSignature = signature;
     const area = $("dig-results");
     area.replaceChildren();
-    if (!current?.results) return;
+    if (!current?.results || saving || dirty || !references.length) return;
     const filter = $("dig-filter").value, query = $("dig-text-filter").value.toLocaleLowerCase();
     const rows = current.results.filter(t => (filter === "all" ? t.feedback !== "rejected" : t.feedback === filter)
       && (!$("dig-available").checked || t.matches.length) && `${t.title} ${t.artist}`.toLocaleLowerCase().includes(query));
@@ -167,7 +201,7 @@ window.Dig = (() => {
       const info = el("div", "dig-result-info");
       info.append(el("strong", "", item.title), el("span", "dig-artist", item.artist));
       const match = item.matches[0];
-      const metadata = match ? [match.album, match.label, match.bpm && `${match.bpm} BPM`, match.key, match.duration].filter(Boolean).join(" · ") : item.album;
+      const metadata = match ? [match.album, match.label, match.bpm, match.key, match.duration].filter(Boolean).join(" · ") : item.album;
       if (metadata) info.append(el("span", "dig-meta", metadata));
       const why = document.createElement("details");
       why.append(el("summary", "", item.reasons.join(" · ")));
@@ -204,9 +238,12 @@ window.Dig = (() => {
       const deeper = el("button", "secondary-button dig-deeper", "Creuser");
       deeper.type = "button";
       deeper.addEventListener("click", () => {
-        references = [{ kind: "suggestion", id: `${current.id}:${item.id}`, name: `${item.artist} · ${item.title}` }];
-        $("dig-name").value = item.title.slice(0, 80);
-        current = null; generation++; paintReferences(); paint(); refresh();
+        const ref = { kind: "suggestion", id: `${current.id}:${item.id}`, name: `${item.artist} · ${item.title}` };
+        if (!references.some(r => r.kind === ref.kind && r.id === ref.id)) {
+          if (references.length >= 100) { showToast("100 références maximum.", "error"); return; }
+          references.push(ref);
+          changed();
+        }
       });
       actions.append(deeper);
       if (!item.matches.length && item.source_url?.startsWith("https://musicbrainz.org/recording/")) {
@@ -240,48 +277,31 @@ window.Dig = (() => {
     const button = event.target.closest(".playlist-filter, .tag-filter");
     if (button && button.id !== "dig-nav" && !button.classList.contains("folder-toggle") && active) close();
   }, true);
-  $("dig-new").addEventListener("click", () => { current = null; generation++; references = []; paintReferences(); paint(); refresh(); });
-  $("dig-edit").addEventListener("click", () => {
-    references = [...(current.config?.references || [])];
-    $("dig-name").value = current.name;
-    document.querySelector(`[name="dig-mode"][value="${current.config.mode}"]`).checked = true;
-    current = null; generation++; paintReferences(); paint(); refresh();
-  });
-  $("dig-sessions").addEventListener("change", () => { generation++; current = $("dig-sessions").value ? { id: $("dig-sessions").value } : null; refresh(); });
   $("dig-add").addEventListener("click", () => { selection = new Map(references.map(r => [`${r.kind}:${r.id}`, r])); paintPicker(); $("dig-picker").showModal(); });
   $("dig-picker-close").append(icon("close"));
   $("dig-picker-close").addEventListener("click", () => $("dig-picker").close());
-  $("dig-picker-done").addEventListener("click", () => { references = [...selection.values()]; paintReferences(); $("dig-picker").close(); });
+  $("dig-picker-done").addEventListener("click", () => {
+    const next = [...selection.values()];
+    const keys = refs => refs.map(r => `${r.kind}:${r.id}`).sort().join("|");
+    $("dig-picker").close();
+    if (keys(next) !== keys(references)) { references = next; changed(); }
+  });
   $("dig-picker-kind").addEventListener("change", paintPicker);
   $("dig-picker-query").addEventListener("input", paintPicker);
-  $("dig-form").addEventListener("submit", async event => {
-    event.preventDefault();
-    $("dig-generate").disabled = true;
-    try {
-      current = await requestJson("/api/dig", { method: "POST", body: JSON.stringify({ name: $("dig-name").value,
-        references, mode: document.querySelector('[name="dig-mode"]:checked').value }) });
-      await refresh();
-    } catch (error) { showToast(error.message, "error"); }
-    finally { $("dig-generate").disabled = !references.length; }
-  });
-  $("dig-rename").append(icon("pencil"));
-  $("dig-delete").append(icon("trash"));
   async function update(payload, method = "PATCH") {
     try { await requestJson(`/api/dig/${current.id}`, { method, body: JSON.stringify(payload) });
       if (method === "DELETE") { current = null; generation++; }
       await refresh();
     } catch (error) { showToast(error.message, "error"); }
   }
-  $("dig-rename").addEventListener("click", () => { const name = prompt("Nom de la recherche", current.name); if (name) update({ name }); });
-  $("dig-delete").addEventListener("click", () => { if (confirm("Supprimer cette recherche ? Les sons téléchargés seront conservés.")) update({}, "DELETE"); });
   for (const action of ["more", "retry", "cancel"]) $("dig-" + action).addEventListener("click", () => update({ action }));
   for (const id of ["dig-filter", "dig-available", "dig-destination"]) $(id).addEventListener("change", paintResults);
   $("dig-text-filter").addEventListener("input", paintResults);
   $("dig-create-playlist").addEventListener("click", async () => {
-    const name = prompt("Nom de la playlist", current?.name || ""); if (!name) return;
+    const name = prompt("Nom de la playlist"); if (!name) return;
     try { const result = await requestJson("/api/playlists", { method: "POST", body: JSON.stringify({ name }) });
       await refreshLibrary(); sync(); $("dig-destination").value = result.playlist.id; paintResults();
     } catch (error) { showToast(error.message, "error"); }
   });
-  return { get active() { return active; }, open, sync, reset() { close(); current = null; references = []; queued.clear(); $("dig-picker").close(); } };
+  return { get active() { return active; }, open, sync, reset() { close(); clearTimeout(editTimer); dirty = false; current = null; references = []; queued.clear(); $("dig-picker").close(); } };
 })();

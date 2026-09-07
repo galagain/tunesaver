@@ -101,7 +101,7 @@ class Sources:
                 for i, t in enumerate(data.get("similartracks", {}).get("track", []))]
 
 
-def rank(candidates, seeds, owned, feedback, mode):
+def rank(candidates, seeds, owned, feedback):
     excluded = {identity(t) for t in owned + seeds}
     excluded.update(k for k, v in feedback.items() if v["state"] == "rejected")
     preferred = Counter(normalized_words(v["artist"]) for v in feedback.values() if v["state"] == "kept")
@@ -120,7 +120,6 @@ def rank(candidates, seeds, owned, feedback, mode):
     for item in merged.values():
         novel = normalized_words(item["artist"]) not in seed_artists
         item["score"] = sum(item["signals"].values()) + min(0.3, preferred[normalized_words(item["artist"])] * 0.05)
-        item["score"] *= (1.8 if novel else 0.4) if mode == "explore" else (1 if novel else 1.15)
         item["engines"] = sorted({s[1] for s in item.pop("signals")})
         item["references"] = list(item["references"].values())
         item["reasons"] = [item["reason"], f"{len(item['references'])} référence(s)"]
