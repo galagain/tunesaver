@@ -30,6 +30,7 @@ from aiohttp import web
 from mutagen import File as MutagenFile
 
 import musicdl
+import playlist_sources
 
 
 LOGGER = logging.getLogger("musicdl.web")
@@ -288,6 +289,20 @@ def init_local_store() -> None:
               job_id text not null,
               created_at text not null,
               primary key (playlist_id, job_id)
+            );
+
+            create table if not exists playlist_imports (
+              id text primary key,
+              user_id text not null references users(id) on delete cascade,
+              playlist_id text not null references playlists(id) on delete cascade,
+              source_url text not null,
+              state text not null default 'pending',
+              tracks text not null default '[]',
+              processed integer not null default 0,
+              queued integer not null default 0,
+              failures text not null default '[]',
+              error text not null default '',
+              created_at text not null
             );
 
             create table if not exists tags (
@@ -1887,10 +1902,12 @@ def configured_beatport_proxy() -> str:
     return proxy.strip()
 
 
-def beatport_helper_search(query: str, *, proxy: str = "") -> dict[str, Any]:
+def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "") -> dict[str, Any]:
     command = [BEATPORT_SEARCH_BINARY]
     if proxy:
         command.extend(["--proxy", proxy])
+    if collection:
+        command.extend(["--collection", collection])
     command.extend(["--", query])
     try:
         with musicdl.provider_lock("beatport", "operation", blocking=False):
@@ -2418,6 +2435,167 @@ async def history_handler(request: web.Request) -> web.Response:
     return web.json_response({"history": rows})
 
 
+def read_import_source(url: str) -> dict[str, Any]:
+    provider, identifier, canonical = playlist_sources.playlist_source(url)
+    if provider == "spotify":
+        payload = playlist_sources.spotify_playlist(identifier)
+    elif provider == "soundcloud":
+        payload = playlist_sources.soundcloud_playlist(canonical)
+    else:
+        kind, resource_id = identifier.split(":")
+        source = beatport_helper_search(resource_id, proxy=configured_beatport_proxy(), collection=kind)
+        payload = {"name": source.get("name", "Beatport"), "tracks": []}
+        for item in source.get("tracks", []):
+            normalized = normalize_beatport_results({"tracks": [item]})
+            if not normalized:
+                raise playlist_sources.PlaylistError("Un titre Beatport est inaccessible.")
+            payload["tracks"].append(normalized[0])
+    if not payload["tracks"] or len(payload["tracks"]) > playlist_sources.MAX_TRACKS:
+        raise playlist_sources.PlaylistError("La playlist doit contenir entre 1 et 500 titres accessibles.")
+    return payload
+
+
+def local_imports(user_id: str) -> list[dict[str, Any]]:
+    with local_db() as db:
+        rows = db.execute(
+            "select i.*, p.name from playlist_imports i join playlists p on p.id = i.playlist_id "
+            "where i.user_id = ? order by i.created_at desc limit 20", (user_id,)
+        ).fetchall()
+    return [{"id": r["id"], "playlist_id": r["playlist_id"], "name": r["name"], "state": r["state"],
+             "total": len(json.loads(r["tracks"])), "processed": r["processed"], "queued": r["queued"],
+             "failures": json.loads(r["failures"]), "error": r["error"]} for r in rows]
+
+
+async def playlist_import_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    try:
+        provider, _, url = playlist_sources.playlist_source(payload.get("url"))
+    except (playlist_sources.PlaylistError, ValueError) as exc:
+        raise PublicError(str(exc)) from exc
+    user_id = request["user"]["id"]
+    with local_db() as db:
+        existing = db.execute("select id, playlist_id from playlist_imports where user_id = ? "
+                              "and source_url = ? and state in ('pending', 'running')", (user_id, url)).fetchone()
+        if existing:
+            return web.json_response(dict(existing), status=202)
+        count = db.execute("select count(*) from playlist_imports where user_id = ? "
+                           "and state in ('pending', 'running')", (user_id,)).fetchone()[0]
+        if count >= 3:
+            raise PublicError("Trois imports sont deja en cours. Attendez leur fin.", status=429)
+        import_id, playlist_id = str(uuid.uuid4()), str(uuid.uuid4())
+        db.execute("insert into playlists (id, user_id, name, created_at) values (?, ?, ?, ?)",
+                   (playlist_id, user_id, f"Import {provider.title()}", utc_timestamp()))
+        db.execute("insert into playlist_imports (id, user_id, playlist_id, source_url, created_at) "
+                   "values (?, ?, ?, ?, ?)", (import_id, user_id, playlist_id, url, utc_timestamp()))
+    return web.json_response({"id": import_id, "playlist_id": playlist_id}, status=202)
+
+
+def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
+    provider = result["provider"]
+    url = musicdl.validate_url(provider, result["download_url"])
+    owner = record["user_id"]
+    if resource_kind(provider, url) != "track":
+        raise PublicError("La correspondance n'est pas un morceau.")
+    # Serialize enqueue and playlist membership so a restart reuses the same job.
+    with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
+        if not local_playlist_has_owner(db, record["playlist_id"], owner):
+            raise PublicError("La playlist a ete supprimee.")
+        job_id = existing_job(provider, url, owner)
+        if not job_id:
+            for path in (musicdl.QUEUE_ROOT / "done" / provider).glob("*.json"):
+                try:
+                    job = json.loads(path.read_text())
+                    if job.get("owner_id") == owner and url in job.get("urls", []) and delivery_for_job(path.stem, owner):
+                        job_id = path.stem
+                        break
+                except (OSError, ValueError):
+                    continue
+        if not job_id:
+            job_id = musicdl.enqueue(provider, [url], owner_id=owner, ephemeral=True,
+                                     metadata={"title": result["title"][:200], "artist": result.get("artist", "")[:200], "kind": "track"})
+        db.execute("delete from library_removed where user_id = ? and job_id = ?", (owner, job_id))
+        db.execute("insert or ignore into playlist_items (playlist_id, job_id, created_at) values (?, ?, ?)",
+                   (record["playlist_id"], job_id, utc_timestamp()))
+    return job_id
+
+
+async def process_playlist_import(app: web.Application, record: dict[str, Any]) -> None:
+    tracks = json.loads(record["tracks"])
+    if not tracks:
+        payload = await asyncio.to_thread(read_import_source, record["source_url"])
+        tracks = payload["tracks"]
+        with local_db() as db:
+            db.execute("update playlists set name = ? where id = ?", (payload["name"][:80], record["playlist_id"]))
+            db.execute("update playlist_imports set tracks = ?, state = 'running' where id = ?",
+                       (json.dumps(tracks), record["id"]))
+    failures = json.loads(record["failures"])
+    queued = record["queued"]
+    for index in range(record["processed"], len(tracks)):
+        with local_db() as db:
+            if not db.execute("select 1 from playlist_imports where id = ?", (record["id"],)).fetchone():
+                return
+        track = tracks[index]
+        result = track if track.get("provider") == "beatport" else None
+        errors = []
+        if result is None:
+            for provider, search in (("tiddl", search_tidal), ("qobuz", search_qobuz), ("beatport", search_beatport)):
+                if not worker_is_active(provider):
+                    continue
+                try:
+                    async with app[SEARCH_SEMAPHORES_KEY][provider]:
+                        candidates = await asyncio.to_thread(search, f"{track.get('artist', '')} {track['title']}"[:SEARCH_TEXT_LIMIT])
+                    result = playlist_sources.matching_track(track, candidates)
+                    if result:
+                        break
+                except SourceError as exc:
+                    errors.append(str(exc))
+        if result:
+            try:
+                if not worker_is_active(result["provider"]):
+                    raise PublicError("La source de telechargement est arretee.")
+                await asyncio.to_thread(enqueue_import_track, record, result)
+                queued += 1
+            except (PublicError, ValueError) as exc:
+                failures.append({"title": track["title"], "artist": track.get("artist", ""), "reason": str(exc)})
+        else:
+            failures.append({"title": track["title"], "artist": track.get("artist", ""),
+                             "reason": errors[0] if errors else "Aucune correspondance fiable sur les sources disponibles."})
+        with local_db() as db:
+            db.execute("update playlist_imports set processed = ?, queued = ?, failures = ? where id = ?",
+                       (index + 1, queued, json.dumps(failures), record["id"]))
+        await asyncio.sleep(0.3)
+    with local_db() as db:
+        db.execute("update playlist_imports set state = ? where id = ?",
+                   ("partial" if failures else "done", record["id"]))
+
+
+async def playlist_import_worker(app: web.Application) -> None:
+    while True:
+        with local_db() as db:
+            row = db.execute("select * from playlist_imports where state in ('pending', 'running') "
+                             "order by created_at limit 1").fetchone()
+        if row:
+            try:
+                await process_playlist_import(app, dict(row))
+            except Exception as exc:
+                message = str(exc) if isinstance(exc, (PublicError, playlist_sources.PlaylistError)) else "Import interrompu par une erreur interne."
+                LOGGER.warning("playlist import failed: %s", type(exc).__name__)
+                with local_db() as db:
+                    db.execute("update playlist_imports set state = 'failed', error = ? where id = ?",
+                               (message[:400], row["id"]))
+        await asyncio.sleep(2)
+
+
+async def playlist_import_context(app: web.Application):
+    task = asyncio.create_task(playlist_import_worker(app))
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 async def library_track_delete_handler(request: web.Request) -> web.Response:
     await asyncio.to_thread(local_library_remove_track, request["user"]["id"],
                             request.match_info.get("job_id", ""))
@@ -2431,7 +2609,8 @@ async def library_handler(request: web.Request) -> web.Response:
         asyncio.to_thread(local_playlists, user_id),
         asyncio.to_thread(local_tags, user_id),
     )
-    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags})
+    imports = await asyncio.to_thread(local_imports, user_id)
+    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports})
 
 
 async def cover_handler(request: web.Request) -> web.StreamResponse:
@@ -2901,6 +3080,7 @@ def create_app() -> web.Application:
     }
     app[AUTH_CACHE_KEY] = {}
     app[ADMIN_SESSIONS_KEY] = {}
+    app.cleanup_ctx.append(playlist_import_context)
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
@@ -2920,6 +3100,7 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
+    app.router.add_post("/api/playlist-imports", playlist_import_handler)
     app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)
     app.router.add_post("/api/tags", tag_create_handler)
     app.router.add_delete("/api/tags/{tag_id}", tag_delete_handler)

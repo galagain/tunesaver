@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"unspok3n/beatportdl/internal/beatport"
@@ -29,6 +30,7 @@ func run() error {
 	passwordFile := flag.String("password-file", "/run/secrets/beatport_password", "fichier contenant le mot de passe")
 	cacheFile := flag.String("cache-file", "/state/beatportdl/beatportdl-credentials.json", "cache OAuth BeatportDL")
 	proxy := flag.String("proxy", "", "proxy HTTP facultatif")
+	collection := flag.String("collection", "", "playlist ou chart")
 	flag.Parse()
 
 	query := strings.TrimSpace(strings.Join(flag.Args(), " "))
@@ -51,7 +53,60 @@ func run() error {
 			return fmt.Errorf("authentification Beatport: %w", err)
 		}
 	}
-	results, err := client.Search(query)
+	var results interface{}
+	if *collection != "" {
+		id, parseErr := strconv.ParseInt(query, 10, 64)
+		if parseErr != nil || id <= 0 {
+			return fmt.Errorf("identifiant invalide")
+		}
+		var name string
+		tracks := []beatport.Track{}
+		for page := 1; ; page++ {
+			var next *string
+			if *collection == "playlist" {
+				if page == 1 {
+					meta, e := client.GetPlaylist(id)
+					if e != nil {
+						return e
+					}
+					name = meta.Name
+				}
+				items, e := client.GetPlaylistItems(id, page, "per_page=100")
+				if e != nil {
+					return e
+				}
+				for _, item := range items.Results {
+					tracks = append(tracks, item.Track)
+				}
+				next = items.Next
+			} else if *collection == "chart" {
+				if page == 1 {
+					meta, e := client.GetChart(id)
+					if e != nil {
+						return e
+					}
+					name = meta.Name
+				}
+				items, e := client.GetChartTracks(id, page, "per_page=100")
+				if e != nil {
+					return e
+				}
+				tracks = append(tracks, items.Results...)
+				next = items.Next
+			} else {
+				return fmt.Errorf("collection inconnue")
+			}
+			if len(tracks) > 500 || (page >= 5 && next != nil) {
+				return fmt.Errorf("playlist limitee a 500 titres")
+			}
+			if next == nil {
+				break
+			}
+		}
+		results = map[string]interface{}{"name": name, "tracks": tracks}
+	} else {
+		results, err = client.Search(query)
+	}
 	if err != nil {
 		return fmt.Errorf("recherche Beatport: %w", err)
 	}

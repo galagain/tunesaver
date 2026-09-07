@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css?v=20260907-10">
-    <script src="/app.js?v=20260907-10" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260907-11">
+    <script src="/app.js?v=20260907-11" defer></script>
   </head>
   <body>
     <template id="icon-trash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M10 11v6M14 11v6"/></svg></template>
@@ -111,14 +111,13 @@
         </form>
         <div id="import-panel" class="import-panel" hidden>
           <label class="sr-only" for="import-links">Liens de playlist</label>
-          <textarea id="import-links" rows="7" spellcheck="false" placeholder="Colle un lien TIDAL, Beatport ou Qobuz par ligne"></textarea>
+          <textarea id="import-links" rows="7" spellcheck="false" placeholder="Playlist Spotify, SoundCloud, Beatport ou liens TIDAL / Qobuz"></textarea>
           <div class="import-actions">
             <button id="import-cancel" class="text-button compact" type="button">Annuler</button>
-            <button id="import-submit" class="primary-button" type="button">Importer</button>
+            <button id="import-submit" class="primary-button" type="button">Importer et télécharger</button>
           </div>
         </div>
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
-        <p class="search-help">Pour une liste, colle un lien TIDAL, Beatport ou Qobuz par ligne.</p>
       </section>
 
       <section id="results-section" class="results-section" aria-labelledby="results-title" hidden>
@@ -188,6 +187,7 @@
             <button id="refresh-library" class="refresh-button" type="button" aria-label="Actualiser la bibliothèque">↻</button>
           </div>
         </div>
+        <div id="playlist-imports" class="playlist-imports" hidden></div>
         <div class="library-layout">
           <aside class="library-sidebar" aria-label="Navigation bibliothèque">
             <h3>Sections</h3>

@@ -668,11 +668,18 @@ async function searchDirect(query) {
 
 async function enqueueList(links) {
   if (!window.confirm(`Ajouter ${links.length} liens à la file de téléchargement ?`)) return;
-  const payload = await requestJson("/api/downloads", {
-    method: "POST",
-    body: JSON.stringify({ links, confirm_complete: true }),
-  });
-  showToast(`${payload.jobs.length} téléchargement${payload.jobs.length > 1 ? "s" : ""} ajouté${payload.jobs.length > 1 ? "s" : ""}.`);
+  const playlists = links.filter(isImportPlaylist);
+  const direct = links.filter((link) => !isImportPlaylist(link));
+  for (const url of playlists) {
+    await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
+  }
+  if (direct.length) {
+    await requestJson("/api/downloads", {
+      method: "POST",
+      body: JSON.stringify({ links: direct, confirm_complete: true }),
+    });
+  }
+  showToast(playlists.length ? "Import de playlist lancé." : "Téléchargements ajoutés.");
   resultsSection.hidden = true;
   await refreshQueue();
   await refreshLibrary();
@@ -680,6 +687,15 @@ async function enqueueList(links) {
 
 function playlistLinksFromText(value) {
   return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+function isImportPlaylist(value) {
+  try {
+    const url = new URL(value);
+    return (url.hostname === "open.spotify.com" && url.pathname.includes("/playlist/"))
+      || (["soundcloud.com", "www.soundcloud.com"].includes(url.hostname) && url.pathname.includes("/sets/"))
+      || (["beatport.com", "www.beatport.com"].includes(url.hostname) && /\/(playlists?|charts?)\//.test(url.pathname));
+  } catch (_) { return false; }
 }
 
 importPlaylistButton.addEventListener("click", () => {
@@ -736,7 +752,7 @@ form.addEventListener("submit", async (event) => {
   searchButton.disabled = true;
   searchButton.textContent = "Patiente…";
   try {
-    if (lines.length > 1) {
+    if (lines.length > 1 || isImportPlaylist(query)) {
       await enqueueList(lines);
       return;
     }
@@ -904,10 +920,11 @@ function currentLibraryTitle() {
 }
 
 function liveTracksForLibrary() {
-  if (selectedPlaylistId || selectedTagId) return [];
+  if (selectedTagId) return [];
   const existing = new Set(libraryState.tracks.map((track) => track.job_id));
   return liveQueueTracks
     .filter((job) => !existing.has(job.id) && ["pending", "running", "failed"].includes(job.state))
+    .filter((job) => !selectedPlaylistId || trackInPlaylist({ job_id: job.id }, selectedPlaylistId))
     .map((job) => ({
       job_id: job.id,
       provider: job.provider,
@@ -1081,6 +1098,7 @@ function renderTags() {
 
 function renderLibrary() {
   if (draggedTrackTag) return;
+  renderImports();
   renderPlaylists();
   renderTags();
   libraryTracks.replaceChildren();
@@ -1262,6 +1280,43 @@ function renderLibrary() {
     row.append(rank, cover, body, actions);
     libraryTracks.append(row);
   });
+}
+
+function renderImports() {
+  const area = document.querySelector("#playlist-imports");
+  const imports = (libraryState.imports || []).filter(item => !selectedPlaylistId || item.playlist_id === selectedPlaylistId);
+  area.hidden = !imports.length;
+  const expanded = new Set(Array.from(area.querySelectorAll("details[open]")).map(el => el.dataset.id));
+  area.replaceChildren();
+  const labels = { pending: "Lecture de la playlist", running: "Recherche des titres", done: "Titres mis en téléchargement", partial: "Import partiel", failed: "Import impossible" };
+  for (const item of imports) {
+    const row = document.createElement("details");
+    row.className = "playlist-import";
+    row.dataset.id = item.id;
+    row.open = expanded.has(item.id);
+    const summary = document.createElement("summary");
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const status = document.createElement("span");
+    status.textContent = `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.queued} en file` : ""}`;
+    summary.append(name, status);
+    const progress = document.createElement("progress");
+    progress.max = item.total || 1;
+    if (item.total || !["pending", "running"].includes(item.state)) progress.value = item.processed;
+    progress.setAttribute("aria-label", `Import ${item.name}`);
+    row.append(summary, progress);
+    if (item.error) {
+      const error = document.createElement("p");
+      error.textContent = item.error;
+      row.append(error);
+    }
+    for (const failed of item.failures || []) {
+      const line = document.createElement("p");
+      line.textContent = `${failed.artist} · ${failed.title} : ${failed.reason}`;
+      row.append(line);
+    }
+    area.append(row);
+  }
 }
 
 async function refreshLibrary() {

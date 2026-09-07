@@ -771,6 +771,52 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(delivered["delivery_deleted"])
         self.assertIn("delivered_at", delivered)
 
+    async def test_playlist_import_is_owned_persistent_and_skips_wrong_matches(self) -> None:
+        user = webapp.local_create_user("import@example.com", "secret123")
+        app = webapp.create_app()
+        app.cleanup_ctx.clear()
+        app[webapp.AUTH_CACHE_KEY][hashlib.sha256(TEST_TOKEN.encode()).hexdigest()] = (
+            time.monotonic() + 3600, {"id": user["id"], "email": user["email"]})
+        headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
+        url = "https://open.spotify.com/playlist/3cEYpjA9oz9GiPac4AsH4n"
+        async with TestClient(TestServer(app)) as client:
+            rejected = await client.post("/api/playlist-imports", json={"url": "https://localhost/private"}, headers=headers)
+            self.assertEqual(rejected.status, 400)
+            response = await client.post("/api/playlist-imports", json={"url": url}, headers=headers)
+            self.assertEqual(response.status, 202)
+            result = await response.json()
+            duplicate = await client.post("/api/playlist-imports", json={"url": url}, headers=headers)
+            self.assertEqual((await duplicate.json())["id"], result["id"])
+            self.assertEqual(webapp.local_imports(TEST_USER_ID), [])
+            tracks = [{"title": "Song", "artist": "Artist", "duration": 180},
+                      {"title": "Missing", "artist": "Artist", "duration": 180}]
+            candidate = {"provider": "tiddl", "title": "Song", "artist": "Artist", "duration": "3:00",
+                         "download_url": "https://listen.tidal.com/track/123"}
+            with webapp.local_db() as db:
+                record = dict(db.execute("select * from playlist_imports where id = ?", (result["id"],)).fetchone())
+            with mock.patch.object(webapp, "read_import_source", return_value={"name": "Favorites", "tracks": tracks}), \
+                 mock.patch.object(webapp, "worker_is_active", return_value=True), \
+                 mock.patch.object(webapp, "search_tidal", return_value=[candidate]), \
+                 mock.patch.object(webapp, "search_qobuz", return_value=[]), \
+                 mock.patch.object(webapp, "search_beatport", return_value=[]):
+                await webapp.process_playlist_import(app, record)
+                status = webapp.local_imports(user["id"])[0]
+                self.assertEqual(status["state"], "partial")
+                self.assertEqual(status["queued"], 1)
+                self.assertEqual(status["failures"][0]["title"], "Missing")
+                playlist = webapp.local_playlists(user["id"])[0]
+                self.assertEqual(playlist["name"], "Favorites")
+                self.assertEqual(len(playlist["track_ids"]), 1)
+                first_job = playlist["track_ids"][0]
+                self.assertEqual(webapp.enqueue_import_track(record, candidate), first_job)
+                with webapp.local_db() as db:
+                    resumed = dict(db.execute("select * from playlist_imports where id = ?", (result["id"],)).fetchone())
+                await webapp.process_playlist_import(app, resumed)
+                self.assertEqual(webapp.local_imports(user["id"])[0]["queued"], 1)
+            deleted = await client.delete(f"/api/playlists/{result['playlist_id']}", json={}, headers=headers)
+            self.assertEqual(deleted.status, 200)
+            self.assertEqual(webapp.local_imports(user["id"]), [])
+
     async def test_library_stream_and_playlists_use_owned_deliveries(self) -> None:
         user = webapp.local_create_user("library@example.com", "secret123")
         user_id = user["id"]

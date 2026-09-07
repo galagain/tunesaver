@@ -79,6 +79,7 @@ COPY --from=beatport-builder /out/qobuz-dl /opt/qobuz-dl
 COPY --from=beatport-builder /out/qobuz-dl/LICENSE /usr/share/licenses/qobuz-dl/LICENSE
 COPY src/musicdl.py /app/musicdl.py
 COPY src/webapp.py /app/webapp.py
+COPY src/playlist_sources.py /app/playlist_sources.py
 COPY src/qobuz_search.py /app/qobuz_search.py
 COPY web /app/web
 RUN mkdir -p \
