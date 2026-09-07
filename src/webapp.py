@@ -284,6 +284,17 @@ def init_local_store() -> None:
             create index if not exists playlists_user_created_idx
               on playlists (user_id, created_at desc);
 
+            create table if not exists playlist_folders (
+              id text primary key,
+              user_id text not null references users(id) on delete cascade,
+              name text not null,
+              collapsed integer not null default 0
+            );
+            create table if not exists playlist_folder_items (
+              playlist_id text primary key references playlists(id) on delete cascade,
+              folder_id text not null references playlist_folders(id) on delete cascade
+            );
+
             create table if not exists playlist_items (
               playlist_id text not null references playlists(id) on delete cascade,
               job_id text not null,
@@ -1003,6 +1014,7 @@ def local_library_remove_track(user_id: str, job_id: str) -> None:
 
 def normalize_playlist_row(row: sqlite3.Row) -> dict[str, Any]:
     return {
+        "folder_id": row["folder_id"],
         "id": str(row["id"]),
         "name": str(row["name"])[:80],
         "created_at": str(row["created_at"] or "")[:40],
@@ -1020,9 +1032,11 @@ def local_playlists(user_id: str) -> list[dict[str, Any]]:
               playlists.id,
               playlists.name,
               playlists.created_at,
+              playlist_folder_items.folder_id,
               group_concat(playlist_items.job_id, char(10)) as track_ids
             from playlists
             left join playlist_items on playlist_items.playlist_id = playlists.id
+            left join playlist_folder_items on playlist_folder_items.playlist_id = playlists.id
             where playlists.user_id = ?
             group by playlists.id
             order by playlists.created_at desc
@@ -2631,7 +2645,59 @@ async def library_handler(request: web.Request) -> web.Response:
         asyncio.to_thread(local_tags, user_id),
     )
     imports = await asyncio.to_thread(local_imports, user_id)
-    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports})
+    with local_db() as db:
+        folders = [dict(row) for row in db.execute(
+            "select id, name, collapsed from playlist_folders where user_id = ? order by name, id", (user_id,))]
+    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports, "folders": folders})
+
+
+async def playlist_folder_handler(request: web.Request) -> web.Response:
+    user_id = request["user"]["id"]
+    folder_id = request.match_info.get("folder_id")
+    payload = await read_json_object(request) if request.method != "DELETE" else {}
+    with local_db() as db:
+        if request.method == "POST":
+            name = payload.get("name")
+            if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or "\x00" in name:
+                raise PublicError("Nom de dossier invalide.")
+            folder_id = str(uuid.uuid4())
+            db.execute("insert into playlist_folders (id, user_id, name) values (?, ?, ?)",
+                       (folder_id, user_id, name.strip()))
+        else:
+            if not db.execute("select 1 from playlist_folders where id = ? and user_id = ?",
+                              (folder_id, user_id)).fetchone():
+                raise PublicError("Dossier introuvable.", status=404)
+            if request.method == "DELETE":
+                db.execute("delete from playlist_folders where id = ?", (folder_id,))
+            elif "collapsed" in payload:
+                if not isinstance(payload["collapsed"], bool):
+                    raise PublicError("Etat du dossier invalide.")
+                db.execute("update playlist_folders set collapsed = ? where id = ?", (payload["collapsed"], folder_id))
+            else:
+                name = payload.get("name")
+                if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or "\x00" in name:
+                    raise PublicError("Nom de dossier invalide.")
+                db.execute("update playlist_folders set name = ? where id = ?", (name.strip(), folder_id))
+    return web.json_response({"id": folder_id}, status=201 if request.method == "POST" else 200)
+
+
+async def playlist_move_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    folder_id = payload.get("folder_id")
+    if folder_id is not None and not isinstance(folder_id, str):
+        raise PublicError("Dossier invalide.")
+    user_id, playlist_id = request["user"]["id"], request.match_info["playlist_id"]
+    with local_db() as db:
+        if not local_playlist_has_owner(db, playlist_id, user_id):
+            raise PublicError("Playlist introuvable.", status=404)
+        if folder_id is not None and not db.execute(
+            "select 1 from playlist_folders where id = ? and user_id = ?", (folder_id, user_id)
+        ).fetchone():
+            raise PublicError("Dossier introuvable.", status=404)
+        db.execute("delete from playlist_folder_items where playlist_id = ?", (playlist_id,))
+        if folder_id is not None:
+            db.execute("insert into playlist_folder_items values (?, ?)", (playlist_id, folder_id))
+    return web.json_response({"moved": True})
 
 
 async def cover_handler(request: web.Request) -> web.StreamResponse:
@@ -3130,6 +3196,10 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
+    app.router.add_post("/api/playlist-folders", playlist_folder_handler)
+    app.router.add_patch("/api/playlist-folders/{folder_id}", playlist_folder_handler)
+    app.router.add_delete("/api/playlist-folders/{folder_id}", playlist_folder_handler)
+    app.router.add_patch("/api/playlists/{playlist_id}/folder", playlist_move_handler)
     app.router.add_post("/api/playlist-imports", playlist_import_handler)
     app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)
     app.router.add_patch("/api/playlists/{playlist_id}", collection_rename_handler)

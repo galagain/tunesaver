@@ -1187,6 +1187,28 @@ h1 {
 
 .collection-rename svg { width: 14px; height: 14px; }
 
+.playlist-folder { min-width: 0; margin-bottom: 6px; }
+.sidebar-heading { gap: 6px; }
+#playlist-title { margin-right: auto; }
+.folder-heading { border-bottom: 1px solid var(--line); }
+.folder-toggle { font-weight: 650; }
+.folder-playlists { margin-left: 9px; padding-left: 5px; border-left: 1px solid var(--line); }
+.playlist-root-label { padding: 8px 6px; color: var(--muted); font-size: 0.7rem; }
+.playlist-root-label[data-drop="true"] { outline: 1px solid var(--accent); }
+.playlist-folder-select {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  min-height: 25px;
+  padding: 2px 6px;
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 3px;
+  background: #242424;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
 .playlist-filter,
 .tag-filter {
   min-height: 34px;

@@ -17,6 +17,17 @@ reste visible dans la bibliotheque. Supprimer la playlist arrete son import,
 mais ne supprime pas les telechargements deja mis en file. Un nouvel import
 reutilise les fichiers deja disponibles pour le meme compte.
 
+## Rangement de la bibliotheque
+
+Les playlists peuvent etre rangees dans des dossiers a un niveau. Le bouton
+dossier a cote de Mes playlists permet d'en creer un. Le deplacement fonctionne
+par glisser-deposer sur un dossier ou via le menu sous chaque playlist.
+La zone Sans dossier permet de sortir une playlist de son dossier.
+Chaque dossier peut etre renomme, replie ou supprime ; sa suppression conserve
+ses playlists et leurs morceaux. Le rangement et l'etat replie sont enregistres
+dans le compte utilisateur. La section Sons sans playlist affiche les morceaux
+qui n'appartiennent a aucune playlist, y compris dans les dossiers replies.
+
 ## Acces et limites
 
 - Playlists accessibles publiquement pour Spotify et SoundCloud ; les playlists

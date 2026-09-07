@@ -771,6 +771,52 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(delivered["delivery_deleted"])
         self.assertIn("delivered_at", delivered)
 
+    async def test_playlist_folders_are_owned_persistent_and_keep_playlists_on_delete(self) -> None:
+        user = webapp.local_create_user("folders@example.com", "secret123")
+        other = webapp.local_create_user("otherfolders@example.com", "secret123")
+        playlist = webapp.local_create_playlist(user["id"], "Jazz")
+        foreign = webapp.local_create_playlist(other["id"], "Private")
+        app = webapp.create_app()
+        app.cleanup_ctx.clear()
+        app[webapp.AUTH_CACHE_KEY][hashlib.sha256(TEST_TOKEN.encode()).hexdigest()] = (
+            time.monotonic() + 3600, {"id": user["id"], "email": user["email"]})
+        headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
+        async with TestClient(TestServer(app)) as client:
+            for name in ("", "x" * 81, None):
+                response = await client.post("/api/playlist-folders", json={"name": name}, headers=headers)
+                self.assertEqual(response.status, 400)
+            response = await client.post("/api/playlist-folders", json={"name": "Soirees"}, headers=headers)
+            self.assertEqual(response.status, 201)
+            folder = (await response.json())["id"]
+            move_url = f"/api/playlists/{playlist['id']}/folder"
+            response = await client.patch(move_url, json={"folder_id": folder}, headers=headers)
+            self.assertEqual(response.status, 200)
+            response = await client.patch(f"/api/playlists/{foreign['id']}/folder", json={"folder_id": folder}, headers=headers)
+            self.assertEqual(response.status, 404)
+            with webapp.local_db() as db:
+                db.execute("insert into playlist_folders values (?, ?, ?, 0)", ("foreign", other["id"], "Private"))
+            for method in (client.patch, client.delete):
+                response = await method("/api/playlist-folders/foreign", json={"name": "No"}, headers=headers)
+                self.assertEqual(response.status, 404)
+            response = await client.patch(move_url, json={"folder_id": "foreign"}, headers=headers)
+            self.assertEqual(response.status, 404)
+            self.assertEqual(webapp.local_playlists(user["id"])[0]["folder_id"], folder)
+            response = await client.patch(f"/api/playlist-folders/{folder}", json={"collapsed": True}, headers=headers)
+            self.assertEqual(response.status, 200)
+            response = await client.patch(f"/api/playlist-folders/{folder}", json={"name": "Chill"}, headers=headers)
+            self.assertEqual(response.status, 200)
+            response = await client.get("/api/library", headers=headers)
+            library = await response.json()
+            self.assertEqual(library["folders"], [{"id": folder, "name": "Chill", "collapsed": 1}])
+            response = await client.patch(move_url, json={"folder_id": None}, headers=headers)
+            self.assertEqual(response.status, 200)
+            self.assertIsNone(webapp.local_playlists(user["id"])[0]["folder_id"])
+            await client.patch(move_url, json={"folder_id": folder}, headers=headers)
+            response = await client.delete(f"/api/playlist-folders/{folder}", json={}, headers=headers)
+            self.assertEqual(response.status, 200)
+            self.assertEqual(webapp.local_playlists(user["id"])[0]["id"], playlist["id"])
+            self.assertIsNone(webapp.local_playlists(user["id"])[0]["folder_id"])
+
     async def test_playlist_import_is_owned_persistent_and_skips_wrong_matches(self) -> None:
         user = webapp.local_create_user("import@example.com", "secret123")
         app = webapp.create_app()
