@@ -1131,6 +1131,23 @@ def local_create_tag(user_id: str, name: str, color: Any = "") -> dict[str, Any]
     }
 
 
+def local_rename_collection(user_id: str, collection: str, item_id: str, name: Any) -> str:
+    if collection not in {"playlists", "tags"}:
+        raise PublicError("Collection inconnue.", status=404)
+    limit = 80 if collection == "playlists" else 40
+    if not isinstance(name, str):
+        raise PublicError("Nom invalide.")
+    name = re.sub(r"\s+", " ", name.strip())
+    if not name or len(name) > limit or "\x00" in name:
+        raise PublicError(f"Le nom doit contenir entre 1 et {limit} caractères.")
+    with local_db() as db:
+        cursor = db.execute(f"update {collection} set name = ? where id = ? and user_id = ?",
+                            (name, item_id, user_id))
+        if not cursor.rowcount:
+            raise PublicError("Playlist ou tag introuvable.", status=404)
+    return name
+
+
 def local_delete_playlist(user_id: str, playlist_id: str) -> bool:
     with local_db() as db:
         cursor = db.execute(
@@ -2525,7 +2542,9 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
         payload = await asyncio.to_thread(read_import_source, record["source_url"])
         tracks = payload["tracks"]
         with local_db() as db:
-            db.execute("update playlists set name = ? where id = ?", (payload["name"][:80], record["playlist_id"]))
+            provider = playlist_sources.playlist_source(record["source_url"])[0]
+            db.execute("update playlists set name = ? where id = ? and name = ?",
+                       (payload["name"][:80], record["playlist_id"], f"Import {provider.title()}"))
             db.execute("update playlist_imports set tracks = ?, state = 'running' where id = ?",
                        (json.dumps(tracks), record["id"]))
     failures = json.loads(record["failures"])
@@ -2644,6 +2663,15 @@ async def playlist_create_handler(request: web.Request) -> web.Response:
         name,
     )
     return web.json_response({"playlist": playlist}, status=201)
+
+
+async def collection_rename_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    collection = "playlists" if "playlist_id" in request.match_info else "tags"
+    item_id = request.match_info.get("playlist_id") or request.match_info.get("tag_id", "")
+    name = await asyncio.to_thread(local_rename_collection, request["user"]["id"],
+                                   collection, item_id, payload.get("name"))
+    return web.json_response({"name": name})
 
 
 async def playlist_delete_handler(request: web.Request) -> web.Response:
@@ -3102,8 +3130,10 @@ def create_app() -> web.Application:
     app.router.add_post("/api/playlists", playlist_create_handler)
     app.router.add_post("/api/playlist-imports", playlist_import_handler)
     app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)
+    app.router.add_patch("/api/playlists/{playlist_id}", collection_rename_handler)
     app.router.add_post("/api/tags", tag_create_handler)
     app.router.add_delete("/api/tags/{tag_id}", tag_delete_handler)
+    app.router.add_patch("/api/tags/{tag_id}", collection_rename_handler)
     app.router.add_post("/api/playlists/{playlist_id}/tracks", playlist_track_add_handler)
     app.router.add_delete(
         "/api/playlists/{playlist_id}/tracks/{job_id}",

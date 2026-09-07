@@ -976,6 +976,33 @@ async function addTagToTrack(tagId, jobId) {
   await refreshLibrary();
 }
 
+function makeRenameButton(item, collection) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "collection-rename";
+  button.title = collection === "playlists" ? "Renommer la playlist" : "Renommer le tag";
+  button.setAttribute("aria-label", `${button.title} : ${item.name}`);
+  button.append(document.getElementById("icon-pencil").content.cloneNode(true));
+  button.addEventListener("click", async () => {
+    const value = window.prompt(button.title, item.name);
+    if (value === null) return;
+    const name = value.trim().replace(/\s+/g, " ");
+    const limit = collection === "playlists" ? 80 : 40;
+    if (!name || [...name].length > limit) {
+      showToast(`Le nom doit contenir entre 1 et ${limit} caractères.`, "error");
+      return;
+    }
+    if (name === item.name) return;
+    button.disabled = true;
+    try {
+      await requestJson(`/api/${collection}/${item.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+      await refreshLibrary();
+    } catch (error) { showToast(error.message, "error"); }
+    finally { button.disabled = false; }
+  });
+  return button;
+}
+
 function renderPlaylists() {
   playlistList.replaceChildren();
   for (const playlist of libraryState.playlists) {
@@ -1027,7 +1054,7 @@ function renderPlaylists() {
       if (selectedPlaylistId === playlist.id) selectedPlaylistId = "";
       await refreshLibrary();
     });
-    row.append(button, remove);
+    row.append(button, makeRenameButton(playlist, "playlists"), remove);
     playlistList.append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");
@@ -1091,7 +1118,7 @@ function renderTags() {
       if (selectedTagId === tag.id) selectedTagId = "";
       await refreshLibrary();
     });
-    row.append(button, remove);
+    row.append(button, makeRenameButton(tag, "tags"), remove);
     tagList.append(row);
   }
 }

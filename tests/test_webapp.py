@@ -785,6 +785,9 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             response = await client.post("/api/playlist-imports", json={"url": url}, headers=headers)
             self.assertEqual(response.status, 202)
             result = await response.json()
+            renamed = await client.patch(f"/api/playlists/{result['playlist_id']}",
+                                         json={"name": "Mon import"}, headers=headers)
+            self.assertEqual(renamed.status, 200)
             duplicate = await client.post("/api/playlist-imports", json={"url": url}, headers=headers)
             self.assertEqual((await duplicate.json())["id"], result["id"])
             self.assertEqual(webapp.local_imports(TEST_USER_ID), [])
@@ -805,7 +808,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(status["queued"], 1)
                 self.assertEqual(status["failures"][0]["title"], "Missing")
                 playlist = webapp.local_playlists(user["id"])[0]
-                self.assertEqual(playlist["name"], "Favorites")
+                self.assertEqual(playlist["name"], "Mon import")
                 self.assertEqual(len(playlist["track_ids"]), 1)
                 first_job = playlist["track_ids"][0]
                 self.assertEqual(webapp.enqueue_import_track(record, candidate), first_job)
@@ -906,6 +909,26 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             updated_payload = await updated_library.json()
             self.assertEqual(updated_payload["tags"][0]["track_ids"], [job_id])
             self.assertEqual(updated_payload["tracks"][0]["tags"][0]["name"], "Peak time")
+
+            for collection, item_id in (("playlists", playlist_id), ("tags", tag_id)):
+                renamed = await client.patch(
+                    f"/api/{collection}/{item_id}", json={"name": "  Nouveau   nom  "},
+                    headers={"Authorization": f"Bearer {TEST_TOKEN}"})
+                self.assertEqual(renamed.status, 200)
+                self.assertEqual((await renamed.json())["name"], "Nouveau nom")
+                for name in ("  ", None, "x" * 81):
+                    invalid = await client.patch(
+                        f"/api/{collection}/{item_id}", json={"name": name},
+                        headers={"Authorization": f"Bearer {TEST_TOKEN}"})
+                    self.assertEqual(invalid.status, 400)
+                with self.assertRaises(webapp.PublicError):
+                    webapp.local_rename_collection(TEST_USER_ID, collection, item_id, "Interdit")
+            self.assertEqual(webapp.local_playlists(user_id)[0]["track_ids"], [job_id])
+            tags = webapp.local_tags(user_id)
+            self.assertEqual(tags[0]["name"], "Nouveau nom")
+            self.assertEqual(tags[0]["track_ids"], [job_id])
+            self.assertEqual(tags[0]["color"], updated_payload["tags"][0]["color"])
+            self.assertEqual(webapp.local_track_tag_map(user_id)[job_id][0]["name"], "Nouveau nom")
 
             cover = await client.get(
                 f"/api/covers/{job_id}",
