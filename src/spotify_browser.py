@@ -44,6 +44,10 @@ class PlaylistPages:
     def complete(self):
         return self.total is not None and bool(self.name) and len(self.items) == self.total
 
+    @property
+    def first_missing(self):
+        return next((i for i in range(self.total or 0) if i not in self.items), 0)
+
     def result(self):
         if not self.complete:
             raise ValueError(f"Lecture Spotify incomplete ({len(self.items)}/{self.total or '?'} titres). Relancez l'import.")
@@ -90,13 +94,40 @@ def read_playlist(playlist_id):
             page.on("response", collect)
             page.goto(f"https://open.spotify.com/playlist/{playlist_id}", wait_until="domcontentloaded", timeout=45000)
             deadline = time.monotonic() + 100
+            last_progress = time.monotonic()
+            count = 0
             while not pages.complete and not errors and time.monotonic() < deadline:
                 reject = page.get_by_role("button", name="REJECT ALL", exact=True)
                 if reject.is_visible():
                     reject.click(timeout=2000)
-                page.mouse.move(1000, 450)
-                page.mouse.wheel(0, 1100)
+                # Virtualized lists can skip pages with blind wheel scrolling. Position
+                # the viewport at the first missing row, using a rendered row as anchor.
+                positioned = page.evaluate("""index => {
+                    const row = document.querySelector('[data-testid="tracklist-row"]');
+                    const numbered = row?.closest('[aria-rowindex]');
+                    if (!row || !numbered) return false;
+                    let scroller = row.parentElement;
+                    while (scroller && !(scroller.scrollHeight > scroller.clientHeight &&
+                        /auto|scroll/.test(getComputedStyle(scroller).overflowY)))
+                        scroller = scroller.parentElement;
+                    if (!scroller) return false;
+                    const rect = row.getBoundingClientRect();
+                    const currentIndex = Number(numbered.getAttribute('aria-rowindex')) - 2;
+                    scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top +
+                        (index - currentIndex) * rect.height - 80;
+                    return true;
+                }""", pages.first_missing)
+                if not positioned:
+                    page.mouse.move(1000, 450)
+                    page.mouse.wheel(0, 400)
                 page.wait_for_timeout(750)
+                if len(pages.items) != count:
+                    count = len(pages.items)
+                    last_progress = time.monotonic()
+                elif time.monotonic() - last_progress > 15:
+                    # A fresh page retries failed requests without trusting a partial list.
+                    page.reload(wait_until="domcontentloaded", timeout=20000)
+                    last_progress = time.monotonic()
             if errors:
                 raise ValueError(errors[0])
             return pages.result()

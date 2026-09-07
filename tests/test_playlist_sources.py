@@ -27,12 +27,42 @@ class PlaylistSourceTests(unittest.TestCase):
         process = mock.Mock(pid=1234, returncode=0)
         process.communicate.return_value = (json.dumps(payload), None)
         with mock.patch.object(sources.subprocess, "Popen", return_value=process) as popen, mock.patch.object(sources.os, "killpg") as kill:
-            result = sources.spotify_playlist("57HAIqxdHbi332994xcOKc")
+            result = sources.spotify_browser_playlist("57HAIqxdHbi332994xcOKc")
             self.assertEqual(len(result["tracks"]), 148)
             env = popen.call_args.kwargs["env"]
             self.assertEqual(env["HOME"], env["XDG_CONFIG_HOME"])
             self.assertEqual(env["HOME"], env["XDG_STATE_HOME"])
             kill.assert_called_once_with(1234, sources.signal.SIGKILL)
+
+    @mock.patch.dict(sources.os.environ, {}, clear=True)
+    def test_spotify_hybrid_preview_boundary_and_browser_fallback(self):
+        for count in (5, 99, 100, 148):
+            with self.subTest(count=count):
+                entity = {"name": "Preview", "trackList": [
+                    {"entityType": "track", "title": "Song", "subtitle": "Artist", "duration": 180000}
+                ] * count}
+                data = {"props": {"pageProps": {"state": {"data": {"entity": entity}}}}}
+                response = mock.Mock(text='<script id="__NEXT_DATA__">' + json.dumps(data) + '</script>')
+                with mock.patch.object(sources, "get_page", return_value=response), mock.patch.object(
+                    sources, "spotify_browser_playlist", return_value={"name": "Browser"}
+                ) as browser:
+                    result = sources.spotify_playlist("57HAIqxdHbi332994xcOKc")
+                    if count < 100:
+                        browser.assert_not_called()
+                        self.assertEqual(result["total"], count)
+                        self.assertEqual(result["tracks"][0]["duration"], 180)
+                    else:
+                        browser.assert_called_once()
+                        self.assertEqual(result["name"], "Browser")
+
+    @mock.patch.dict(sources.os.environ, {}, clear=True)
+    def test_spotify_unavailable_preview_falls_back(self):
+        for response in (mock.Mock(text="not json"), sources.PlaylistError("Unavailable")):
+            with mock.patch.object(sources, "get_page", side_effect=[response]), mock.patch.object(
+                sources, "spotify_browser_playlist", return_value={"name": "Browser"}
+            ) as browser:
+                self.assertEqual(sources.spotify_playlist("57HAIqxdHbi332994xcOKc")["name"], "Browser")
+                browser.assert_called_once()
 
     def test_spotify_browser_timeout_cleans_process_group(self):
         process = mock.Mock(pid=1234)

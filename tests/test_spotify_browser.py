@@ -34,6 +34,17 @@ class SpotifyBrowserTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "100/148"):
             self.pages.result()
 
+    def test_targets_gaps_in_88_of_148_read_then_recovers_order(self):
+        self.pages.add(self.request, page(0, 25))
+        self.pages.add(self.request, page(85, 63))
+        self.assertEqual(len(self.pages.items), 88)
+        self.assertEqual(self.pages.first_missing, 25)
+        self.pages.add(self.request, page(25, 50))
+        self.assertEqual(self.pages.first_missing, 75)
+        self.pages.add(self.request, page(75, 50))
+        self.assertTrue(self.pages.complete)
+        self.assertEqual(self.pages.result()["tracks"][147]["title"], "Song 147")
+
     def test_ignores_other_playlists_and_recommendations(self):
         self.pages.add({**self.request, "variables": {"uri": "spotify:playlist:other"}}, page(0, 25))
         self.pages.add({**self.request, "operationName": "recommendations"}, page(0, 25))

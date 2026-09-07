@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 MAX_TRACKS = 500
 
@@ -85,6 +86,19 @@ def spotify_playlist(playlist_id):
         except (requests.RequestException, KeyError, ValueError) as exc:
             raise PlaylistError("Connexion Spotify indisponible. Verifiez la configuration Spotify du serveur.") from exc
 
+    try:
+        html = get_page(f"https://open.spotify.com/embed/playlist/{playlist_id}").text
+        script = BeautifulSoup(html, "html.parser").find("script", id="__NEXT_DATA__")
+        entity = json.loads(script.string)["props"]["pageProps"]["state"]["data"]["entity"]
+        entries = entity["trackList"]
+        # At exactly 100 entries the public preview may be truncated.
+        if 0 < len(entries) < 100 and all(t.get("entityType") == "track" for t in entries):
+            return {"name": entity["name"], "total": len(entries), "tracks": [
+                {"title": t["title"], "artist": t.get("subtitle", ""), "duration": t.get("duration", 0) / 1000}
+                for t in entries
+            ]}
+    except (PlaylistError, AttributeError, KeyError, TypeError, ValueError):
+        pass
     return spotify_browser_playlist(playlist_id)
 
 
