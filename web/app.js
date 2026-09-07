@@ -913,7 +913,9 @@ function makeSourceBadge(track) {
   const label = providerLabels[track.provider] || track.provider || "Source";
   const element = track.source_url ? document.createElement("a") : document.createElement("span");
   element.className = `source-badge ${track.provider || ""}`;
-  element.textContent = providerShortLabel(track.provider);
+  const template = document.getElementById(`icon-${track.provider}`);
+  if (template) element.append(template.content.cloneNode(true));
+  else element.textContent = providerShortLabel(track.provider);
   element.title = track.source_url ? `Ouvrir sur ${label}` : label;
   element.setAttribute("aria-label", element.title);
   if (track.source_url) {
@@ -1154,7 +1156,7 @@ function renderLibrary() {
       const play = document.createElement("button");
       play.className = "play-button";
       play.type = "button";
-      play.textContent = "▶";
+      play.append(document.getElementById("icon-play").content.cloneNode(true));
       play.setAttribute("aria-label", `Lire ${track.title || track.file_name || "ce son"}`);
       play.title = "Lire";
       play.addEventListener("click", async () => {

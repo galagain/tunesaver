@@ -9,7 +9,7 @@
   --accent-hover: #20f3a2;
   --success: #0f9d63;
   --danger: #ff5a76;
-  --radius: 14px;
+  --radius: 6px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -44,7 +44,7 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid rgba(99, 91, 255, 0.25);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -96,7 +96,7 @@ textarea:focus-visible {
   width: 34px;
   height: 34px;
   fill: var(--accent);
-  filter: drop-shadow(0 0 12px rgba(0, 224, 138, 0.32));
+  filter: none;
 }
 
 .brand-icon path {
@@ -136,7 +136,7 @@ textarea:focus-visible {
 .service-logo > span:last-child {
   font-size: 0.68rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .tidal-logo svg {
@@ -227,11 +227,11 @@ textarea:focus-visible {
 
 .auth-card {
   width: min(390px, 100%);
-  padding: 34px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  box-shadow: 0 18px 50px rgba(23, 23, 23, 0.07);
+  padding: 28px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .auth-card h1 {
@@ -262,9 +262,9 @@ textarea:focus-visible {
   height: 45px;
   padding: 0 12px;
   color: var(--text);
-  background: #fafaf8;
+  background: #202020;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 6px;
 }
 
 .auth-card .primary-button { margin-top: 12px; }
@@ -288,9 +288,6 @@ textarea:focus-visible {
   border-radius: 10px;
 }
 
-.secondary-button:hover:not(:disabled) {
-  background: #e7f2ed;
-}
 
 .text-button {
   width: 100%;
@@ -323,9 +320,9 @@ p { margin-top: 0; }
 
 h1 {
   margin-bottom: 12px;
-  font-size: clamp(2rem, 5vw, 3.45rem);
+  font-size: 2rem;
   line-height: 1.05;
-  letter-spacing: -0.055em;
+  letter-spacing: 0;
 }
 
 .search-section > p {
@@ -386,7 +383,6 @@ h1 {
   border-radius: 10px;
 }
 
-.primary-button:hover:not(:disabled) { background: var(--accent-hover); }
 
 .import-button {
   white-space: nowrap;
@@ -455,7 +451,7 @@ h1 {
 .section-heading h2 {
   margin: 0;
   font-size: 1.12rem;
-  letter-spacing: -0.025em;
+  letter-spacing: 0;
 }
 
 .query-label {
@@ -639,7 +635,6 @@ h1 {
   border: 1px solid #383838;
 }
 
-.source-link:hover { color: var(--text); }
 
 .download-button {
   flex: 1;
@@ -648,7 +643,6 @@ h1 {
   border: 0;
 }
 
-.download-button:hover:not(:disabled) { background: var(--accent-hover); }
 
 .queue-section {
   padding-top: 8px;
@@ -1068,16 +1062,30 @@ h1 {
   border-radius: 6px;
 }
 
-.primary-button:hover:not(:disabled),
-.secondary-button:hover:not(:disabled) {
-  background: var(--accent-hover);
+.secondary-button {
+  color: var(--text);
+  background: #303030;
+  border-color: var(--line);
 }
 
-.history-toggle,
-.account-button {
+.auth-card input:autofill {
+  box-shadow: inset 0 0 0 100px #202020;
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+}
+
+.history-toggle {
   color: #efefea;
   background: #242424;
   border-color: #3a3a3a;
+}
+
+.account-button {
+  gap: 4px;
+  padding: 8px 0 8px 16px;
+  background: transparent;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
 }
 
 .history-toggle[data-open="true"] {
@@ -1122,7 +1130,7 @@ h1 {
   color: #898982;
   font-size: 0.66rem;
   font-weight: 850;
-  letter-spacing: 0.02em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -1157,10 +1165,6 @@ h1 {
   border-radius: 3px;
 }
 
-.playlist-filter:hover,
-.tag-filter:hover {
-  background: #2d2d2d;
-}
 
 .playlist-filter[data-selected="true"],
 .tag-filter[data-selected="true"] {
@@ -1183,10 +1187,6 @@ h1 {
   border-radius: 3px;
 }
 
-.playlist-delete:hover,
-.tag-delete:hover {
-  background: #3a2428;
-}
 
 .tag-create,
 .sidebar-create {
@@ -1339,51 +1339,59 @@ h1 {
 }
 
 .play-button {
-  width: 30px;
-  height: 30px;
-  min-height: 30px;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  flex: 0 0 32px;
   padding: 0;
-  color: #101010;
+  color: #f1f1ed;
   font-size: 0.72rem;
   line-height: 1;
-  background: #f2f2ed;
-  border: 0;
-  border-radius: 999px;
+  background: #383838;
+  border: 1px solid #505050;
+  border-radius: 50%;
   aspect-ratio: 1;
 }
 
 .source-badge {
   display: inline-grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   place-items: center;
   color: #101010;
   font-size: 0.62rem;
   font-weight: 950;
   line-height: 1;
   text-decoration: none;
-  background: #f2f2ed;
+  background: transparent;
   border: 0;
-  border-radius: 999px;
+  border-radius: 50%;
 }
 
+.play-button svg { width: 14px; height: 14px; fill: currentColor; margin-left: 2px; }
+.source-badge svg { width: 19px; height: 19px; fill: currentColor; }
+.qobuz-mark { font-family: Georgia, serif; font-size: 24px; line-height: 1; }
+
 .source-badge.tiddl {
-  color: #101010;
-  background: #f2f2ed;
+  color: #f2f2ed;
+  background: transparent;
 }
 
 .source-badge.beatport {
-  background: #00e08a;
+  color: #00e08a;
+  background: transparent;
 }
 
 .source-badge.qobuz {
-  color: #fff;
-  background: #246dff;
+  color: #8abaff;
+  background: transparent;
 }
 
 .source-badge:hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 .history-download {
@@ -1422,7 +1430,7 @@ h1 {
   padding: 10px clamp(14px, 4vw, 52px);
   background: #0f0f0f;
   border-top: 1px solid #303030;
-  box-shadow: 0 -14px 44px rgba(0, 0, 0, 0.38);
+  box-shadow: none;
 }
 
 .player-cover {
@@ -1558,14 +1566,14 @@ h1 {
   color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
-  background: #fff;
+  background: #202020;
   border: 0;
 }
 
 .chart-toggle button + button { border-left: 1px solid var(--line); }
 
 .chart-toggle button[data-active="true"] {
-  color: #fff;
+  color: #101010;
   background: var(--accent);
 }
 
@@ -1581,7 +1589,7 @@ h1 {
 }
 
 .chart-grid {
-  stroke: #e4e1db;
+  stroke: #363636;
   stroke-width: 1;
 }
 
@@ -1598,7 +1606,7 @@ h1 {
 
 .chart-line {
   fill: none;
-  stroke: #27324a;
+  stroke: #78baff;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 3;
@@ -1606,7 +1614,7 @@ h1 {
 
 .chart-point {
   fill: #fff;
-  stroke: #27324a;
+  stroke: #78baff;
   stroke-width: 2;
 }
 
@@ -1623,9 +1631,10 @@ h1 {
 .admin-user:last-child,
 .admin-track:last-child { border-bottom: 0; }
 
-.admin-user[data-selected="true"] { background: #f8f8ff; }
+.admin-user[data-selected="true"] { background: #303030; }
 
 .admin-user-main {
+  color: var(--text);
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1688,18 +1697,18 @@ h1 {
 }
 
 .admin-status.approved {
-  color: #087247;
-  background: #e9f8f0;
+  color: #65d6a3;
+  background: #25362d;
 }
 
 .admin-status.pending {
-  color: #7a4a00;
-  background: #fff3d6;
+  color: #e2c273;
+  background: #383225;
 }
 
 .admin-status.denied {
-  color: #971b2f;
-  background: #ffe7eb;
+  color: #ff8da0;
+  background: #3b282c;
 }
 
 .admin-approve,
@@ -1720,15 +1729,15 @@ h1 {
 .admin-deny { background: var(--danger); }
 
 .admin-password {
-  color: #27324a;
-  background: #fff;
-  border: 1px solid #cfd5e3;
+  color: var(--text);
+  background: #292929;
+  border: 1px solid var(--line);
 }
 
 .admin-delete {
-  color: #971b2f;
-  background: #fff;
-  border: 1px solid #f0bbc4;
+  color: #ff8396;
+  background: #292929;
+  border: 1px solid var(--line);
 }
 
 .admin-track {
@@ -1797,7 +1806,7 @@ h1 {
 
 .job-label {
   overflow: hidden;
-  color: #4d4d49;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1830,8 +1839,9 @@ h1 {
   color: #fff;
   font-size: 0.8rem;
   font-weight: 650;
-  background: var(--text);
-  border-radius: 10px;
+  background: #303030;
+  border: 1px solid var(--line);
+  border-radius: 6px;
   box-shadow: 0 14px 40px rgba(23, 23, 23, 0.2);
 }
 
@@ -1850,7 +1860,8 @@ h1 {
 }
 
 @media (max-width: 820px) {
-  .site-header,
+  .site-header { width: 100%; padding: 12px 14px; flex-wrap: wrap; gap: 14px; }
+  .header-actions { flex-wrap: wrap; gap: 10px; }
   .container { width: min(100% - 28px, 980px); }
 
   .service {
