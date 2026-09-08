@@ -61,6 +61,7 @@ SEARCH_TEXT_LIMIT = 200
 DIRECT_LINK_LIMIT = 2048
 JSON_BODY_LIMIT = 131072
 STATUS_CACHE_SECONDS = 3
+PROVIDER_STATUS_SECONDS = 60
 AUTH_CACHE_SECONDS = 60
 DOWNLOAD_TICKET_SECONDS = 120
 MAX_BATCH_LINKS = 50
@@ -2316,8 +2317,107 @@ def queue_snapshot(owner_id: str) -> dict[str, Any]:
     }
 
 
+def probe_provider_connection(provider: str) -> dict[str, str]:
+    def result(state: str, message: str) -> dict[str, str]:
+        return {"state": state, "message": message}
+
+    try:
+        if provider == "tiddl":
+            auth = refresh_tidal_auth(force=False)
+            response = requests.get(
+                f"https://api.tidal.com/v1/users/{quote(str(auth['user_id']), safe='')}/subscription",
+                headers={"Authorization": f"Bearer {auth['token']}", "Accept": "application/json"},
+                timeout=(3, 8), allow_redirects=False,
+            )
+        elif provider == "qobuz":
+            config = musicdl.read_qobuz_config().defaults()
+            if any(not config.get(key) for key in ("user_id", "user_auth_token", "app_id")):
+                return result("inactive", "Connexion Qobuz non configurée.")
+            response = requests.get(
+                "https://www.qobuz.com/api.json/0.2/user/login",
+                params={key: config[key] for key in ("user_id", "user_auth_token", "app_id")},
+                headers={"X-App-Id": config["app_id"], "Accept": "application/json"},
+                timeout=(3, 8), allow_redirects=False,
+            )
+        else:
+            if configured_beatport_proxy():
+                return result("unknown", "Moteur démarré ; vérification de connexion indisponible avec le proxy.")
+            token = valid_beatport_token()
+            if not token:
+                return result("unknown", "Moteur démarré ; connexion à vérifier lors de la prochaine utilisation.")
+            if beatport_api_search("music", token) is None:
+                return result("inactive", "Connexion Beatport refusée. Reconnexion nécessaire.")
+            return result("active", "Moteur démarré et connexion API vérifiée.")
+
+        if response.status_code in {401, 403}:
+            return result("inactive", "Connexion refusée. Reconnexion du compte nécessaire.")
+        if response.status_code != 200:
+            return result("unknown", f"Plateforme momentanément inaccessible (HTTP {response.status_code}).")
+        data = response.json()
+        if not isinstance(data, dict):
+            return result("unknown", "Réponse de vérification invalide.")
+        if provider == "tiddl":
+            subscription = data.get("subscription") or {}
+            kind = str(subscription.get("type") or "").upper()
+            if kind == "FREE":
+                return result("inactive", "Compte TIDAL FREE : abonnement requis pour accéder aux sons.")
+            if not kind or not data.get("status"):
+                return result("unknown", "Droits de l’abonnement TIDAL non vérifiables.")
+            if str(data["status"]).upper() != "ACTIVE":
+                return result("inactive", "Abonnement TIDAL non actif.")
+        else:
+            if not isinstance(data.get("user"), dict):
+                return result("unknown", "Réponse de vérification Qobuz invalide.")
+            parameters = ((data.get("user") or {}).get("credential") or {}).get("parameters")
+            if not parameters:
+                return result("inactive", "Compte Qobuz sans droits de streaming.")
+        return result("active", "Moteur démarré, connexion et abonnement vérifiés.")
+    except FileNotFoundError:
+        return result("inactive", "Connexion non configurée.")
+    except (OSError, RuntimeError, PublicError, ValueError, KeyError, TypeError, AttributeError, requests.RequestException):
+        # Never expose exception text: Qobuz's request URLs include credentials.
+        return result("unknown", "Connexion non vérifiable pour le moment.")
+
+
+async def provider_statuses(app: web.Application, workers: dict[str, bool]) -> dict[str, Any]:
+    cache = app[STATUS_CACHE_KEY]
+    values = cache.setdefault("providers", {})
+    tasks = cache.setdefault("tasks", {})
+
+    async def check(provider: str) -> None:
+        try:
+            value = await asyncio.to_thread(probe_provider_connection, provider)
+            values[provider] = {**value, "checked_at": utc_timestamp(), "monotonic": time.monotonic()}
+        finally:
+            tasks.pop(provider, None)
+
+    statuses = {}
+    for provider in musicdl.PROVIDERS:
+        if not workers.get(provider):
+            values.pop(provider, None)
+            statuses[provider] = {"state": "inactive", "message": "Moteur de téléchargement arrêté.", "worker_running": False}
+            continue
+        value = values.get(provider)
+        fresh = value and time.monotonic() - value["monotonic"] < PROVIDER_STATUS_SECONDS
+        if not fresh and provider not in tasks:
+            tasks[provider] = asyncio.create_task(check(provider))
+        statuses[provider] = ({key: value[key] for key in ("state", "message", "checked_at")} if fresh else
+                              {"state": "loading", "message": "Vérification de la connexion et des droits en cours."})
+        statuses[provider]["worker_running"] = True
+    return statuses
+
+
+async def provider_status_context(app: web.Application):
+    yield
+    tasks = list(app[STATUS_CACHE_KEY].get("tasks", {}).values())
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def status_handler(request: web.Request) -> web.Response:
     snapshot = await asyncio.to_thread(queue_snapshot, request["user"]["id"])
+    snapshot["services"] = await provider_statuses(request.app, snapshot["active"])
     return web.json_response(snapshot)
 
 
@@ -3230,6 +3330,7 @@ def create_app() -> web.Application:
     app[AUTH_CACHE_KEY] = {}
     app[ADMIN_SESSIONS_KEY] = {}
     app.cleanup_ctx.append(playlist_import_context)
+    app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)

@@ -194,6 +194,9 @@ textarea:focus-visible {
 .service[data-status="inactive"] { opacity: 0.62; }
 
 .service[data-status="inactive"] .health-badge { background: var(--danger); }
+.service[data-status="loading"] .health-badge,
+.service[data-status="unknown"] .health-badge { background: #dfaa43; color: #171717; }
+.service:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .account-button {
   display: flex;

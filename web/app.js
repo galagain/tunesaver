@@ -180,14 +180,18 @@ function platformElements(provider) {
   };
 }
 
-function setServiceStatus(provider, active) {
+function setServiceStatus(provider, health) {
   const service = document.querySelector(`#${provider}-service`);
   const badge = document.querySelector(`#${provider}-health`);
   if (!service || !badge) return;
   const label = providerLabels[provider];
-  service.dataset.status = active ? "active" : "inactive";
-  service.title = active ? `${label} fonctionne` : `${label} est arrêté`;
-  badge.textContent = active ? "✓" : "×";
+  const state = ["active", "inactive", "loading", "unknown"].includes(health?.state) ? health.state : "unknown";
+  service.dataset.status = state;
+  service.title = `${label} : ${health?.message || "État non vérifié."}`;
+  service.setAttribute("aria-label", service.title);
+  service.setAttribute("role", "img");
+  service.tabIndex = 0;
+  badge.textContent = { active: "✓", inactive: "×", loading: "…", unknown: "!" }[state];
   badge.setAttribute("aria-label", service.title);
 }
 
@@ -1710,8 +1714,11 @@ async function refreshQueueOnce() {
     const payload = await requestJson("/api/status", { method: "GET" });
     const counts = payload.counts || {};
     for (const provider of providers) {
-      activeProviders[provider] = payload.active?.[provider] !== false;
-      setServiceStatus(provider, activeProviders[provider]);
+      activeProviders[provider] = payload.active?.[provider] === true;
+      setServiceStatus(provider, payload.services?.[provider] || {
+        state: payload.active?.[provider] === false ? "inactive" : "unknown",
+        message: payload.active?.[provider] === false ? "Moteur de téléchargement arrêté." : "Connexion non vérifiée.",
+      });
       for (const button of document.querySelectorAll(`.download-button[data-provider="${provider}"]`)) {
         if (button.textContent === "Ajouté ✓" || button.textContent === "Déjà en file") continue;
         if (!activeProviders[provider]) {
@@ -1743,7 +1750,7 @@ async function refreshQueueOnce() {
   } catch (error) {
     for (const provider of providers) {
       activeProviders[provider] = false;
-      setServiceStatus(provider, false);
+      setServiceStatus(provider, { state: "unknown", message: "Serveur TuneSaver injoignable : état des plateformes inconnu." });
     }
     showToast(error.message || "Impossible de lire la file.", "error");
   } finally {
