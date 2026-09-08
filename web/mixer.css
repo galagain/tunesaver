@@ -2,11 +2,15 @@
 #playback-dock { position: fixed; inset: auto 0 0; z-index: 80; display: flex; align-items: end; min-height: var(--deck-height); background: #1b1b1b; border-top: 1px solid #454545; color: #eee; padding-bottom: env(safe-area-inset-bottom); }
 /* Reserve both rows so collapsing B cannot clamp the page's scroll position. */
 #app-view > .container { padding-bottom: calc(var(--deck-height) + var(--deck-height) + 33px + env(safe-area-inset-bottom)); }
-.dock-mode { flex: 0 0 52px; height: var(--deck-height); border-right: 1px solid #393939; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+.dock-mode { flex: 0 0 52px; height: var(--deck-height); border-right: 1px solid #393939; display: grid; grid-template-columns: 1fr; grid-template-rows: var(--deck-height); place-items: center; }
+body[data-mixer="true"] .dock-mode { height: calc(var(--deck-height) + var(--deck-height)); grid-template-rows: repeat(2, var(--deck-height)); }
+#mixer-nav { grid-column: 1; grid-row: 1; }
+body[data-mixer="true"] #mixer-nav { grid-row: 2; }
 #mixer-nav { width: 40px; height: 36px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; background: transparent; color: #bbb; border: 0; border-radius: 3px; font-size: 9px; padding: 0; }
 #mixer-nav svg { width: 18px; height: 18px; }
 #mixer-nav[aria-pressed="true"] { color: #00d79d; border-color: #00d79d; }
-#mix-controls-toggle { width: 22px; height: 22px; flex-basis: 22px; background: transparent; border: 0; }
+#mix-controls-toggle { display: none; grid-column: 1; grid-row: 1; width: 32px; height: 32px; background: transparent; border: 0; }
+body[data-mixer="true"] #mix-controls-toggle { display: grid; }
 #mix-performance { flex: 1; min-width: 0; }
 #mix-controls, .deck-controls { color: #eee; background: #242424; border: 1px solid #555; border-radius: 4px; padding: 12px; margin: 0; inset: auto 12px calc(var(--playback-height, 73px) + 8px) auto; width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - var(--playback-height, 73px) - 24px); overflow-y: auto; }
 .deck-controls:popover-open { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }

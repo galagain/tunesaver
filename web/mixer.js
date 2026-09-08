@@ -819,6 +819,7 @@ function open() {
 
 function close() {
   active = false;
+  $('#mix-controls').hidePopover();
   $('#mixer-nav').setAttribute('aria-pressed', 'false');
   delete document.body.dataset.mixer;
   $('#mixer-nav').setAttribute('aria-expanded', 'false');
