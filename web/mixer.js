@@ -358,7 +358,9 @@ class Deck {
 
   async load(track) {
     if (!host().signedIn || !track.streamable) return;
-    if (this.playing() && !window.confirm(`Remplacer le morceau en lecture sur ${this.letter} ?`)) return;
+    const previousVersion = this.version;
+    if (this.playing() && !await window.TuneSaverDialogs.confirm(`Remplacer le morceau en lecture sur ${this.letter} ?`, { confirmText: 'Remplacer' })) return;
+    if (!host().signedIn || previousVersion !== this.version) return;
     this.clearAudio();
     const version = this.version;
     this.track = track;
@@ -427,6 +429,7 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = 'Prêt';
       $('[data-duration]', this.el).textContent = time(this.wave.getDuration());
       this.update();
+      return true;
     } catch (e) {
       if (version !== this.version) return;
       this.clearAudio();
@@ -660,8 +663,10 @@ class Deck {
     }
   }
 
-  eject(force = false) {
-    if (!force && this.playing() && !window.confirm(`Vider la platine ${this.letter} en lecture ?`)) return;
+  async eject(force = false) {
+    const version = this.version;
+    if (!force && this.playing() && !await window.TuneSaverDialogs.confirm(`Vider la platine ${this.letter} en lecture ?`, { confirmText: 'Vider' })) return;
+    if (version !== this.version) return;
     this.clearAudio();
     this.track = null;
     this.hotcues = Array(8).fill(null);
@@ -1151,6 +1156,6 @@ navigator.mediaDevices?.addEventListener('devicechange', () => {
 window.Mixer = { get active() { return active; }, sync, reset, pause, async playTrack(track) {
   if (!active) open();
   const target = decks[0];
-  await target.load(track);
-  if (active && decks[0] === target && target.ready && !target.playing()) await target.toggle();
+  const loaded = await target.load(track);
+  if (loaded && active && decks[0] === target && target.ready && !target.playing()) await target.toggle();
 } };

@@ -28,6 +28,7 @@ function audioFixture() {
       page.on('pageerror', e => { errors.push(e.message); console.error('Browser error:', e.message); });
       page.on('console', msg => { if (msg.type() === 'error' && /Content Security|Refused to|TypeError|SyntaxError/.test(msg.text())) errors.push(msg.text()); });
       await page.addInitScript(() => {
+        window.prompt = window.confirm = () => { throw Error('Native browser dialogs are disabled'); };
         const Original = window.AudioContext; window.__contexts = [];
         window.AudioContext = class extends Original {
           constructor(opts) { super(opts); this.sources = []; this.gains = []; this.analyser = this.createAnalyser(); window.__contexts.push(this); }
@@ -82,6 +83,14 @@ function audioFixture() {
       const a = await deck(0);
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
       await expect(a.locator('.mix-deck-status')).toHaveText('En lecture', { timeout: 15000 });
+      await page.locator('.mix-library-row[data-job-id="two"] button').first().click();
+      await expect(page.locator('#action-dialog')).toBeVisible();
+      await page.locator('#action-dialog-cancel').click();
+      await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
+      await a.locator('[data-action="eject"]').click();
+      await expect(page.locator('#action-dialog')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
       await page.locator('#mix-stop').click();
       await expect(page.locator('#player-bar')).toBeHidden();
       await expect(page.locator('#mix-performance')).toBeVisible();

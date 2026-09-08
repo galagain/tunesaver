@@ -120,6 +120,58 @@ let historyWarningShown = false;
 let lastHistoryFingerprint = "";
 const activeProviders = { tiddl: null, beatport: null, qobuz: null };
 
+const siteDialogs = window.TuneSaverDialogs = (() => {
+  const dialog = document.querySelector("#action-dialog");
+  const form = document.querySelector("#action-dialog-form");
+  const input = document.querySelector("#action-dialog-input");
+  const cancelButton = document.querySelector("#action-dialog-cancel");
+  const submitButton = document.querySelector("#action-dialog-submit");
+  let resolve = null, result = null, cancelled = null;
+  const cancel = () => {
+    if (!resolve) return;
+    result = cancelled;
+    dialog.close();
+  };
+  dialog.addEventListener("cancel", event => { event.preventDefault(); cancel(); });
+  dialog.addEventListener("keydown", event => event.stopPropagation());
+  cancelButton.addEventListener("click", cancel);
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    result = input.hidden ? true : input.value;
+    dialog.close();
+  });
+  dialog.addEventListener("close", () => {
+    const complete = resolve;
+    resolve = null;
+    input.value = "";
+    complete?.(result);
+  });
+  function show(title, value, options, prompt) {
+    if (resolve) return Promise.resolve(prompt ? null : false);
+    document.querySelector("#action-dialog-title").textContent = title;
+    input.hidden = !prompt;
+    input.disabled = !prompt;
+    input.type = options.type || "text";
+    input.autocomplete = input.type === "password" ? "new-password" : "off";
+    input.maxLength = options.maxLength || 1024;
+    input.value = value;
+    submitButton.textContent = options.confirmText || (prompt ? "Valider" : "Confirmer");
+    cancelled = prompt ? null : false;
+    result = cancelled;
+    return new Promise(complete => {
+      resolve = complete;
+      dialog.showModal();
+      (prompt ? input : cancelButton).focus();
+      if (prompt && input.type === "text") input.select();
+    });
+  }
+  return {
+    prompt: (title, value = "", options = {}) => show(title, value, options, true),
+    confirm: (title, options = {}) => show(title, "", options, false),
+    cancel,
+  };
+})();
+
 function platformElements(provider) {
   return {
     count: document.querySelector(`#${provider}-count`),
@@ -305,6 +357,7 @@ function clearCoverCache() {
 }
 
 function showAuth(message = "") {
+  siteDialogs.cancel();
   window.Mixer?.reset();
   window.clearInterval(queueTimer);
   queueTimer = null;
@@ -397,13 +450,13 @@ async function sendSignupVerificationCode() {
 }
 
 async function forgotPasswordFlow() {
-  const email = window.prompt("E-mail du compte", authEmail.value.trim());
+  const email = await siteDialogs.prompt("E-mail du compte", authEmail.value.trim(), { type: "email" });
   if (!email) return;
   const request = await publicJson("/api/password-reset/request", { email });
   authMessage.textContent = request.message;
-  const code = window.prompt("Code reçu par e-mail");
+  const code = await siteDialogs.prompt("Code reçu par e-mail");
   if (!code) return;
-  const password = window.prompt("Nouveau mot de passe");
+  const password = await siteDialogs.prompt("Nouveau mot de passe", "", { type: "password" });
   if (!password) return;
   const result = await publicJson("/api/password-reset/confirm", { email, code, password });
   authMessage.textContent = result.message || "Mot de passe mis à jour.";
@@ -591,7 +644,7 @@ function makeResultCard(result) {
     download.textContent = "Service arrêté";
   }
   download.addEventListener("click", async () => {
-    if (result.requires_confirmation && !window.confirm(`Confirmer le téléchargement de ${completeLabel} ?`)) return;
+    if (result.requires_confirmation && !await siteDialogs.confirm(`Confirmer le téléchargement de ${completeLabel} ?`)) return;
     download.disabled = true;
     download.textContent = "Préparation…";
     try {
@@ -674,7 +727,7 @@ async function searchDirect(query) {
 }
 
 async function enqueueList(links) {
-  if (!window.confirm(`Ajouter ${links.length} liens à la file de téléchargement ?`)) return;
+  if (!await siteDialogs.confirm(`Ajouter ${links.length} liens à la file de téléchargement ?`)) return;
   const playlists = links.filter(isImportPlaylist);
   const direct = links.filter((link) => !isImportPlaylist(link));
   for (const url of playlists) {
@@ -997,7 +1050,7 @@ function makeRenameButton(item, collection) {
   button.setAttribute("aria-label", `${button.title} : ${item.name}`);
   button.append(document.getElementById("icon-pencil").content.cloneNode(true));
   button.addEventListener("click", async () => {
-    const value = window.prompt(button.title, item.name);
+    const value = await siteDialogs.prompt(button.title, item.name, { maxLength: collection === "tags" ? 40 : 80 });
     if (value === null) return;
     const name = value.trim().replace(/\s+/g, " ");
     const limit = collection === "tags" ? 40 : 80;
@@ -1110,7 +1163,7 @@ function renderPlaylists() {
     remove.title = "Supprimer le dossier";
     remove.setAttribute("aria-label", `Supprimer le dossier ${folder.name}`);
     remove.addEventListener("click", async () => {
-      if (!window.confirm(`Supprimer le dossier ${folder.name} ? Les playlists seront conservées.`)) return;
+      if (!await siteDialogs.confirm(`Supprimer le dossier ${folder.name} ? Les playlists seront conservées.`, { confirmText: "Supprimer" })) return;
       try {
         await requestJson(`/api/playlist-folders/${folder.id}`, { method: "DELETE" });
         await refreshLibrary();
@@ -1176,7 +1229,7 @@ function renderPlaylists() {
     remove.type = "button";
     remove.textContent = "×";
     remove.addEventListener("click", async () => {
-      if (!window.confirm(`Supprimer la playlist ${playlist.name} ?`)) return;
+      if (!await siteDialogs.confirm(`Supprimer la playlist ${playlist.name} ?`, { confirmText: "Supprimer" })) return;
       await requestJson(`/api/playlists/${playlist.id}`, { method: "DELETE" });
       if (selectedPlaylistId === playlist.id) selectedPlaylistId = "";
       await refreshLibrary();
@@ -1241,7 +1294,7 @@ function renderTags() {
     remove.type = "button";
     remove.textContent = "×";
     remove.addEventListener("click", async () => {
-      if (!window.confirm(`Supprimer le tag ${tag.name} ?`)) return;
+      if (!await siteDialogs.confirm(`Supprimer le tag ${tag.name} ?`, { confirmText: "Supprimer" })) return;
       await requestJson(`/api/tags/${tag.id}`, { method: "DELETE" });
       if (selectedTagId === tag.id) selectedTagId = "";
       await refreshLibrary();
@@ -1416,7 +1469,7 @@ function renderLibrary() {
       remove.setAttribute("aria-label", `${remove.title} : ${track.title || track.file_name || "ce son"}`);
       remove.append(document.getElementById("icon-trash").content.cloneNode(true));
       remove.addEventListener("click", async () => {
-        if (!window.confirm("Supprimer ce morceau de Mes sons et de ses playlists ?")) return;
+        if (!await siteDialogs.confirm("Supprimer ce morceau de Mes sons et de ses playlists ?", { confirmText: "Supprimer" })) return;
         remove.disabled = true;
         try {
           await requestJson(`/api/library/${track.job_id}`, { method: "DELETE" });
@@ -1545,7 +1598,7 @@ document.querySelector("#unassigned-tracks").addEventListener("click", () => {
 });
 
 document.querySelector("#create-folder").addEventListener("click", async () => {
-  const name = window.prompt("Nom du dossier");
+  const name = await siteDialogs.prompt("Nom du dossier", "", { maxLength: 80 });
   if (!name) return;
   try {
     await requestJson("/api/playlist-folders", { method: "POST", body: JSON.stringify({ name }) });
@@ -1556,7 +1609,7 @@ document.querySelector("#create-folder").addEventListener("click", async () => {
 folderDropTarget(document.querySelector("#playlist-title"), null);
 
 createPlaylistButton.addEventListener("click", async () => {
-  const name = window.prompt("Nom de la playlist");
+  const name = await siteDialogs.prompt("Nom de la playlist", "", { maxLength: 80 });
   if (!name) return;
   createPlaylistButton.disabled = true;
   try {
@@ -1574,7 +1627,7 @@ createPlaylistButton.addEventListener("click", async () => {
 });
 
 createTagButton.addEventListener("click", async () => {
-  const name = window.prompt("Nom du tag");
+  const name = await siteDialogs.prompt("Nom du tag", "", { maxLength: 40 });
   if (!name) return;
   createTagButton.disabled = true;
   try {
@@ -1785,7 +1838,7 @@ function renderAdminUsers(profiles) {
     passwordButton.textContent = "Mot de passe";
     passwordButton.addEventListener("click", async () => {
       const label = profile.email || "ce compte";
-      const password = window.prompt(`Nouveau mot de passe pour ${label}`);
+      const password = await siteDialogs.prompt(`Nouveau mot de passe pour ${label}`, "", { type: "password" });
       if (password === null) return;
       if (password.length < 6) {
         showToast("Le mot de passe doit faire au moins 6 caractères.", "error");
@@ -1811,7 +1864,7 @@ function renderAdminUsers(profiles) {
     deleteButton.textContent = "Supprimer";
     deleteButton.addEventListener("click", async () => {
       const label = profile.email || "ce compte";
-      if (!window.confirm(`Supprimer définitivement ${label} ?`)) return;
+      if (!await siteDialogs.confirm(`Supprimer définitivement ${label} ?`, { confirmText: "Supprimer" })) return;
       deleteButton.disabled = true;
       try {
         await adminJson(`/api/admin/profiles/${profile.user_id}`, {

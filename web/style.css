@@ -1189,6 +1189,15 @@ h1 {
 .playlist-entry,
 .tag-row { grid-template-columns: minmax(0, 1fr) repeat(3, 28px); }
 
+#action-dialog { width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); box-sizing: border-box; padding: 22px; color: var(--text); background: #242424; border: 1px solid #505050; border-radius: 6px; overflow-y: auto; }
+#action-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+#action-dialog-form { display: grid; gap: 20px; }
+#action-dialog-title { margin: 0; font-size: 18px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
+#action-dialog-input { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; color: var(--text); background: #161616; border: 1px solid #606060; border-radius: 4px; font-size: 16px; }
+.action-dialog-buttons { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.action-dialog-buttons button { min-height: 40px; padding: 8px 16px; border-radius: 4px; border: 1px solid #606060; background: #303030; color: var(--text); }
+#action-dialog-submit { background: var(--accent); color: #101010; border-color: var(--accent); }
+
 .playlist-folder { min-width: 0; margin-bottom: 6px; }
 .sidebar-heading { gap: 6px; }
 #playlist-title { margin-right: auto; }
