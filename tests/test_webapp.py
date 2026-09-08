@@ -794,12 +794,15 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(delivered["delivery_deleted"])
         self.assertIn("delivered_at", delivered)
 
-    async def test_playlist_export_is_complete_ordered_and_private(self) -> None:
+    async def test_collection_exports_are_complete_ordered_and_private(self) -> None:
         user = webapp.local_create_user("export@example.com", "secret123")
         other = webapp.local_create_user("otherexport@example.com", "secret123")
         playlist = webapp.local_create_playlist(user["id"], "Set du soir")
         empty = webapp.local_create_playlist(user["id"], "Vide")
         foreign = webapp.local_create_playlist(other["id"], "Privee")
+        tag = webapp.local_create_tag(user["id"], "Set du soir")
+        empty_tag = webapp.local_create_tag(user["id"], "Vide")
+        foreign_tag = webapp.local_create_tag(other["id"], "Privee")
         links = ["https://listen.tidal.com/track/123", "https://www.beatport.com/track/test/456", "https://open.qobuz.com/track/789"]
         sources = [("done", url, user["id"]) for url in links] + [
             ("pending", links[0], user["id"]), ("failed", links[0], user["id"]),
@@ -814,6 +817,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("insert into download_history(job_id,user_id,provider,source_url,state,created_at) values (?,?,?,?,?,?)",
                            (job_id, owner, "tiddl", url, state, "2026-01-01"))
                 db.execute("insert into playlist_items(playlist_id,job_id,created_at) values (?,?,?)", (playlist["id"], job_id, "2026-01-01"))
+                db.execute("insert into tag_items(tag_id,job_id,created_at) values (?,?,?)", (tag["id"], job_id, "2026-01-01"))
             db.executemany("insert into download_history(job_id,user_id,provider,source_url,state,created_at) values (?,?,?,?,?,?)",
                            [(f"recent-{i}", user["id"], "tiddl", links[0], "done", "2026-09-08") for i in range(501)])
         app = webapp.create_app()
@@ -822,16 +826,18 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             time.monotonic() + 3600, {"id": user["id"], "email": user["email"]})
         headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
         async with TestClient(TestServer(app)) as client:
-            path = f"/api/playlists/{playlist['id']}/export"
-            self.assertEqual((await client.get(path)).status, 401)
-            response = await client.get(path, headers=headers)
-            self.assertEqual(response.status, 200)
-            self.assertEqual(await response.json(), {"name": "Set du soir", "links": links, "skipped": 7})
-            for playlist_id in (foreign["id"], "missing"):
-                response = await client.get(f"/api/playlists/{playlist_id}/export", headers=headers)
-                self.assertEqual(response.status, 404)
-            response = await client.get(f"/api/playlists/{empty['id']}/export", headers=headers)
-            self.assertEqual(await response.json(), {"name": "Vide", "links": [], "skipped": 0})
+            for kind, item, private, blank in (("playlists", playlist, foreign, empty), ("tags", tag, foreign_tag, empty_tag)):
+                with self.subTest(kind=kind):
+                    path = f"/api/{kind}/{item['id']}/export"
+                    self.assertEqual((await client.get(path)).status, 401)
+                    response = await client.get(path, headers=headers)
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(await response.json(), {"name": "Set du soir", "links": links, "skipped": 7})
+                    for collection_id in (private["id"], "missing"):
+                        response = await client.get(f"/api/{kind}/{collection_id}/export", headers=headers)
+                        self.assertEqual(response.status, 404)
+                    response = await client.get(f"/api/{kind}/{blank['id']}/export", headers=headers)
+                    self.assertEqual(await response.json(), {"name": "Vide", "links": [], "skipped": 0})
 
     async def test_playlist_folders_are_owned_persistent_and_keep_playlists_on_delete(self) -> None:
         user = webapp.local_create_user("folders@example.com", "secret123")

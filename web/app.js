@@ -1016,12 +1016,12 @@ function makeRenameButton(item, collection) {
   return button;
 }
 
-function makePlaylistExportButton(playlist) {
+function makeCollectionExportButton(item, collection) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "collection-rename playlist-export";
+  button.className = "collection-rename collection-export";
   button.title = "Exporter les liens téléchargés";
-  button.setAttribute("aria-label", `${button.title} : ${playlist.name}`);
+  button.setAttribute("aria-label", `${button.title} : ${item.name}`);
   import("/vendor/mixer-icons.js").then(({ createElement, LogOut }) => {
     const icon = createElement(LogOut);
     icon.setAttribute("aria-hidden", "true");
@@ -1030,7 +1030,7 @@ function makePlaylistExportButton(playlist) {
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
-      const result = await requestJson(`/api/playlists/${playlist.id}/export`);
+      const result = await requestJson(`/api/${collection}/${item.id}/export`);
       if (!result.links.length) {
         showToast("Aucun lien de morceau téléchargé à exporter.", "error");
         return;
@@ -1040,7 +1040,7 @@ function makePlaylistExportButton(playlist) {
       const link = document.createElement("a");
       const name = result.name.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, "_").trim().slice(0, 80);
       link.href = url;
-      link.download = `playlist-${name || "tunesaver"}.txt`;
+      link.download = `${collection === "tags" ? "tag" : "playlist"}-${name || "tunesaver"}.txt`;
       document.body.append(link);
       try { link.click(); }
       finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000); }
@@ -1181,7 +1181,7 @@ function renderPlaylists() {
       if (selectedPlaylistId === playlist.id) selectedPlaylistId = "";
       await refreshLibrary();
     });
-    row.append(button, makePlaylistExportButton(playlist), makeRenameButton(playlist, "playlists"), remove);
+    row.append(button, makeCollectionExportButton(playlist, "playlists"), makeRenameButton(playlist, "playlists"), remove);
     (containers.get(playlist.folder_id) || root).append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");
@@ -1246,7 +1246,7 @@ function renderTags() {
       if (selectedTagId === tag.id) selectedTagId = "";
       await refreshLibrary();
     });
-    row.append(button, makeRenameButton(tag, "tags"), remove);
+    row.append(button, makeCollectionExportButton(tag, "tags"), makeRenameButton(tag, "tags"), remove);
     tagList.append(row);
   }
 }

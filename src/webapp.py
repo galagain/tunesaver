@@ -2665,16 +2665,17 @@ async def library_handler(request: web.Request) -> web.Response:
     return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports, "folders": folders})
 
 
-def local_playlist_export(user_id: str, playlist_id: str) -> dict[str, Any]:
+def local_collection_export(user_id: str, collection_id: str, *, tag: bool = False) -> dict[str, Any]:
+    table, items, key, label = ("tags", "tag_items", "tag_id", "Tag") if tag else ("playlists", "playlist_items", "playlist_id", "Playlist")
     with local_db() as db:
-        playlist = db.execute("select name from playlists where id=? and user_id=?",
-                              (playlist_id, user_id)).fetchone()
-        if not playlist:
-            raise PublicError("Playlist introuvable.", status=404)
-        rows = db.execute("""select h.source_url, h.state from playlist_items p
+        collection = db.execute(f"select name from {table} where id=? and user_id=?",
+                                (collection_id, user_id)).fetchone()
+        if not collection:
+            raise PublicError(f"{label} introuvable.", status=404)
+        rows = db.execute(f"""select h.source_url, h.state from {items} p
           left join download_history h on h.job_id=p.job_id and h.user_id=?
-          where p.playlist_id=? order by p.created_at, p.rowid""",
-                          (user_id, playlist_id)).fetchall()
+          where p.{key}=? order by p.created_at, p.rowid""",
+                          (user_id, collection_id)).fetchall()
     links = []
     for row in rows:
         url = str(row["source_url"] or "").strip()
@@ -2686,11 +2687,13 @@ def local_playlist_export(user_id: str, playlist_id: str) -> dict[str, Any]:
                 links.append(url)
         except ValueError:
             continue
-    return {"name": playlist["name"], "links": links, "skipped": len(rows) - len(links)}
+    return {"name": collection["name"], "links": links, "skipped": len(rows) - len(links)}
 
 
-async def playlist_export_handler(request: web.Request) -> web.Response:
-    result = await asyncio.to_thread(local_playlist_export, request["user"]["id"], request.match_info["playlist_id"])
+async def collection_export_handler(request: web.Request) -> web.Response:
+    tag = "tag_id" in request.match_info
+    result = await asyncio.to_thread(local_collection_export, request["user"]["id"],
+                                     request.match_info["tag_id" if tag else "playlist_id"], tag=tag)
     return web.json_response(result)
 
 
@@ -3249,7 +3252,8 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
-    app.router.add_get("/api/playlists/{playlist_id}/export", playlist_export_handler)
+    app.router.add_get("/api/playlists/{playlist_id}/export", collection_export_handler)
+    app.router.add_get("/api/tags/{tag_id}/export", collection_export_handler)
     app.router.add_post("/api/playlist-folders", playlist_folder_handler)
     app.router.add_patch("/api/playlist-folders/{folder_id}", playlist_folder_handler)
     app.router.add_delete("/api/playlist-folders/{folder_id}", playlist_folder_handler)
