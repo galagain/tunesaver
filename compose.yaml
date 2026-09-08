@@ -125,15 +125,18 @@ services:
       - ./data/queue/pending/tiddl:/queue/pending/tiddl
       - ./data/queue/pending/beatport:/queue/pending/beatport
       - ./data/queue/pending/qobuz:/queue/pending/qobuz
-      - ./data/queue/running/tiddl:/queue/running/tiddl:ro
-      - ./data/queue/running/beatport:/queue/running/beatport:ro
-      - ./data/queue/running/qobuz:/queue/running/qobuz:ro
+      - ./data/queue/running/tiddl:/queue/running/tiddl
+      - ./data/queue/running/beatport:/queue/running/beatport
+      - ./data/queue/running/qobuz:/queue/running/qobuz
       - ./data/queue/done/tiddl:/queue/done/tiddl
       - ./data/queue/done/beatport:/queue/done/beatport
       - ./data/queue/done/qobuz:/queue/done/qobuz
-      - ./data/queue/failed/tiddl:/queue/failed/tiddl:ro
-      - ./data/queue/failed/beatport:/queue/failed/beatport:ro
-      - ./data/queue/failed/qobuz:/queue/failed/qobuz:ro
+      - ./data/queue/failed/tiddl:/queue/failed/tiddl
+      - ./data/queue/failed/beatport:/queue/failed/beatport
+      - ./data/queue/failed/qobuz:/queue/failed/qobuz
+      - ./data/queue/logs/tiddl:/queue/logs/tiddl
+      - ./data/queue/logs/beatport:/queue/logs/beatport
+      - ./data/queue/logs/qobuz:/queue/logs/qobuz
       - ./data/queue/locks/tiddl:/queue/locks/tiddl
       - ./data/queue/locks/beatport:/queue/locks/beatport
       - ./data/queue/locks/qobuz:/queue/locks/qobuz
