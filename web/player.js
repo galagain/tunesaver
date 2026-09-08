@@ -29,7 +29,7 @@ function metadata() {
   ].filter(Boolean);
   const target = $('#player-metadata'), label = fields.join(' · ');
   if (target.dataset.value !== label) {
-    target.dataset.value = label; target.setAttribute('aria-label', label);
+    target.dataset.value = label; target.title = label; target.setAttribute('aria-label', label);
     target.replaceChildren(...fields.map(value => { const span = document.createElement('span'); span.textContent = `${value} `; return span; }));
   }
   const tracks = host()?.visibleTracks || [], index = tracks.findIndex(t => t.job_id === track?.job_id);
@@ -48,15 +48,13 @@ function draw() {
   if (key !== baseKey) {
     base.width = width; base.height = height;
     const ctx = base.getContext('2d');
-    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, width, height);
     render?.([], ctx);
     baseKey = key;
   }
-  const ctx = canvas.getContext('2d'); ctx.drawImage(base, 0, 0);
+  const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, width, height); ctx.drawImage(base, 0, 0);
   const total = duration(), position = Math.min(total, Math.max(0, media.currentTime || 0));
   if (render && total) {
     const x = position / total * width;
-    ctx.fillStyle = '#ffffff10'; ctx.fillRect(0, 0, x, height);
     ctx.fillStyle = '#fff'; ctx.fillRect(Math.min(width - dpr, x), 0, dpr, height);
   }
   canvas.setAttribute('aria-valuemax', total.toFixed(1));
@@ -116,6 +114,7 @@ function reset() {
   $('#player-status').textContent = ''; $('#player-metadata').textContent = '';
   delete $('#player-metadata').dataset.value;
   $('#player-metadata').removeAttribute('aria-label');
+  $('#player-metadata').removeAttribute('title');
   $('#player-retry').hidden = true;
 }
 
