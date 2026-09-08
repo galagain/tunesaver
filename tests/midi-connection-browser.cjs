@@ -4,12 +4,15 @@ const { chromium, firefox, expect } = require('@playwright/test');
   const engine = process.env.MIXER_BROWSER === 'firefox' ? firefox : chromium;
   const browser = await engine.launch();
   try {
-    for (const mode of ['normal', 'output-hangs', 'input-hangs', 'pending', 'late', 'close-hangs', 'denied']) {
+    for (const mode of ['normal', 'output-hangs', 'input-hangs', 'pending', 'late', 'close-hangs', 'denied', 'permission-change', 'access-hangs']) {
       const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
       const errors = [];
       page.on('pageerror', e => errors.push(e.message));
       await page.addInitScript(mode => {
         window.midiMode = mode;
+        window.midiRequests = 0;
+        window.permission = { state: mode === 'denied' ? 'denied' : 'granted' };
+        Object.defineProperty(navigator, 'permissions', { configurable: true, value: { query: async () => permission } });
         window.midiAccess = { inputs: new Map(), outputs: new Map() };
         const emit = port => queueMicrotask(() => midiAccess.onstatechange?.({ port }));
         const port = type => ({
@@ -33,6 +36,8 @@ const { chromium, firefox, expect } = require('@playwright/test');
         window.midiIn = port('input'); window.midiOut = port('output');
         midiAccess.inputs.set('input', midiIn); midiAccess.outputs.set('output', midiOut);
         Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: async () => {
+          midiRequests++;
+          if (midiMode === 'access-hangs') return new Promise(resolve => { window.resolveAccess = () => resolve(midiAccess); });
           if (midiMode === 'denied') throw new DOMException('Denied', 'NotAllowedError');
           return midiAccess;
         } });
@@ -46,9 +51,27 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('#mixer-nav').click();
       await page.locator('#mix-connect').click();
       const status = page.locator('#mix-midi-status');
-      if (mode === 'denied') {
+      if (mode === 'access-hangs') {
+        await expect(status).toContainText('Autorisation MIDI en attente');
+        await page.evaluate(() => { midiMode = 'normal'; });
+        await page.locator('#mix-midi-refresh').click();
+        await expect(status).toHaveAttribute('data-connected', 'true');
+        await page.evaluate(() => resolveAccess());
+        await expect(status).toHaveAttribute('data-connected', 'true');
+        expect(await page.evaluate(() => midiRequests)).toBe(2);
+        expect(await page.evaluate(() => midiIn.opens)).toBe(1);
+      } else if (mode === 'denied') {
         await expect(status).toContainText('Accès MIDI refusé');
         await expect(page.locator('#mix-connect')).toBeEnabled();
+        await expect(page.locator('#mix-midi-help')).toBeVisible();
+        await page.locator('#mix-midi-refresh').click();
+        await expect(status).toContainText('Accès MIDI refusé');
+        expect(await page.evaluate(() => midiRequests)).toBe(2);
+        await page.evaluate(() => { midiMode = 'normal'; permission.state = 'granted'; permission.onchange(); });
+        await expect(status).toContainText('Autorisation MIDI modifiée');
+        await page.locator('#mix-midi-refresh').click();
+        await expect(status).toHaveAttribute('data-connected', 'true');
+        await expect(page.locator('#mix-midi-help')).toBeHidden();
       } else if (mode === 'input-hangs' || mode === 'pending') {
         await expect(status).toContainText('connexion impossible', { timeout: 7000 });
         await expect(status).toHaveAttribute('data-connected', 'false');
@@ -78,6 +101,17 @@ const { chromium, firefox, expect } = require('@playwright/test');
           await expect(status).toHaveText('Non connecté', { timeout: 1000 });
           await expect(page.locator('#mix-connect')).toBeEnabled();
         }
+        if (mode === 'permission-change') {
+          await page.evaluate(() => { midiMode = 'denied'; permission.state = 'denied'; permission.onchange(); });
+          await expect(status).toContainText('Accès MIDI refusé');
+          expect(await page.evaluate(() => midiIn.onmidimessage)).toBeNull();
+          await page.evaluate(() => { midiMode = 'normal'; permission.state = 'granted'; permission.onchange(); });
+          await expect(status).toContainText('Autorisation MIDI modifiée');
+        }
+        await page.locator('#mix-midi-refresh').click();
+        await expect(status).toHaveAttribute('data-connected', 'true');
+        expect(await page.evaluate(() => midiRequests)).toBe(2);
+        expect(await page.evaluate(() => midiIn.opens)).toBe(2);
       }
       expect(errors).toEqual([]);
       await page.close();

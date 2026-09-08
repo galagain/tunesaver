@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/style.css?v=20260908-15">
     <link rel="stylesheet" href="/mixer.css?v=20260908-13">
     <script src="/app.js?v=20260908-15" defer></script>
-    <script src="/mixer.js?v=20260908-15" type="module"></script>
+    <script src="/mixer.js?v=20260908-16" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -242,7 +242,8 @@
                 <button id="mix-connect" type="button" class="secondary-button">Connecter le FLX4</button>
                 <span id="mix-midi-status" role="status">Non connecté</span>
                 <select id="mix-midi-input" aria-label="Entrée MIDI"><option value="">Détection automatique</option></select>
-                <button id="mix-midi-refresh" type="button" class="collection-rename" title="Actualiser les ports MIDI" aria-label="Actualiser les ports MIDI"></button>
+                <button id="mix-midi-refresh" type="button" class="collection-rename" title="Réinitialiser le MIDI" aria-label="Réinitialiser le MIDI"></button>
+                <a id="mix-midi-help" href="https://support.mozilla.org/en-US/kb/site-permissions-panel" target="_blank" rel="noopener noreferrer" hidden>Autorisations MIDI</a>
                 <button id="mix-audio-settings" type="button" class="collection-rename" aria-label="Réglages audio" title="Réglages audio" aria-expanded="false"></button>
                 <button id="mix-stop" type="button" class="collection-rename" aria-label="Arrêter les deux platines" title="Arrêter les deux platines"></button>
               </div>
