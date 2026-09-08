@@ -94,7 +94,7 @@ function audioFixture() {
       await page.locator('#mix-stop').click();
       await expect(page.locator('#player-bar')).toBeHidden();
       await expect(page.locator('#mix-performance')).toBeVisible();
-      await page.locator('.mix-library-row[data-job-id="two"] button').last().click();
+      await page.locator('.mix-library-row[data-job-id="two"] button[title="Charger sur B"]').click();
       const b = await deck(1);
       await expect(b.locator('.mix-deck-status')).toHaveText('Prêt');
       await (await deck(0)).locator('[data-action="play"]').click();

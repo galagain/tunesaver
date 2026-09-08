@@ -40,6 +40,8 @@ let selectedId = '';
 let fingerprint = '';
 let midi = null;
 let midiInput = null;
+let midiOpening = null;
+let midiFailedInput = null;
 let midiOutput = null;
 let midiWanted = false;
 let midiEpoch = 0;
@@ -967,8 +969,45 @@ function handleMIDI(event) {
 }
 
 function bindMIDI() {
-  midiBinding = midiBinding.catch(() => {}).then(bindMIDINow);
+  const epoch = midiEpoch;
+  midiBinding = midiBinding.catch(() => {}).then(() => { if (epoch === midiEpoch) return bindMIDINow(); });
   return midiBinding;
+}
+
+function midiReady(port) { return port?.state === 'connected' && port.connection === 'open'; }
+
+function midiStatus(text, connected = false) {
+  $('#mix-midi-status').textContent = text;
+  $('#mix-midi-status').dataset.connected = String(connected);
+}
+
+function closeMIDIPort(port) {
+  if (!port) return Promise.resolve();
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, 750);
+    Promise.resolve().then(() => port.close()).catch(() => {}).finally(() => { clearTimeout(timer); resolve(); });
+  });
+}
+
+function openMIDIPort(port, epoch, timeout) {
+  return new Promise((resolve, reject) => {
+    let expired = false;
+    const timer = setTimeout(() => {
+      expired = true;
+      if (midiReady(port) && epoch === midiEpoch && midiWanted) resolve(port);
+      else reject(new DOMException('Le navigateur ne termine pas l’ouverture du port MIDI.', 'TimeoutError'));
+    }, timeout);
+    Promise.resolve().then(() => port.open()).then(() => {
+      clearTimeout(timer);
+      if (expired || epoch !== midiEpoch || !midiWanted) {
+        if (port !== midiInput && port !== midiOutput && port !== midiOpening) void closeMIDIPort(port);
+        reject(new DOMException('Connexion MIDI annulée.', 'AbortError'));
+        return;
+      }
+      if (!midiReady(port)) reject(new DOMException('Le port MIDI est détecté mais pas ouvert.', 'InvalidStateError'));
+      else resolve(port);
+    }, error => { clearTimeout(timer); reject(error); });
+  });
 }
 
 async function bindMIDINow() {
@@ -980,70 +1019,117 @@ async function bindMIDINow() {
   inputs.forEach((port, i) => select.append(new Option(port.name || `Entrée MIDI ${i + 1}`, port.id)));
   select.value = inputs.some(p => p.id === midiSelection) ? midiSelection : '';
   const input = inputs.find(p => p.id === midiSelection) || inputs.find(isFLX4Port);
-  if (input && midiInput === input && input.connection === 'open') return;
-  if (midiInput && midiInput !== input) { midiInput.onmidimessage = null; await midiInput.close(); }
-  midiInput = input || null;
-  if (midiOutput) await midiOutput.close();
+  if (input && midiInput === input && midiReady(input)) return;
+  midiFailedInput = null;
+  const previousInput = midiInput;
+  const previousOutput = midiOutput;
+  if (previousInput) previousInput.onmidimessage = null;
+  midiInput = null;
   midiOutput = null;
+  await closeMIDIPort(previousInput);
+  await closeMIDIPort(previousOutput);
+  if (epoch !== midiEpoch || !midiWanted) return;
   if (input) {
-    await input.open();
-    if (epoch !== midiEpoch || !midiWanted) { await input.close(); return; }
+    midiOpening = input;
+    midiStatus(`${input.name || 'FLX4'} détecté : ouverture des commandes MIDI…`);
+    try {
+      await openMIDIPort(input, epoch, 4000);
+    } catch (error) {
+      if (epoch !== midiEpoch || !midiWanted) return;
+      midiOpening = null;
+      midiFailedInput = input;
+      void closeMIDIPort(input);
+      const reason = error.name === 'TimeoutError' ? 'le navigateur ne répond pas' : `port refusé (${error.name || 'erreur'})`;
+      midiStatus(`${input.name || 'FLX4'} détecté, connexion impossible : ${reason}.`);
+      message('Réessaie avec le bouton d’actualisation MIDI. Si le port reste bloqué, ferme les autres onglets et logiciels utilisant le contrôleur, puis rebranche son câble USB de données.');
+      return;
+    }
+    if (epoch !== midiEpoch || !midiWanted) { void closeMIDIPort(input); return; }
+    midiOpening = null;
+    midiInput = input;
     input.onmidimessage = handleMIDI;
+    decoder = new FLX4Decoder();
+    midiStatus(`${input.name || 'Entrée MIDI'} connecté`, true);
     const output = Array.from(midi.outputs.values()).find(p => p.state === 'connected' && (p.name === input.name || isFLX4Port(p)));
     if (output) {
       try {
-        await output.open();
-        if (epoch !== midiEpoch || !midiWanted) { await output.close(); return; }
+        await openMIDIPort(output, epoch, 1500);
+        if (epoch !== midiEpoch || !midiWanted || midiInput !== input || !midiReady(input)) { void closeMIDIPort(output); return; }
         midiOutput = output;
-      } catch { message('Contrôle MIDI actif ; sortie des voyants indisponible.'); }
+      } catch {
+        if (epoch !== midiEpoch || !midiWanted || midiInput !== input || !midiReady(input)) return;
+        void closeMIDIPort(output);
+        midiStatus(`${input.name || 'Entrée MIDI'} connecté · voyants indisponibles`, true);
+      }
     }
-    decoder = new FLX4Decoder();
     decks.forEach(sendLEDs);
+    return;
   }
   const browser = /Firefox\//.test(navigator.userAgent) ? 'Firefox' : 'le navigateur';
-  $('#mix-midi-status').textContent = input ? `${input.name || 'Entrée MIDI'} connecté` : inputs.length ? 'Sélectionne l’entrée MIDI de ton FLX4.' : `Aucune entrée MIDI exposée par ${browser}. Vérifie l’autorisation MIDI de ce site et le port USB de données du contrôleur.`;
-  $('#mix-midi-status').dataset.connected = String(Boolean(input));
+  midiStatus(inputs.length ? 'Sélectionne l’entrée MIDI de ton FLX4.' : `Aucune entrée MIDI exposée par ${browser}. Vérifie l’autorisation MIDI de ce site et le port USB de données du contrôleur.`);
 }
 
 async function disconnectMIDI() {
   midiWanted = false; midiEpoch++;
   clearInterval(midiTimer);
   if (midi) midi.onstatechange = null;
-  if (midiInput) { midiInput.onmidimessage = null; await midiInput.close(); }
-  if (midiOutput) await midiOutput.close();
-  midiInput = midiOutput = midi = null;
+  const ports = new Set([midiInput, midiOutput, midiOpening]);
+  if (midiInput) midiInput.onmidimessage = null;
+  midiInput = midiOutput = midiOpening = midiFailedInput = midi = null;
   $('#mix-connect').replaceChildren(icon(Usb), document.createTextNode('Connecter le FLX4'));
-  $('#mix-midi-status').textContent = 'Non connecté';
-  $('#mix-midi-status').dataset.connected = 'false';
+  $('#mix-connect').disabled = false;
+  midiStatus('Non connecté');
+  for (const port of ports) void closeMIDIPort(port);
 }
 
 async function connectMIDI() {
   if (midiWanted) { await disconnectMIDI(); return; }
   if (!navigator.requestMIDIAccess) { message('Web MIDI indisponible dans ce navigateur ou ce contexte. Ouvre le site HTTPS dans un navigateur compatible MIDI sur ordinateur.'); return; }
   const epoch = ++midiEpoch;
-  $('#mix-connect').disabled = true;
+  midiWanted = true;
+  $('#mix-connect').replaceChildren(icon(Unplug), document.createTextNode('Annuler la connexion'));
+  midiStatus('Autorisation MIDI en attente…');
   try {
     const access = await navigator.requestMIDIAccess({ sysex: false });
     if (epoch !== midiEpoch || !host()?.signedIn) return;
     midi = access; midiWanted = true;
+    $('#mix-connect').replaceChildren(icon(Unplug), document.createTextNode('Déconnecter le MIDI'));
+    const hardwareStates = new Map(Array.from(midi.inputs.values(), port => [port.id, port.state]));
     midi.onstatechange = event => {
+      if (epoch !== midiEpoch || !midiWanted || event.port.type !== 'input') return;
+      const previousState = hardwareStates.get(event.port.id);
+      hardwareStates.set(event.port.id, event.port.state);
       if (event.port.state === 'disconnected' && event.port === midiInput) {
         pause();
         midiInput.onmidimessage = null;
         midiInput = null;
+        midiStatus('FLX4 débranché.');
         run(bindMIDI);
       }
+      if (event.port === midiInput && !midiReady(event.port)) {
+        midiInput.onmidimessage = null;
+        midiFailedInput = midiInput;
+        midiInput = null;
+        midiStatus('Connexion MIDI interrompue. Actualise la connexion.');
+      }
       // Opening/closing ports also fires statechange; only hardware changes need rebinding.
-      if (event.port.type === 'input' && event.port.state === 'connected' && event.port !== midiInput) run(bindMIDI);
+      if (event.port.state === 'connected' && previousState !== 'connected') run(bindMIDI);
     };
     await bindMIDI();
+    if (epoch !== midiEpoch || !midiWanted) return;
     clearInterval(midiTimer);
-    midiTimer = setInterval(() => { if (!midiInput) run(bindMIDI); }, 2000);
-    $('#mix-connect').replaceChildren(icon(Unplug), document.createTextNode('Déconnecter le MIDI'));
+    midiTimer = setInterval(() => {
+      const inputs = Array.from(midi.inputs.values()).filter(port => port.state === 'connected');
+      const candidate = inputs.find(port => port.id === midiSelection) || inputs.find(isFLX4Port);
+      if (!midiInput && !midiOpening && (!midiFailedInput || midiFailedInput !== candidate)) run(bindMIDI);
+    }, 2000);
   } catch (e) {
+    if (epoch !== midiEpoch) return;
     await disconnectMIDI();
-    message(['NotAllowedError', 'SecurityError'].includes(e.name) ? 'Accès MIDI refusé. Autorise le MIDI pour tunesaver.galagain.com ; Firefox peut demander une permission de site à installer.' : `Impossible d’ouvrir le port MIDI (${e.name || 'erreur'}). Le port peut être occupé ou déconnecté.`);
-  } finally { $('#mix-connect').disabled = false; }
+    const error = ['NotAllowedError', 'SecurityError'].includes(e.name) ? 'Accès MIDI refusé. Autorise le MIDI pour tunesaver.galagain.com ; Firefox peut demander une permission de site à installer.' : `Impossible d’ouvrir le port MIDI (${e.name || 'erreur'}). Le port peut être occupé ou déconnecté.`;
+    midiStatus(error);
+    message(error);
+  }
 }
 
 function updateMaster() {
