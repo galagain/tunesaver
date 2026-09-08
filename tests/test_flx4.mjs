@@ -1,6 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade } from '../web/flx4.js';
+import { gridPosition, phaseAlignedTime } from '../web/mix-waveforms.js';
+
+test('browser push selects collections then tracks, shift push goes back', () => {
+  const d = new FLX4Decoder();
+  assert.deepEqual(d.decode([0x96, 0x41, 127]), { action: 'browseFocus', back: false });
+  assert.deepEqual(d.decode([0x96, 0x42, 127]), { action: 'browseFocus', back: true });
+  assert.equal(d.decode([0x96, 0x41, 0]), null);
+  assert.equal(d.decode([0x86, 0x41, 127]), null);
+});
+
+test('beat grids align the nearest beat phase, including before the anchor', () => {
+  const own = { bpm: 120, offset: .25 }, other = { bpm: 150, offset: .1 };
+  assert.equal(gridPosition(.75, 120, .25), 1);
+  for (const [at, target] of [[10.2, 5.13], [.1, .05], [0, 0]]) {
+    const aligned = phaseAlignedTime(at, own, target, other);
+    const difference = gridPosition(aligned, own.bpm, own.offset) - gridPosition(target, other.bpm, other.offset);
+    assert.ok(Math.abs(difference - Math.round(difference)) < 1e-9);
+    assert.ok(Math.abs(aligned - at) <= .25);
+  }
+  assert.equal(phaseAlignedTime(2, { bpm: null, offset: 0 }, 3, other), 2);
+  const grid = { bpm: 120, offset: 0 };
+  assert.ok(Math.abs(phaseAlignedTime(0, grid, .4, grid, 10) - .4) < 1e-9);
+  assert.ok(Math.abs(phaseAlignedTime(10, grid, .1, grid, 10) - 9.6) < 1e-9);
+});
 
 test('play, cue and load address the correct deck; releases never retrigger', () => {
   const d = new FLX4Decoder();

@@ -13,6 +13,7 @@ export class FLX4Decoder {
     const channel = status & 0x0f;
     const pressed = type === 0x90 && value > 0;
     if (type === 0x90 || type === 0x80) {
+      if (channel === 6 && pressed && [0x41, 0x42].includes(key)) return { action: "browseFocus", back: key === 0x42 };
       if (channel === 6 && pressed && [0x46, 0x47].includes(key)) return { action: "load", deck: key - 0x46 };
       if ([7, 8, 9, 10].includes(channel) && key < 8 && pressed) {
         return { action: "hotcue", deck: channel < 9 ? 0 : 1, pad: key, clear: channel === 8 || channel === 10 };

@@ -51,14 +51,31 @@ function audioFixture() {
         document.querySelector('#auth-view').hidden = true;
         document.querySelector('#app-view').hidden = false;
         libraryState = {
-          folders: [], playlists: [{ id: 'p', name: 'Soiree', track_ids: ['one'] }], tags: [{ id: 't', name: 'House', track_ids: ['two'] }],
+          folders: [{ id: 'f', name: 'Sets' }], playlists: [{ id: 'p', folder_id: 'f', name: 'Soiree', track_ids: ['one'] }], tags: [{ id: 't', name: 'House', track_ids: ['two'] }],
           tracks: [
             { job_id: 'one', title: 'First light', artist: 'Studio Session', provider: 'qobuz', bpm: 120, streamable: true },
             { job_id: 'two', title: 'Another very long track title to check mobile wrapping', artist: 'Long artist name and guest', provider: 'beatport', bpm: 128, streamable: true },
             { job_id: 'unavailable', title: 'Not ready', streamable: false },
           ],
         };
-        TuneSaverMixerHost.requestJson = async (_path, options) => ({ url: `/fixture/audio?id=${JSON.parse(options.body).job_id}` });
+        window.__mixSettings = {};
+        const analysis = bpm => ({ bpm, duration: 12, grid_offset: 0, key: 'Am', camelot: '8A', grid_quality: 'stable', sample_rate: 44100, codec: 'pcm_s16le',
+          waveform: { rate: 40, bands: [0, 1, 2].map(b => Array.from({ length: 480 }, (_, i) => Math.round(40 + 160 * Math.abs(Math.sin(i * .1 + b))))) } });
+        libraryState.tracks.forEach(t => { if (t.streamable) t.mix_analysis = { status: 'done', ...analysis(t.bpm) }; });
+        TuneSaverMixerHost.requestJson = async (path, options) => {
+          if (path === '/api/stream-ticket') return { url: `/fixture/audio?id=${JSON.parse(options.body).job_id}` };
+          if (!path.startsWith('/api/mixer/tracks/')) throw Error(`Unexpected request ${path}`);
+          const id = path.split('/').pop(), settings = __mixSettings[id] ||= {};
+          if (options.method === 'PATCH') {
+            const patch = JSON.parse(options.body);
+            for (const [key, value] of Object.entries(patch)) {
+              if (key === 'hotcue') (settings.hotcues ||= Array(8).fill(null))[value.index] = value.time;
+              else if (value === null) delete settings[key];
+              else settings[key] = value;
+            }
+          }
+          return { status: 'done', analysis: analysis(id === 'two' ? 128 : 120), settings: structuredClone(settings) };
+        };
         renderLibrary();
       });
       await page.locator('#mixer-nav').click();
@@ -83,6 +100,18 @@ function audioFixture() {
       await a.locator('[data-action="play"]').click();
       await b.locator('[data-action="play"]').click();
       await page.waitForFunction(() => __contexts[0].sources.every(s => !s.media.paused && s.media.currentTime > 0.3));
+      const timelineBefore = await page.locator('#mix-timelines canvas').first().evaluate(c => c.toDataURL());
+      await page.waitForTimeout(200);
+      const timelineAfter = await page.locator('#mix-timelines canvas').first().evaluate(c => {
+        const pixels = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let colors = 0, grid = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (Math.max(pixels[i], pixels[i + 1], pixels[i + 2]) - Math.min(pixels[i], pixels[i + 1], pixels[i + 2]) > 30) colors++;
+          if (pixels[i] > 100 && pixels[i] === pixels[i + 1] && pixels[i] === pixels[i + 2]) grid++;
+        }
+        return { image: c.toDataURL(), colors, grid };
+      });
+      if (timelineBefore === timelineAfter.image || timelineAfter.colors < 100 || timelineAfter.grid < 100) throw Error('Timeline not moving, colored or gridded');
       const rms = await page.evaluate(() => {
         const data = new Float32Array(__contexts[0].analyser.fftSize);
         __contexts[0].analyser.getFloatTimeDomainData(data);
@@ -110,6 +139,15 @@ function audioFixture() {
       if (Math.abs(cueTime - 3) > 0.1) throw Error(`Cue did not return: ${cueTime}`);
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-midi-status')).toHaveText('DDJ-FLX4 connecté');
+      await page.evaluate(() => __sendMIDI([0x96, 0x41, 127]));
+      await expect(page.locator('.mix-browser')).toHaveAttribute('data-focus', 'collections');
+      await page.evaluate(() => { __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0x96, 0x41, 127]); });
+      await expect(page.locator('#mix-collection')).toHaveValue('playlists:p');
+      await expect(page.locator('.mix-browser')).toHaveAttribute('data-focus', 'tracks');
+      await expect(page.locator('.mix-library-row')).toHaveCount(1);
+      await page.evaluate(() => __sendMIDI([0x96, 0x42, 127]));
+      await expect(page.locator('.mix-browser')).toHaveAttribute('data-focus', 'collections');
+      await page.locator('#mix-collection').selectOption('');
       await page.evaluate(() => { __sendMIDI([0xb0, 0x00, 96]); __sendMIDI([0xb0, 0x20, 0]); __sendMIDI([0xb6, 0x1f, 127]); __sendMIDI([0xb6, 0x3f, 127]); });
       await expect(a.locator('[data-control="tempo"]')).toHaveValue('8');
       await expect(page.locator('#mix-cross')).toHaveValue('1');
@@ -119,15 +157,50 @@ function audioFixture() {
       await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await page.evaluate(() => __sendMIDI([0x97, 0, 127]));
       await expect(a.locator('[data-pad="0"]')).toHaveAttribute('data-set', 'true');
+      await expect(a.locator('.mix-cue-marker')).toHaveText('A');
       await page.evaluate(() => __sendMIDI([0x98, 0, 127]));
       await expect(a.locator('[data-pad="0"]')).toHaveAttribute('data-set', 'false');
+      await expect(a.locator('.mix-cue-marker')).toHaveCount(0);
       await page.locator('#mix-stop').click();
       await a.locator('[data-control="tempo"]').evaluate(el => { el.value = '0'; el.dispatchEvent(new Event('input')); });
       await a.locator('[data-action="matchTempo"]').click();
       await expect(a.locator('[data-control="tempo"]')).toHaveValue('6.67');
+      await expect(a.locator('.mix-value')).toContainText('128.00 BPM');
+      const phaseError = await page.evaluate(() => {
+        const a = __contexts[0].sources[0].media.currentTime * 120 / 60;
+        const b = __contexts[0].sources[1].media.currentTime * 128 / 60;
+        return Math.abs((a - b) - Math.round(a - b));
+      });
+      if (phaseError > .01) throw Error(`Beat phase not aligned: ${phaseError}`);
+      await a.locator('[data-pad="1"]').click();
+      await expect(a.locator('.mix-cue-marker')).toHaveText('B');
+      await page.waitForFunction(() => __mixSettings.one.hotcues[1] !== null);
+      await page.locator('.mix-library-row[data-job-id="one"] button').first().click();
+      await expect(a.locator('.mix-deck-status')).toHaveText('Prêt');
+      await expect(a.locator('[data-pad="1"]')).toHaveAttribute('data-set', 'true');
+      await a.locator('[data-clear-pad="1"]').click();
+      await expect(a.locator('.mix-cue-marker')).toHaveCount(0);
+      await page.waitForFunction(() => __mixSettings.one.hotcues[1] === null);
+      await a.locator('.mix-grid-editor summary').click();
+      await a.locator('[data-control="bpm"]').fill('125');
+      await a.locator('[data-control="bpm"]').press('Tab');
+      await page.waitForFunction(() => __mixSettings.one.bpm === 125);
+      await a.locator('[data-action="gridForward"]').click();
+      await page.waitForFunction(() => Math.abs(__mixSettings.one.grid_offset - .01) < 1e-9);
+      await a.locator('[data-control="key"]').selectOption('Dm');
+      await expect(a.locator('.mix-key')).toHaveText('Dm');
+      await a.locator('[data-action="analyze"]').click();
+      await expect(a.locator('[data-control="bpm"]')).toHaveValue('125');
+      await expect(a.locator('[data-control="grid"]')).toHaveValue('0.010');
+      await a.locator('[data-control="bpm"]').fill('');
+      await a.locator('[data-control="bpm"]').press('Tab');
+      await expect(a.locator('[data-control="bpm"]')).toHaveValue('120');
+      await page.screenshot({ path: `/work/mixer-grid-${width}.png`, fullPage: true });
+      await a.locator('.mix-grid-editor summary').click();
       await page.locator('#mix-audio-settings').click();
       await expect(page.locator('#mix-settings')).toBeVisible();
       await expect(page.locator('#mix-audio-status')).not.toBeEmpty();
+      await page.locator('#mix-audio-settings').click();
       const pixels = await a.locator('.mix-wave').evaluate(el => {
         const canvas = el.querySelector('div').shadowRoot.querySelector('canvas');
         if (!canvas) return 0;

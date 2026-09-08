@@ -1,5 +1,21 @@
 # syntax=docker/dockerfile:1.7
 
+FROM golang:1.26.7-trixie AS keyfinder-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake g++ curl pkg-config libfftw3-dev libavformat-dev libavcodec-dev libswresample-dev libavutil-dev
+WORKDIR /src
+RUN mkdir libkeyfinder keyfinder-cli sources \
+    && curl -fLsS https://codeload.github.com/mixxxdj/libkeyfinder/tar.gz/941e517ebf853c2153a8b9d6efcc0c729199aa0b -o sources/libkeyfinder.tgz \
+    && echo "7b922bb7605d2ada93bafe54a766b4547f109277f46dc48c31d946afb11639dd  sources/libkeyfinder.tgz" | sha256sum -c - \
+    && curl -fLsS https://codeload.github.com/evanpurkhiser/keyfinder-cli/tar.gz/8958d9219fda8a48952da365d19752e43ee81f63 -o sources/keyfinder-cli.tgz \
+    && echo "be7b6a80b52b707ece2b621ddda46d48c60138630a534934949d88d2ce3a12a7  sources/keyfinder-cli.tgz" | sha256sum -c - \
+    && tar -xzf sources/libkeyfinder.tgz -C libkeyfinder --strip-components=1 \
+    && tar -xzf sources/keyfinder-cli.tgz -C keyfinder-cli --strip-components=1 \
+    && cmake -S libkeyfinder -B libkeyfinder/build -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build libkeyfinder/build -j2 && cmake --install libkeyfinder/build \
+    && cmake -S keyfinder-cli -B keyfinder-cli/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build keyfinder-cli/build -j2
+
 FROM golang:1.26.7-trixie AS beatport-builder
 
 ARG BEATPORTDL_COMMIT=878d3f61c5a98cffd43b9e0306b8cbc75488999e
@@ -61,6 +77,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         ffmpeg \
+        libfftw3-double3 \
         chromium \
         libstdc++6 \
         libtag-c2 \
@@ -72,6 +89,11 @@ WORKDIR /app
 COPY requirements.lock /app/requirements.lock
 RUN python -m pip install --no-cache-dir --disable-pip-version-check \
     --requirement /app/requirements.lock
+COPY requirements-analysis.lock /app/requirements-analysis.lock
+RUN python -m pip install --no-cache-dir --disable-pip-version-check --requirement /app/requirements-analysis.lock
+COPY --from=keyfinder-builder /src/keyfinder-cli/build/keyfinder-cli /usr/local/bin/keyfinder-cli
+COPY --from=keyfinder-builder /src/sources /usr/share/keyfinder-sources
+COPY --from=keyfinder-builder /src/keyfinder-cli/LICENSE /usr/share/licenses/keyfinder-cli/LICENSE
 
 COPY --from=beatport-builder /out/beatportdl /usr/local/bin/beatportdl
 COPY --from=beatport-builder /out/beatport-search /usr/local/bin/beatport-search
@@ -80,6 +102,7 @@ COPY --from=beatport-builder /out/qobuz-dl /opt/qobuz-dl
 COPY --from=beatport-builder /out/qobuz-dl/LICENSE /usr/share/licenses/qobuz-dl/LICENSE
 COPY src/musicdl.py /app/musicdl.py
 COPY src/webapp.py /app/webapp.py
+COPY src/mixer_analysis.py src/analyze_audio.py /app/
 COPY src/playlist_sources.py /app/playlist_sources.py
 COPY src/spotify_browser.py /app/spotify_browser.py
 COPY src/qobuz_search.py /app/qobuz_search.py

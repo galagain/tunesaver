@@ -1,6 +1,7 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
-import { FLX4Decoder, clamp, crossfade } from './flx4.js';
-import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X } from './vendor/mixer-icons.js';
+import { FLX4Decoder, clamp, crossfade } from './flx4.js?v=20260908-5';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime } from './mix-waveforms.js?v=20260908-7';
+import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const host = () => window.TuneSaverMixerHost;
@@ -33,6 +34,33 @@ let midiEpoch = 0;
 let decoder = new FLX4Decoder();
 let ticketQueue = Promise.resolve();
 const cueMemory = new Map();
+const saves = new Map();
+let mixerEpoch = 0;
+let animation = null;
+let analysisTimer = null;
+let browserFocus = 'tracks';
+let collectionCursor = '';
+let visibleCollections = [];
+const collapsedFolders = new Set();
+
+function animate() {
+  if (!active) return;
+  if (!document.hidden) decks.forEach(d => d.timeline.draw(Number($('#mix-wave-zoom').value)));
+  animation = requestAnimationFrame(animate);
+}
+
+async function saveSettings(job, patch) {
+  const epoch = mixerEpoch;
+  const next = (saves.get(job) || Promise.resolve()).catch(() => {}).then(async () => {
+    if (epoch !== mixerEpoch || !host()?.signedIn) return;
+    return host().requestJson(`/api/mixer/tracks/${encodeURIComponent(job)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  });
+  saves.set(job, next);
+  try {
+    const data = await next;
+    if (epoch === mixerEpoch && saves.get(job) === next && data) decks.filter(d => d.track?.job_id === job).forEach(d => d.applyAnalysis(data));
+  } finally { if (saves.get(job) === next) saves.delete(job); }
+}
 
 function button(action, label, shape, handler) {
   const el = document.createElement('button');
@@ -178,6 +206,8 @@ class Deck {
     this.loopEnd = null;
     this.looping = false;
     this.headphone = false;
+    this.analysisData = null;
+    this.analysisLoading = false;
     this.el = document.createElement('section');
     this.el.className = 'mix-deck';
     this.el.dataset.deck = index;
@@ -185,12 +215,13 @@ class Deck {
     this.el.innerHTML = `
       <div class="mix-deck-heading"><span class="mix-deck-letter">${this.letter}</span><div class="mix-cover">?</div><div class="mix-track-info"><strong>Aucun morceau</strong><span></span></div></div>
       <div class="mix-deck-status" role="status">Vide</div>
-      <div class="mix-wave"></div>
+      <div class="mix-overview"><div class="mix-wave"></div><div class="mix-cue-markers"></div></div>
       <div class="mix-time"><span data-time>0:00</span><span data-duration>0:00</span></div>
       <div class="mix-transport"></div>
       <div class="mix-eq"></div><div class="mix-levels"></div>
-      <div class="mix-tempo"><label>Tempo <output class="mix-value">+0.00 %</output><input data-control="tempo" type="range" min="-16" max="16" step="0.01" value="0" aria-label="Tempo ${this.letter}"></label><label>BPM<input data-control="bpm" type="number" min="30" max="300" step="0.01" placeholder="BPM" aria-label="BPM original ${this.letter}"></label></div>
-      <div class="mix-options"><label><input data-control="keylock" type="checkbox" checked> Master tempo</label></div>
+      <div class="mix-tempo"><label>Tempo <output class="mix-value">+0.00 %</output><input data-control="tempo" type="range" min="-16" max="16" step="0.01" value="0" aria-label="Tempo ${this.letter}"></label><label>BPM<input data-control="bpm" type="number" min="40" max="300" step="0.001" placeholder="BPM" aria-label="BPM original ${this.letter}"></label></div>
+      <div class="mix-options"><label><input data-control="keylock" type="checkbox" checked> Master tempo</label><label><input data-control="quantize" type="checkbox" checked> Quantize</label><span class="mix-key"></span></div>
+      <details class="mix-grid-editor"><summary>Grille et analyse</summary><div class="mix-analysis-info"></div><div class="mix-grid-tools"><label>Premier temps (s)<input data-control="grid" type="number" min="0" step="0.001" value="0"></label><label>Clé<select data-control="key"><option value="">Automatique</option></select></label></div></details>
       <div class="mix-pads" aria-label="Hot cues ${this.letter}"></div>`;
     $('#mix-decks').append(this.el);
     this.buttons = {};
@@ -227,17 +258,37 @@ class Deck {
     this.control('tempo').addEventListener('input', () => this.setTempo(Number(this.control('tempo').value)));
     this.control('tempo').addEventListener('dblclick', () => this.setTempo(0));
     this.control('keylock').addEventListener('change', () => this.applyRate());
-    $('.mix-tempo', this.el).append(button('matchTempo', `Aligner le tempo sur ${index ? 'A' : 'B'}`, Gauge, () => this.matchTempo()));
+    $('.mix-tempo', this.el).append(button('matchTempo', `Synchroniser tempo et phase sur ${index ? 'A' : 'B'}`, Gauge, () => this.matchTempo()));
+    this.control('bpm').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { bpm: Number(this.control('bpm').value) || null })));
+    this.control('grid').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { grid_offset: Number(this.control('grid').value) })));
+    const notes = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+    for (const key of [...notes, ...notes.map(n => n + 'm')]) this.control('key').append(new Option(key, key));
+    this.control('key').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { key: this.control('key').value || null })));
+    const tools = $('.mix-grid-tools', this.el);
+    tools.append(button('anchor', 'Premier temps à la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
+      button('gridBack', 'Reculer la grille de 10 ms', Minus, () => this.shiftGrid(-.01)),
+      button('gridForward', 'Avancer la grille de 10 ms', Plus, () => this.shiftGrid(.01)),
+      button('analyze', 'Relancer l’analyse du morceau', RefreshCw, () => this.reanalyze()));
+    for (const [label, factor] of [['BPM / 2', .5], ['BPM × 2', 2]]) {
+      const el = document.createElement('button'); el.type = 'button'; el.className = 'secondary-button'; el.textContent = label;
+      el.addEventListener('click', () => run(() => saveSettings(this.track.job_id, { bpm: this.grid().bpm * factor })));
+      tools.append(el);
+    }
     for (let i = 0; i < 8; i++) {
       const pad = document.createElement('button');
       pad.type = 'button';
       pad.className = 'mix-pad';
-      pad.textContent = i + 1;
+      pad.textContent = 'ABCDEFGH'[i];
       pad.dataset.pad = i;
       pad.title = `Hot cue ${i + 1} : poser / rappeler. Maj + clic : effacer.`;
       pad.setAttribute('aria-label', `Hot cue ${i + 1}, platine ${this.letter}`);
       pad.addEventListener('click', e => run(() => this.hotcue(i, e.shiftKey)));
-      $('.mix-pads', this.el).append(pad);
+      const cell = document.createElement('div'); cell.className = 'mix-pad-cell';
+      cell.style.setProperty('--cue-color', cueColors[i]);
+      const remove = button('clearCue', `Supprimer le hot cue ${'ABCDEFGH'[i]} de ${this.letter}`, X, () => this.hotcue(i, true));
+      remove.className = 'mix-pad-remove'; remove.dataset.clearPad = i;
+      cell.append(pad, remove);
+      $('.mix-pads', this.el).append(cell);
     }
     this.el.addEventListener('dragover', e => {
       if (!Array.from(e.dataTransfer.types).includes('application/x-tunesaver-job')) return;
@@ -252,6 +303,7 @@ class Deck {
       e.preventDefault();
       run(() => this.load(track));
     });
+    this.timeline = new Timeline($('#mix-timelines'), this);
     this.update();
   }
 
@@ -275,6 +327,8 @@ class Deck {
     this.loopStart = this.loopEnd = null;
     this.looping = false;
     this.headphone = false;
+    this.analysisData = null;
+    this.analysisLoading = false;
   }
 
   async load(track) {
@@ -293,6 +347,7 @@ class Deck {
     $('.mix-track-info span', this.el).textContent = track.artist || '';
     $('.mix-deck-status', this.el).textContent = 'Chargement…';
     this.update();
+    run(() => this.fetchAnalysis());
     try {
       await ensureAudio();
       if (version !== this.version) return;
@@ -302,10 +357,11 @@ class Deck {
       const media = new Audio();
       media.preload = 'auto';
       this.wave = WaveSurfer.create({
-        container: $('.mix-wave', this.el), media, height: 82,
+        container: $('.mix-wave', this.el), media, height: 52,
         waveColor: '#626262', progressColor: this.index ? '#ef8eb3' : '#00d79d', cursorColor: '#ffffff',
         barWidth: 2, barGap: 1, dragToSeek: true, normalize: true,
         cspNonce: $('meta[name="mixer-style-nonce"]').content,
+        renderFunction: overviewRenderer(this.analysisData?.analysis),
       });
       const ctx = bus.context;
       this.source = ctx.createMediaElementSource(media);
@@ -354,6 +410,62 @@ class Deck {
     }
   }
 
+  grid() {
+    const analysis = this.analysisData?.analysis || {};
+    const settings = this.analysisData?.settings || {};
+    const value = Number(this.control('bpm').value);
+    const bpm = Number.isFinite(value) && value >= 40 && value <= 300 ? value : null;
+    return { bpm, offset: settings.grid_offset ?? analysis.grid_offset ?? 0 };
+  }
+
+  async fetchAnalysis() {
+    if (!this.track || this.analysisLoading || saves.has(this.track.job_id)) return;
+    const version = this.version;
+    this.analysisLoading = true;
+    try {
+      const data = await host().requestJson(`/api/mixer/tracks/${encodeURIComponent(this.track.job_id)}`, { method: 'GET', signal: this.abort?.signal });
+      if (version === this.version && !saves.has(this.track.job_id)) this.applyAnalysis(data);
+    } catch (error) {
+      if (version === this.version && error.name !== 'AbortError') $('.mix-analysis-info', this.el).textContent = 'Analyse indisponible. Réessaie depuis les réglages.';
+    } finally { if (version === this.version) this.analysisLoading = false; }
+  }
+
+  applyAnalysis(data) {
+    this.analysisData = data;
+    const a = data.analysis || {}, s = data.settings || {};
+    this.control('bpm').value = s.bpm ?? a.bpm ?? '';
+    this.control('grid').value = (s.grid_offset ?? a.grid_offset ?? 0).toFixed(3);
+    this.control('key').value = s.key || '';
+    this.cue = s.cue ?? 0;
+    this.hotcues = [...(s.hotcues || Array(8).fill(null))];
+    const key = s.key || a.key;
+    $('.mix-key', this.el).textContent = key ? `${key}${!s.key && a.camelot ? ` · ${a.camelot}` : ''}` : 'Clé —';
+    const quality = { stable: 'Grille estimée · 4/4', variable: 'Tempo variable · grille à vérifier', uncertain: 'Rythme incertain · grille à renseigner' }[a.grid_quality] || '';
+    $('.mix-analysis-info', this.el).textContent = data.status === 'done'
+      ? [quality, key ? 'Clé estimée' : 'Clé indéterminée', a.codec?.toUpperCase(), a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : '', a.bit_rate ? `${Math.round(a.bit_rate / 1000)} kb/s` : ''].filter(Boolean).join(' · ')
+      : data.status === 'failed' ? data.error || 'Analyse échouée' : data.status === 'running' ? 'Analyse en cours…' : 'Analyse en attente';
+    if (a.waveform && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a) });
+    this.update();
+  }
+
+  async reanalyze() {
+    if (!this.track) return;
+    const version = this.version;
+    const data = await host().requestJson(`/api/mixer/tracks/${encodeURIComponent(this.track.job_id)}`, { method: 'POST', body: '{}' });
+    if (version === this.version) this.applyAnalysis(data);
+  }
+
+  shiftGrid(delta) {
+    return saveSettings(this.track.job_id, { grid_offset: Math.max(0, this.grid().offset + delta) });
+  }
+
+  quantize(position) {
+    const grid = this.grid();
+    if (!this.control('quantize').checked || !grid.bpm) return position;
+    const step = 60 / grid.bpm;
+    return clamp(grid.offset + Math.round((position - grid.offset) / step) * step, 0, this.wave?.getDuration() || position);
+  }
+
   applySound() {
     if (!this.nodes.length) return;
     for (const name of ['low', 'mid', 'high', 'trim']) bus.set(this[name].gain, Number(this.control(name).value));
@@ -368,8 +480,13 @@ class Deck {
   setTempo(percent) {
     this.rate = 1 + clamp(percent, -16, 16) / 100;
     this.control('tempo').value = ((this.rate - 1) * 100).toFixed(2);
-    $('.mix-value', this.el).textContent = `${this.rate >= 1 ? '+' : ''}${((this.rate - 1) * 100).toFixed(2)} %`;
+    this.updateTempoLabel();
     this.applyRate();
+  }
+
+  updateTempoLabel() {
+    const bpm = this.grid().bpm;
+    $('.mix-value', this.el).textContent = `${this.rate >= 1 ? '+' : ''}${((this.rate - 1) * 100).toFixed(2)} %${bpm ? ` · ${(bpm * this.rate).toFixed(2)} BPM` : ''}`;
   }
 
   applyRate(bend = 0) {
@@ -388,7 +505,7 @@ class Deck {
     if (!this.ready) return;
     if (this.playing()) { this.wave.pause(); this.seek(this.cue); }
     else if (this.shift) this.seek(this.cue);
-    else { this.cue = this.position(); this.remember(); }
+    else { this.cue = this.quantize(this.position()); this.remember({ cue: this.cue }); }
     this.update();
   }
 
@@ -399,26 +516,33 @@ class Deck {
     this.update();
   }
 
-  remember() { if (this.track) cueMemory.set(this.track.job_id, { cue: this.cue, hotcues: [...this.hotcues] }); }
+  remember(patch) {
+    if (!this.track) return;
+    cueMemory.set(this.track.job_id, { cue: this.cue, hotcues: [...this.hotcues] });
+    const job = this.track.job_id;
+    run(() => saveSettings(job, patch));
+  }
 
   async hotcue(pad, clear = false) {
     if (!this.ready) return;
     if (clear) this.hotcues[pad] = null;
-    else if (this.hotcues[pad] === null) this.hotcues[pad] = this.position();
+    else if (this.hotcues[pad] === null) this.hotcues[pad] = this.quantize(this.position());
     else this.seek(this.hotcues[pad]);
-    this.remember();
+    this.remember({ hotcue: { index: pad, time: this.hotcues[pad] } });
     this.update();
   }
 
   setLoopIn() {
     if (!this.ready) return;
-    this.loopStart = this.position(); this.loopEnd = null; this.looping = false; this.update();
+    this.loopStart = this.quantize(this.position()); this.loopEnd = null; this.looping = false; this.update();
   }
   setLoopOut() {
     if (!this.ready || this.loopStart === null || this.position() - this.loopStart < 0.25) {
       message('Place le début de boucle avant sa fin (au moins 0,25 seconde).'); return;
     }
-    this.loopEnd = this.position(); this.looping = true; this.seek(this.loopStart); this.update();
+    this.loopEnd = this.quantize(this.position());
+    if (this.loopEnd <= this.loopStart) { this.loopEnd = null; message('La fin de boucle doit suivre son début.'); return; }
+    this.looping = true; this.seek(this.loopStart); this.update();
   }
   toggleLoop() {
     if (this.loopEnd === null) { message('Place les points de début et de fin de boucle.'); return; }
@@ -429,12 +553,14 @@ class Deck {
 
   matchTempo() {
     const other = decks[1 - this.index];
+    if (!this.ready || !other.ready) return;
     const bpm = Number(this.control('bpm').value);
     const target = Number(other.control('bpm').value) * other.rate;
-    if (!(bpm >= 30 && bpm <= 300 && target > 0)) { message('Renseigne le BPM original des deux morceaux pour aligner leur tempo.'); return; }
+    if (!(bpm >= 40 && bpm <= 300 && target > 0)) { message('Renseigne le BPM original des deux morceaux pour aligner leur tempo.'); return; }
     const percent = (target / bpm - 1) * 100;
     if (Math.abs(percent) > 16) { message('Écart de tempo supérieur à la plage de ±16 %.'); return; }
     this.setTempo(percent);
+    this.seek(phaseAlignedTime(this.position(), this.grid(), other.position(), other.grid(), this.wave.getDuration()));
   }
 
   jog(value, search = false) {
@@ -453,6 +579,7 @@ class Deck {
   }
 
   update() {
+    this.updateTempoLabel();
     for (const el of Object.values(this.buttons)) el.disabled = !this.ready;
     this.buttons.headphone.disabled = !this.ready || !bus?.split;
     this.buttons.play.replaceChildren(icon(this.playing() ? Pause : Play));
@@ -461,10 +588,42 @@ class Deck {
     this.buttons.loop.setAttribute('aria-pressed', String(this.looping));
     this.buttons.loopIn.setAttribute('aria-pressed', String(this.loopStart !== null));
     this.buttons.loopOut.setAttribute('aria-pressed', String(this.loopEnd !== null));
-    $$('.mix-pad', this.el).forEach((pad, i) => { pad.disabled = !this.ready; pad.dataset.set = String(this.hotcues[i] !== null); });
+    $$('.mix-pad', this.el).forEach((pad, i) => {
+      pad.disabled = !this.ready; pad.dataset.set = String(this.hotcues[i] !== null);
+      pad.textContent = 'ABCDEFGH'[i] + (this.hotcues[i] !== null ? ` ${time(this.hotcues[i])}` : '');
+      $(`[data-clear-pad="${i}"]`, this.el).disabled = !this.ready || this.hotcues[i] === null;
+    });
+    this.renderMarkers();
+    this.control('bpm').disabled = !this.track;
+    $$('.mix-grid-editor input, .mix-grid-editor select, .mix-grid-editor button', this.el).forEach(el => { el.disabled = !this.track; });
     if (this.ready) $('.mix-deck-status', this.el).textContent = this.looping ? 'Boucle active' : this.playing() ? 'En lecture' : 'Prêt';
     this.tick();
     sendLEDs(this);
+  }
+
+  renderMarkers() {
+    const container = $('.mix-cue-markers', this.el);
+    container.replaceChildren();
+    const duration = this.wave?.getDuration();
+    if (!duration) return;
+    // Nearby cues share a label so coincident markers remain legible.
+    const groups = [];
+    this.hotcues.forEach((t, i) => {
+      if (t === null) return;
+      const left = Math.min(94, t / duration * 100);
+      const group = groups.find(g => Math.abs(g.left - left) < 3);
+      if (group) group.indices.push(i);
+      else groups.push({ left, t, indices: [i] });
+    });
+    for (const group of groups) {
+      const marker = document.createElement('button'); marker.type = 'button'; marker.className = 'mix-cue-marker';
+      marker.textContent = group.indices.map(i => 'ABCDEFGH'[i]).join('');
+      marker.style.left = `${group.left}%`; marker.style.setProperty('--cue-color', cueColors[group.indices[0]]);
+      marker.title = `Hot cue ${marker.textContent} · ${time(group.t)}`;
+      marker.setAttribute('aria-label', marker.title);
+      marker.addEventListener('click', () => this.seek(group.t));
+      container.append(marker);
+    }
   }
 
   eject(force = false) {
@@ -477,6 +636,8 @@ class Deck {
     $('.mix-track-info strong', this.el).textContent = 'Aucun morceau';
     $('.mix-track-info span', this.el).textContent = '';
     $('.mix-deck-status', this.el).textContent = 'Vide';
+    $('.mix-analysis-info', this.el).textContent = '';
+    $('.mix-key', this.el).textContent = '';
     $('[data-duration]', this.el).textContent = '0:00';
     this.update();
   }
@@ -530,6 +691,12 @@ function renderTracks() {
     artist.textContent = track.artist || '';
     info.append(title, artist);
     row.append(cover(track), info);
+    const analysis = track.mix_analysis || {};
+    for (const [className, value] of [['bpm', analysis.bpm ? Number(analysis.bpm).toFixed(2) : analysis.status === 'failed' ? '!' : '—'], ['key', analysis.camelot || analysis.key || '—'], ['duration', analysis.duration ? time(analysis.duration) : '—']]) {
+      const cell = document.createElement('span'); cell.className = `mix-meta-${className}`; cell.textContent = value;
+      cell.title = className === 'key' ? [analysis.key, analysis.camelot].filter(Boolean).join(' · ') : analysis.error || '';
+      row.append(cell);
+    }
     decks.forEach(deck => {
       const load = document.createElement('button');
       load.type = 'button'; load.textContent = deck.letter;
@@ -544,10 +711,20 @@ function renderTracks() {
 
 function selectTrack(id) {
   selectedId = id;
+  setBrowserFocus('tracks');
   $$('.mix-library-row').forEach(row => { row.dataset.selected = String(row.dataset.jobId === id); });
 }
 
 function browse(delta, focus = false) {
+  if (!delta) return;
+  if (browserFocus === 'collections' && !focus) {
+    if (!visibleCollections.length) return;
+    const current = visibleCollections.findIndex(c => c.id === collectionCursor);
+    collectionCursor = visibleCollections[clamp(current + Math.sign(delta), 0, visibleCollections.length - 1)].id;
+    renderCollections();
+    $('#mix-collections [data-cursor="true"]')?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
   if (!visibleTracks.length) return;
   const index = visibleTracks.findIndex(t => t.job_id === selectedId);
   selectTrack(visibleTracks[clamp(index + Math.sign(delta), 0, visibleTracks.length - 1)].job_id);
@@ -556,13 +733,82 @@ function browse(delta, focus = false) {
   if (focus) row?.focus();
 }
 
+function setBrowserFocus(focus) {
+  browserFocus = focus;
+  $('.mix-browser').dataset.focus = focus;
+  renderCollections();
+}
+
+function chooseCollection(item) {
+  if (item.folder) {
+    if (collapsedFolders.has(item.folder)) collapsedFolders.delete(item.folder);
+    else collapsedFolders.add(item.folder);
+    collectionCursor = item.id;
+    renderCollections();
+    return;
+  }
+  $('#mix-collection').value = item.id;
+  collectionCursor = item.id;
+  renderTracks();
+  setBrowserFocus('tracks');
+}
+
+function browseFocus(back = false) {
+  if (back || browserFocus === 'tracks') {
+    collectionCursor = $('#mix-collection').value;
+    setBrowserFocus('collections');
+  } else {
+    const item = visibleCollections.find(c => c.id === collectionCursor);
+    if (item) chooseCollection(item);
+  }
+}
+
+function renderCollections() {
+  const library = host().library;
+  const all = [{ id: '', name: 'Tous mes sons', depth: 0 }];
+  const folders = library.folders || [];
+  const folderIds = new Set(folders.map(f => f.id));
+  const playlistItem = (p, depth = 0) => ({ id: `playlists:${p.id}`, name: p.name, depth });
+  for (const folder of folders) {
+    all.push({ id: `folder:${folder.id}`, name: folder.name, folder: folder.id, depth: 0 });
+    if (!collapsedFolders.has(folder.id)) all.push(...library.playlists.filter(p => p.folder_id === folder.id).map(p => playlistItem(p, 1)));
+  }
+  all.push(...library.playlists.filter(p => !folderIds.has(p.folder_id)).map(p => playlistItem(p)));
+  all.push(...library.tags.map(t => ({ id: `tags:${t.id}`, name: t.name, tag: true, depth: 0 })));
+  visibleCollections = all;
+  if (!all.some(c => c.id === collectionCursor)) collectionCursor = '';
+  const nav = $('#mix-collections');
+  nav.replaceChildren();
+  const heading = document.createElement('h3'); heading.textContent = 'Playlists'; nav.append(heading);
+  let tagsHeading = false;
+  for (const item of all) {
+    if (item.tag && !tagsHeading) { const title = document.createElement('h3'); title.textContent = 'Tags'; nav.append(title); tagsHeading = true; }
+    const el = document.createElement('button'); el.type = 'button';
+    el.dataset.collection = item.id; el.dataset.depth = item.depth;
+    el.dataset.selected = String(item.id === $('#mix-collection').value);
+    el.dataset.cursor = String(browserFocus === 'collections' && item.id === collectionCursor);
+    el.textContent = item.folder ? `${collapsedFolders.has(item.folder) ? '▸' : '▾'} ${item.name}` : item.name;
+    if (item.folder) el.setAttribute('aria-expanded', String(!collapsedFolders.has(item.folder)));
+    else el.setAttribute('aria-pressed', String(item.id === $('#mix-collection').value));
+    el.addEventListener('click', () => chooseCollection(item));
+    el.addEventListener('keydown', event => {
+      if (['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); browserFocus = 'collections'; collectionCursor = item.id; browse(event.key === 'ArrowUp' ? -1 : 1); $('#mix-collections [data-cursor="true"]')?.focus(); }
+    });
+    nav.append(el);
+  }
+}
+
 function sync() {
   if (!active) return;
   $('#library-title').textContent = 'Mixer';
   $('#library-count').textContent = 'Deux platines';
   $$('.playlist-filter, .tag-filter').forEach(el => { el.dataset.selected = String(el.id === 'mixer-nav'); });
   const library = host().library;
-  const next = JSON.stringify([library.tracks, library.playlists, library.tags]);
+  const analyzed = library.tracks.filter(t => t.streamable);
+  const done = analyzed.filter(t => t.mix_analysis?.status === 'done').length;
+  const failed = analyzed.filter(t => t.mix_analysis?.status === 'failed').length;
+  $('#mix-analysis-status').textContent = `Analyse : ${done}/${analyzed.length}${failed ? ` · ${failed} en échec` : ''}`;
+  const next = JSON.stringify([library.tracks, library.playlists, library.tags, library.folders]);
   if (next === fingerprint) return;
   fingerprint = next;
   const select = $('#mix-collection');
@@ -575,6 +821,7 @@ function sync() {
     select.append(group);
   }
   if (Array.from(select.options).some(o => o.value === value)) select.value = value;
+  renderCollections();
   renderTracks();
 }
 
@@ -589,11 +836,17 @@ function open() {
   $('#mixer-nav').setAttribute('aria-expanded', 'true');
   if (!decks.length) decks = [new Deck(0), new Deck(1)];
   sync();
+  cancelAnimationFrame(animation);
+  animate();
+  clearInterval(analysisTimer);
+  analysisTimer = setInterval(() => decks.filter(d => d.track && !['done', 'failed'].includes(d.analysisData?.status)).forEach(d => run(() => d.fetchAnalysis())), 4000);
   run(ensureAudio);
 }
 
 function close() {
   active = false;
+  cancelAnimationFrame(animation);
+  clearInterval(analysisTimer);
   pause();
   panel.hidden = true;
   $('#library-content').hidden = false;
@@ -622,6 +875,7 @@ function handleMIDI(event) {
   if (!cmd) return;
   const d = decks[cmd.deck];
   if (cmd.action === 'browse') return browse(cmd.value);
+  if (cmd.action === 'browseFocus') return browseFocus(cmd.back);
   if (cmd.action === 'load') {
     const track = visibleTracks.find(t => t.job_id === selectedId);
     if (track) run(() => d.load(track));
@@ -739,8 +993,11 @@ async function refreshOutputs() {
 }
 
 function reset() {
+  mixerEpoch++;
+  saves.clear();
   close();
   decks.forEach(d => d.eject(true));
+  decks.forEach(d => d.timeline.destroy());
   run(disconnectMIDI);
   const context = bus?.context;
   bus = null;
@@ -755,6 +1012,10 @@ function reset() {
   $('#mix-routing').value = 'stereo';
   for (const [id, value] of [['mix-cross', '0.5'], ['mix-master', '0.7'], ['mix-head-level', '0.5'], ['mix-head-mix', '0']]) $(`#${id}`).value = value;
   visibleTracks = []; selectedId = ''; fingerprint = '';
+  browserFocus = 'tracks'; collectionCursor = ''; visibleCollections = [];
+  collapsedFolders.clear();
+  $('#mix-collections').replaceChildren();
+  $('#mix-analysis-status').textContent = '';
   cueMemory.clear(); message();
 }
 
@@ -791,7 +1052,7 @@ $('#mix-routing').addEventListener('change', () => {
 for (const id of ['mix-cross', 'mix-master', 'mix-head-level', 'mix-head-mix']) $(`#${id}`).addEventListener('input', updateMaster);
 $('#mix-cross').addEventListener('dblclick', () => { $('#mix-cross').value = '0.5'; updateMaster(); });
 $('#mix-search').addEventListener('input', renderTracks);
-$('#mix-collection').addEventListener('change', renderTracks);
+$('#mix-collection').addEventListener('change', () => { collectionCursor = $('#mix-collection').value; setBrowserFocus('tracks'); renderTracks(); });
 window.addEventListener('pagehide', reset);
 window.addEventListener('beforeunload', event => {
   if (decks.some(d => d.playing())) { event.preventDefault(); event.returnValue = ''; }

@@ -30,6 +30,7 @@ from aiohttp import web
 from mutagen import File as MutagenFile
 
 import musicdl
+import mixer_analysis
 import playlist_sources
 
 
@@ -346,6 +347,7 @@ def init_local_store() -> None:
             db.execute(
                 "alter table users add column email_verified integer not null default 0"
             )
+    mixer_analysis.init_store(local_db)
 
 
 def hash_password(password: str, *, salt: str | None = None) -> tuple[str, str]:
@@ -974,6 +976,7 @@ def cover_for_job(job_id: str, owner_id: str) -> dict[str, Any] | None:
 
 def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
     tracks = []
+    analyses = mixer_analysis.summaries(local_db, user_id)
     with local_db() as db:
         removed = {row["job_id"] for row in db.execute(
             "select job_id from library_removed where user_id = ?", (user_id,)
@@ -993,6 +996,7 @@ def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
             "streamable": bool(delivery["mime_type"]),
             "cover_url": f"/api/covers/{row['job_id']}" if cover else "",
             "tags": tags_by_job.get(row["job_id"], []),
+            "mix_analysis": analyses.get(row["job_id"], {"status": "pending"}),
         })
     return tracks
 
@@ -1305,6 +1309,7 @@ async def api_middleware(
             "/style.css",
             "/mixer.js",
             "/flx4.js",
+            "/mix-waveforms.js",
             "/mixer.css",
             "/vendor/wavesurfer/wavesurfer.esm.js",
             "/vendor/mixer-icons.js",
@@ -3192,10 +3197,11 @@ def create_app() -> web.Application:
     app[AUTH_CACHE_KEY] = {}
     app[ADMIN_SESSIONS_KEY] = {}
     app.cleanup_ctx.append(playlist_import_context)
+    mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("mixer.js", "flx4.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js"):
+    for asset in ("mixer.js", "flx4.js", "mix-waveforms.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js"):
         app.router.add_get(f"/{asset}", mixer_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)

@@ -944,6 +944,30 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(library_payload["tracks"][0]["streamable"])
             self.assertEqual(library_payload["tracks"][0]["cover_url"], f"/api/covers/{job_id}")
 
+            mixer_url = f"/api/mixer/tracks/{job_id}"
+            auth = {"Authorization": f"Bearer {TEST_TOKEN}"}
+            private = await client.get(mixer_url)
+            self.assertEqual(private.status, 401)
+            analysis = await client.get(mixer_url, headers=auth)
+            self.assertEqual(analysis.status, 200)
+            saved = await client.patch(mixer_url, headers=auth, json={"bpm": 125, "hotcue": {"index": 0, "time": 2}})
+            self.assertEqual(saved.status, 200)
+            self.assertEqual((await saved.json())["settings"]["hotcues"][0], 2)
+            reread = await client.get(mixer_url, headers=auth)
+            self.assertEqual((await reread.json())["settings"]["bpm"], 125)
+            deleted_cue = await client.patch(mixer_url, headers=auth, json={"hotcue": {"index": 0, "time": None}})
+            self.assertIsNone((await deleted_cue.json())["settings"]["hotcues"][0])
+            invalid = await client.patch(mixer_url, headers=auth, json={"bpm": 999})
+            self.assertEqual(invalid.status, 400)
+            foreign = webapp.local_create_user("foreign-mixer@example.com", "secret123")
+            app[webapp.AUTH_CACHE_KEY][hashlib.sha256(b"foreign-mixer-token").hexdigest()] = (time.monotonic() + 3600, foreign)
+            for method in ("GET", "PATCH", "POST"):
+                denied = await client.request(method, mixer_url, headers={"Authorization": "Bearer foreign-mixer-token"}, json={"bpm": 128})
+                self.assertEqual(denied.status, 404)
+            restarted = await client.post(mixer_url, headers=auth, json={})
+            self.assertEqual(restarted.status, 200)
+            self.assertEqual((await restarted.json())["settings"]["bpm"], 125)
+
             playlist = await client.post(
                 "/api/playlists",
                 json={"name": "Favorites"},
