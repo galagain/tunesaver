@@ -170,10 +170,10 @@ function audioFixture() {
       await (await deck(0)).locator('[data-action="matchTempo"]').click();
       await expect(a.locator('.mix-current-bpm')).toHaveText('128.00');
       await (await deck(0)).locator('[data-pad="0"]').click();
-      await expect(a.locator('.mix-cue-marker')).toHaveText('A');
+      await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveText('A');
       await page.waitForFunction(() => __mixSettings.one.hotcues?.[0] != null);
       await a.locator('[data-clear-pad="0"]').click();
-      await expect(a.locator('.mix-cue-marker')).toHaveCount(0);
+      await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveCount(0);
       const knob = a.locator('[data-control="low"]').locator('..');
       const bounds = await knob.boundingBox();
       await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 10); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2, bounds.y - 30); await page.mouse.up();

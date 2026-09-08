@@ -326,6 +326,8 @@ class Deck {
   compactLayout() {
     const heading = $('.mix-deck-heading', this.el);
     const overview = $('.mix-overview', this.el);
+    this.overview = overview;
+    overview.dataset.deck = this.index;
     overview.tabIndex = 0;
     overview.setAttribute('role', 'slider');
     overview.setAttribute('aria-label', `Aperçu complet du morceau (${this.letter})`);
@@ -337,6 +339,10 @@ class Deck {
         : this.position() + (event.key === 'ArrowRight' ? 5 : -5));
     });
     overview.append($('.mix-time', this.el));
+    const label = document.createElement('div'); label.className = 'mix-overview-label';
+    const letter = document.createElement('strong'); letter.textContent = this.letter;
+    this.overviewTitle = document.createElement('span'); this.overviewTitle.textContent = 'Aucun morceau';
+    label.append(letter, this.overviewTitle); overview.prepend(label);
     const transport = document.createElement('div'); transport.className = 'deck-playback';
     if (!this.index) transport.append(button('previous', 'Morceau précédent', SkipBack, () => host().playPreviousTrack()));
     transport.append(this.buttons.play);
@@ -361,7 +367,8 @@ class Deck {
     for (const child of Array.from(this.el.children)) if (![heading, overview, status].includes(child)) panel.append(child);
     const lane = this.timeline.lane;
     lane.append(status);
-    this.el.append(heading, overview, transport, lane, tools, panel);
+    this.el.append(heading, transport, lane, tools, panel);
+    $('#mix-overviews').append(overview);
   }
 
   control(name) { return $(`[data-control="${name}"]`, this.el); }
@@ -404,6 +411,8 @@ class Deck {
     this.control('bpm').value = Number(track.bpm) > 0 ? track.bpm : '';
     $('.mix-cover', this.el).replaceWith(cover(track));
     $('.mix-track-info strong', this.el).textContent = track.title || track.file_name || 'Sans titre';
+    this.overviewTitle.textContent = track.title || track.file_name || 'Sans titre';
+    this.overviewTitle.title = [this.overviewTitle.textContent, track.artist].filter(Boolean).join(' · ');
     $('.mix-track-info span', this.el).textContent = track.artist || '';
     $('.mix-deck-status', this.el).textContent = 'Chargement…';
     this.update();
@@ -417,7 +426,7 @@ class Deck {
       const media = new Audio();
       media.preload = 'auto';
       this.wave = WaveSurfer.create({
-        container: $('.mix-wave', this.el), media, height: 32,
+        container: $('.mix-wave', this.overview), media, height: 32,
         waveColor: '#626262', progressColor: this.index ? '#ef8eb3' : '#00d79d', cursorColor: '#ffffff',
         barWidth: 2, barGap: 1, dragToSeek: true, normalize: true,
         cspNonce: $('meta[name="mixer-style-nonce"]').content,
@@ -461,7 +470,7 @@ class Deck {
       this.applySound();
       this.applyRate();
       $('.mix-deck-status', this.el).textContent = 'Prêt';
-      $('[data-duration]', this.el).textContent = time(this.wave.getDuration());
+      $('[data-duration]', this.overview).textContent = time(this.wave.getDuration());
       this.update();
       return true;
     } catch (e) {
@@ -646,8 +655,8 @@ class Deck {
 
   tick() {
     if (this.ready && this.looping && this.position() >= this.loopEnd) this.seek(this.loopStart);
-    $('[data-time]', this.el).textContent = time(this.position());
-    const overview = $('.mix-overview', this.el);
+    $('[data-time]', this.overview).textContent = time(this.position());
+    const overview = this.overview;
     overview.setAttribute('aria-valuemax', String(this.wave?.getDuration() || 0));
     overview.setAttribute('aria-valuenow', String(this.position()));
     overview.setAttribute('aria-valuetext', `${time(this.position())} sur ${time(this.wave?.getDuration() || 0)}`);
@@ -683,7 +692,7 @@ class Deck {
   }
 
   renderMarkers() {
-    const container = $('.mix-cue-markers', this.el);
+    const container = $('.mix-cue-markers', this.overview);
     container.replaceChildren();
     const duration = this.wave?.getDuration();
     if (!duration) return;
@@ -726,11 +735,13 @@ class Deck {
     this.cue = 0;
     $('.mix-cover', this.el).replaceWith(cover(null));
     $('.mix-track-info strong', this.el).textContent = 'Aucun morceau';
+    this.overviewTitle.textContent = 'Aucun morceau';
+    this.overviewTitle.removeAttribute('title');
     $('.mix-track-info span', this.el).textContent = '';
     $('.mix-deck-status', this.el).textContent = 'Vide';
     $('.mix-analysis-info', this.el).textContent = '';
     $('.mix-key', this.el).textContent = '';
-    $('[data-duration]', this.el).textContent = '0:00';
+    $('[data-duration]', this.overview).textContent = '0:00';
     this.update();
   }
 }
@@ -1122,6 +1133,7 @@ function reset() {
   if (context && context.state !== 'closed') context.close().catch(() => {});
   decks = [];
   $('#mix-decks').replaceChildren();
+  $('#mix-overviews').replaceChildren();
   $('#mix-controls').hidePopover();
   refreshKnobs();
   $('#mix-settings').hidden = true;
