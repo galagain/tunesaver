@@ -657,6 +657,10 @@ def _run_provider_unlocked(
             "-q",
             quality,
         ]
+        # Each web job owns a separate delivery directory. A global ID registry
+        # cannot prove that this user's file still exists (especially after a reset).
+        if output_dir is not None:
+            command.append("--no-db")
         return stream_command(command, cwd=None, log_path=log_path, environment=environment)
 
     with tempfile.TemporaryDirectory(prefix="musicdl-beatport-") as temporary_name:

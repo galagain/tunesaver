@@ -184,6 +184,21 @@ class MusicDLTests(unittest.TestCase):
             ],
         )
 
+    def test_qobuz_delivery_ignores_global_download_registry(self) -> None:
+        musicdl.write_qobuz_config({**musicdl.load_qobuz_settings(),
+            "user_id": "123456", "user_auth_token": "token", "app_id": "123",
+            "secrets": "secret", "musicdl_login_id": "login"})
+        for owner in ("first-user", "second-user"):
+            output = musicdl.DELIVERY_ROOT / owner / "job" / "content"
+            with mock.patch.object(musicdl, "stream_command", return_value=0) as stream:
+                result = musicdl.run_provider("qobuz", ["https://play.qobuz.com/track/456"],
+                                             musicdl.QUEUE_ROOT / "qobuz.log", output_dir=output)
+            self.assertEqual(result, 0)
+            command = stream.call_args.args[0]
+            self.assertIn("--no-db", command)
+            self.assertEqual(command[command.index("-d") + 1], str(output))
+        self.assertEqual(musicdl.load_qobuz_settings()["no_database"], "false")
+
     def test_successful_job_moves_to_done(self) -> None:
         job_id = musicdl.enqueue("tiddl", ["https://tidal.com/track/123"])
         pending = musicdl.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
