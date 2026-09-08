@@ -1,7 +1,30 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
-import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak } from '../web/mix-waveforms.js';
+import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewEnvelope } from '../web/mix-waveforms.js';
+
+test('overview pools fine detail but preserves silence and broad dynamic changes', () => {
+  const frames = 4096, bytes = new Uint8Array(frames * 5);
+  for (let i = 1024; i < frames; i++) {
+    const amplitude = i < 2048 ? 40 : i % 2 ? 220 : 180;
+    bytes[i * 5 + 3] = amplitude; bytes[i * 5 + 4] = amplitude;
+  }
+  const levels = overviewEnvelope({ waveform: { encoding: 'u8-lmhpn', frames, data: Buffer.from(bytes).toString('base64') } });
+  assert.equal(levels.length, 256);
+  assert.equal(levels[20], 0);
+  assert.ok(levels[90] > 0 && levels[90] < levels[180] / 2);
+  assert.ok(levels.every(n => Number.isFinite(n) && n >= 0 && n <= 1));
+  assert.ok(Math.max(...levels.slice(150, 220)) - Math.min(...levels.slice(150, 220)) < .001);
+});
+
+test('overview has a decoded-audio fallback and does not invent energy in silence', () => {
+  assert.deepEqual(overviewEnvelope(null), []);
+  assert.deepEqual(overviewEnvelope(null, [new Float32Array(64)]), Array(64).fill(0));
+  const samples = Float32Array.from({ length: 4096 }, (_, i) => i < 2048 ? 0 : Math.sin(i) * .5);
+  const levels = overviewEnvelope(null, [samples]);
+  assert.equal(levels[30], 0);
+  assert.ok(levels[180] > .9);
+});
 
 test('variable grids use adjacent detected beats, not the average track tempo', () => {
   assert.deepEqual(detectedGrid([0, .5, 1.1, 1.8], .2), { bpm: 120, offset: 0 });

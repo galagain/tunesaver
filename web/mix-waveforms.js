@@ -77,9 +77,55 @@ function paint(ctx, analysis, raw, start, span, width, height) {
   ctx.closePath(); ctx.fillStyle = gradient; ctx.fill();
 }
 
-export function overviewRenderer(analysis) {
-  if (!unpackWaveform(analysis?.waveform)) return undefined;
-  return (_peaks, ctx) => paint(ctx, analysis, null, 0, analysis.duration, ctx.canvas.width, ctx.canvas.height);
+export function overviewEnvelope(analysis, channels = []) {
+  const bytes = unpackWaveform(analysis?.waveform), length = bytes ? bytes.length / 5 : channels[0]?.length || 0;
+  const count = Math.min(256, length);
+  if (!count) return [];
+  // Pool energy over broad time slices, then smooth only the full-track overview.
+  const levels = Array.from({ length: count }, (_, bin) => {
+    const first = Math.floor(bin * length / count), last = Math.floor((bin + 1) * length / count);
+    let energy = 0;
+    for (let i = first; i < last; i++) {
+      if (bytes) energy += (Math.max(bytes[i * 5 + 3], bytes[i * 5 + 4]) / 255) ** 2;
+      else for (const channel of channels) energy += (channel[i] || 0) ** 2 / channels.length;
+    }
+    return Math.sqrt(energy / (last - first));
+  });
+  const smooth = levels.map((_, i) => {
+    let total = 0, weight = 0;
+    for (let j = Math.max(0, i - 2); j <= Math.min(count - 1, i + 2); j++) {
+      const w = 3 - Math.abs(j - i); total += levels[j] * w; weight += w;
+    }
+    return total / weight;
+  });
+  const peak = Math.max(...smooth, .001);
+  return smooth.map(value => (value / peak) ** .8);
+}
+
+export function overviewRenderer(analysis, color = '#68e5bc') {
+  const analyzed = Boolean(unpackWaveform(analysis?.waveform));
+  let envelope = analyzed ? overviewEnvelope(analysis) : null;
+  let samples = null;
+  return (channels, ctx) => {
+    if (!analyzed && channels?.[0] !== samples) {
+      samples = channels?.[0]; envelope = overviewEnvelope(null, channels);
+    }
+    if (!envelope?.length) return;
+    const { width, height } = ctx.canvas, middle = height / 2;
+    const points = envelope.map((level, i) => [i / Math.max(1, envelope.length - 1) * width, level * height * .44]);
+    ctx.beginPath(); ctx.moveTo(0, middle - points[0][1]);
+    for (let i = 1; i < points.length; i++) {
+      const [x, y] = points[i - 1], [nextX, nextY] = points[i];
+      ctx.quadraticCurveTo(x, middle - y, (x + nextX) / 2, middle - (y + nextY) / 2);
+    }
+    ctx.lineTo(width, middle - points.at(-1)[1]);
+    ctx.lineTo(width, middle + points.at(-1)[1]);
+    for (let i = points.length - 2; i >= 0; i--) {
+      const [x, y] = points[i + 1], [nextX, nextY] = points[i];
+      ctx.quadraticCurveTo(x, middle + y, (x + nextX) / 2, middle + (y + nextY) / 2);
+    }
+    ctx.lineTo(0, middle + points[0][1]); ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  };
 }
 
 export class Timeline {

@@ -56,48 +56,55 @@ function audioFixture() {
       const dock = page.locator('#playback-dock');
       const initial = await a.boundingBox(), emptyDock = await dock.boundingBox();
       const overviewA = page.locator('.mix-overview[data-deck="0"]'), overviewB = page.locator('.mix-overview[data-deck="1"]');
-      const overviewRow = await page.locator('#mix-overviews').boundingBox();
-      const left = await overviewA.boundingBox(), right = await overviewB.boundingBox();
-      expect(Math.abs(left.width - overviewRow.width / 2)).toBeLessThan(1);
-      expect(Math.abs(right.width - overviewRow.width / 2)).toBeLessThan(1);
-      expect(left.x + left.width).toBe(right.x);
-      expect(left.y).toBe(right.y);
-      expect(overviewRow.y + overviewRow.height).toBe(initial.y);
-      await expect(page.locator('.mix-deck .mix-overview')).toHaveCount(0);
+      await expect(page.locator('#mix-overviews')).toBeHidden();
+      await expect(a.locator('.mix-overview')).toHaveCount(1);
+      await expect(overviewA).toBeVisible(); await expect(overviewB).toBeHidden();
       expect(initial.height).toBe(width <= 700 ? 96 : 72);
       await page.locator('.library-track').first().locator('.play-button').click();
       await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await expect(a.locator('.deck-metadata')).toContainText('120.00');
       expect(await a.boundingBox()).toEqual(initial);
       expect(await dock.boundingBox()).toEqual(emptyDock);
-      const canvas = a.locator('.mix-timeline-lane canvas'), canvasBox = await canvas.boundingBox();
+      const canvas = a.locator('.mix-timeline-lane > canvas');
+      await expect(canvas).toBeHidden();
+      const canvasBox = await a.locator('.mix-timeline-lane').boundingBox();
       const play = await a.locator('[data-action="play"]').boundingBox();
       expect(Math.abs(canvasBox.y + canvasBox.height / 2 - play.y - play.height / 2)).toBeLessThan(1);
-      await expect.poll(() => canvas.evaluate(c => {
+      const silhouette = overviewA.locator('.mix-wave canvas').first();
+      await expect.poll(() => silhouette.evaluate(c => {
         const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-        return data.filter((value, i) => i % 4 === 0 && value > data[i + 1] + 30).length;
+        return data.filter((value, i) => i % 4 === 1 && value > data[i - 1] + 30).length;
       })).toBeGreaterThan(50);
-      expect(await canvas.evaluate(c => c.getContext('2d').getImageData(c.width - 1, 0, 1, 1).data[3])).toBe(0);
-      await page.evaluate(() => { window.keptRow = document.querySelector('.mix-deck[data-deck="0"]'); window.keptCanvas = keptRow.querySelector('canvas'); mediaEvents.length = 0; });
+      expect(await silhouette.evaluate(c => c.getContext('2d').getImageData(c.width - 1, 0, 1, 1).data[3])).toBe(0);
+      await page.evaluate(() => { window.keptRow = document.querySelector('.mix-deck[data-deck="0"]'); window.keptCanvas = keptRow.querySelector('.mix-timeline-lane > canvas'); window.keptOverview = keptRow.querySelector('.mix-overview'); mediaEvents.length = 0; });
       const before = await page.evaluate(() => Mixer.currentPlayback.position);
       for (let i = 0; i < 4; i++) {
         await page.locator('#mixer-nav').click();
         await expect(b).toBeVisible();
+        await expect(canvas).toBeVisible();
         expect(await a.boundingBox()).toEqual(initial);
-        expect(await canvas.boundingBox()).toEqual(canvasBox);
+        expect(await a.locator('.mix-timeline-lane').boundingBox()).toEqual(canvasBox);
         const second = await b.boundingBox();
         expect(second.y + second.height).toBe(initial.y);
         const upper = await page.locator('#mix-overviews').boundingBox();
         expect(upper.y + upper.height).toBe(second.y);
-        expect(upper.width).toBe(overviewRow.width);
+        const left = await overviewA.boundingBox(), right = await overviewB.boundingBox();
+        expect(Math.abs(left.width - upper.width / 2)).toBeLessThan(1);
+        expect(Math.abs(right.width - upper.width / 2)).toBeLessThan(1);
+        expect(left.x + left.width).toBe(right.x);
+        expect(left.y).toBe(right.y);
+        await expect(page.locator('#mix-overviews .mix-overview')).toHaveCount(2);
         await page.locator('#mixer-nav').click();
         await expect(b).toBeHidden();
+        await expect(canvas).toBeHidden();
+        await expect(a.locator('.mix-overview')).toHaveCount(1);
         expect(await a.boundingBox()).toEqual(initial);
       }
       expect(await page.evaluate(() => ({ events: mediaEvents, sources: sources.length, tickets,
-        same: keptRow === document.querySelector('.mix-deck[data-deck="0"]') && keptCanvas === keptRow.querySelector('canvas') })))
+        same: keptRow === document.querySelector('.mix-deck[data-deck="0"]') && keptCanvas === keptRow.querySelector('.mix-timeline-lane > canvas') && keptOverview === keptRow.querySelector('.mix-overview') })))
         .toEqual({ events: [], sources: 1, tickets: 1, same: true });
       expect(await page.evaluate(() => Mixer.currentPlayback.position)).toBeGreaterThan(before);
+      await expect.poll(async () => (await silhouette.boundingBox()).width).toBeCloseTo((await overviewA.locator('.mix-wave').boundingBox()).width, 0);
       await page.screenshot({ path: `/work/unified-player-${engine.name()}-${width}.png` });
       await a.locator('[data-action="play"]').click();
       const overview = page.locator('.mix-overview[data-deck="0"] .mix-wave');
