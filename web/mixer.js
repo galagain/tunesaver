@@ -1,19 +1,12 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260908-17';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260909-21';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
+import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const host = () => window.TuneSaverMixerHost;
-const performance = $('#mix-performance');
-const deckTabs = document.createElement('div'); deckTabs.className = 'mix-deck-tabs'; deckTabs.setAttribute('role', 'group'); deckTabs.setAttribute('aria-label', 'Platine affichée');
-for (const [i, letter] of ['A', 'B'].entries()) {
-  const tab = document.createElement('button'); tab.type = 'button'; tab.textContent = letter; tab.setAttribute('aria-pressed', String(i === 0));
-  tab.addEventListener('click', () => { performance.dataset.mobileDeck = i; Array.from(deckTabs.children).forEach((el, n) => el.setAttribute('aria-pressed', String(i === n))); });
-  deckTabs.append(tab);
-}
-performance.insertBefore(deckTabs, $('#mix-decks'));
 const dockObserver = new ResizeObserver(() => document.documentElement.style.setProperty('--playback-height', `${$('#playback-dock').getBoundingClientRect().height}px`));
 dockObserver.observe($('#playback-dock'));
 const message = (text = '') => {
@@ -23,6 +16,7 @@ const message = (text = '') => {
   const label = document.createElement('span');
   label.textContent = text;
   target.append(label, button('dismiss', 'Fermer le message', X, () => message()));
+  if (host()?.signedIn) $('#mix-controls').showPopover();
 };
 const icon = (shape) => createElement(shape, { 'aria-hidden': 'true' });
 const time = (seconds) => {
@@ -56,8 +50,7 @@ let browserFocus = 'tracks';
 let collectionCursor = '';
 
 function animate() {
-  if (!active) return;
-  if (!document.hidden) decks.forEach(d => d.timeline.draw(clamp(Number($('#mix-wave-zoom').value) || 4, 1, 24)));
+  if (!document.hidden) decks.filter(d => !d.index || active).forEach(d => d.timeline.draw(clamp(Number($('#mix-wave-zoom').value) || 4, 1, 24)));
   animation = requestAnimationFrame(animate);
 }
 
@@ -325,8 +318,50 @@ class Deck {
       run(() => this.load(track));
     });
     this.timeline = new Timeline($('#mix-timelines'), this);
+    this.compactLayout();
     $$('input[type="range"]', this.el).forEach(makeKnob);
     this.update();
+  }
+
+  compactLayout() {
+    const heading = $('.mix-deck-heading', this.el);
+    const overview = $('.mix-overview', this.el);
+    overview.tabIndex = 0;
+    overview.setAttribute('role', 'slider');
+    overview.setAttribute('aria-label', `Aperçu complet du morceau (${this.letter})`);
+    overview.setAttribute('aria-valuemin', '0');
+    overview.addEventListener('keydown', event => {
+      if (!['Home', 'End', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      this.seek(event.key === 'Home' ? 0 : event.key === 'End' ? this.wave?.getDuration() || 0
+        : this.position() + (event.key === 'ArrowRight' ? 5 : -5));
+    });
+    overview.append($('.mix-time', this.el));
+    const transport = document.createElement('div'); transport.className = 'deck-playback';
+    if (!this.index) transport.append(button('previous', 'Morceau précédent', SkipBack, () => host().playPreviousTrack()));
+    transport.append(this.buttons.play);
+    if (!this.index) transport.append(button('next', 'Morceau suivant', SkipForward, () => host().playNextTrack()));
+    else transport.append(this.buttons.cue);
+    const panel = document.createElement('div'); panel.className = 'deck-controls';
+    panel.id = `deck-controls-${this.index}`; panel.setAttribute('popover', 'auto');
+    const settings = button('settings', `Réglages de la platine ${this.letter}`, Settings2, () => {});
+    settings.setAttribute('popovertarget', panel.id);
+    const mute = button('mute', `Couper le son (${this.letter})`, Volume2, () => {
+      const media = this.wave?.getMediaElement();
+      if (media) { media.muted = !media.muted; this.update(); }
+    });
+    this.buttons.mute = mute;
+    const tools = document.createElement('div'); tools.className = 'deck-tools'; tools.append(mute, settings);
+    const key = $('.mix-key', this.el), bpm = $('.mix-current-bpm', this.el);
+    const metadata = document.createElement('div'); metadata.className = 'deck-metadata'; metadata.append(bpm, key);
+    $('.mix-track-info', this.el).append(metadata);
+    const eject = $('[data-action="eject"]', this.el);
+    panel.append(eject);
+    const status = $('.mix-deck-status', this.el);
+    for (const child of Array.from(this.el.children)) if (![heading, overview, status].includes(child)) panel.append(child);
+    const lane = this.timeline.lane;
+    lane.append(status);
+    this.el.append(heading, overview, transport, lane, tools, panel);
   }
 
   control(name) { return $(`[data-control="${name}"]`, this.el); }
@@ -356,11 +391,12 @@ class Deck {
   async load(track) {
     if (!host().signedIn || !track.streamable) return;
     const previousVersion = this.version;
-    if (this.playing() && !await window.TuneSaverDialogs.confirm(`Remplacer le morceau en lecture sur ${this.letter} ?`, { confirmText: 'Remplacer' })) return;
+    if ((active || this.index) && this.playing() && !await window.TuneSaverDialogs.confirm(`Remplacer le morceau en lecture sur ${this.letter} ?`, { confirmText: 'Remplacer' })) return;
     if (!host().signedIn || previousVersion !== this.version) return;
     this.clearAudio();
     const version = this.version;
     this.track = track;
+    if (!this.index) host().setCurrentTrack(track);
     this.abort = new AbortController();
     const signal = this.abort.signal;
     this.hotcues = [...(cueMemory.get(track.job_id)?.hotcues || Array(8).fill(null))];
@@ -404,11 +440,12 @@ class Deck {
       this.lowpass.connect(this.cueGain);
       this.cueGain.connect(bus.head);
       this.nodes = [...chain, this.cueGain];
-      this.wave.on('play', () => { host().resetPlayer(); this.update(); });
+      this.wave.on('play', () => this.update());
       this.wave.on('pause', () => this.update());
       this.wave.on('timeupdate', () => this.tick());
       this.wave.on('finish', () => {
         if (this.ready && this.looping) run(() => this.wave?.play(this.loopStart));
+        else if (!this.index && !active) run(() => host().playNextTrack());
         this.update();
       });
       this.wave.on('error', () => {
@@ -519,6 +556,7 @@ class Deck {
     const bpm = this.grid().bpm;
     $('.mix-value', this.el).textContent = `${this.rate >= 1 ? '+' : ''}${((this.rate - 1) * 100).toFixed(2)} %${bpm ? ` · ${(bpm * this.rate).toFixed(2)} BPM` : ''}`;
     $('.mix-current-bpm', this.el).textContent = bpm ? `${(bpm * this.rate).toFixed(2)}` : '—';
+    $('.deck-metadata', this.el)?.setAttribute('title', $('.mix-analysis-info', this.el).textContent);
     refreshKnobs();
   }
 
@@ -609,15 +647,24 @@ class Deck {
   tick() {
     if (this.ready && this.looping && this.position() >= this.loopEnd) this.seek(this.loopStart);
     $('[data-time]', this.el).textContent = time(this.position());
+    const overview = $('.mix-overview', this.el);
+    overview.setAttribute('aria-valuemax', String(this.wave?.getDuration() || 0));
+    overview.setAttribute('aria-valuenow', String(this.position()));
+    overview.setAttribute('aria-valuetext', `${time(this.position())} sur ${time(this.wave?.getDuration() || 0)}`);
+    overview.setAttribute('aria-disabled', String(!this.ready));
+    this.updateNavigation();
     if (this.analysisData?.analysis?.grid_quality === 'variable') this.updateTempoLabel();
   }
 
   update() {
+    this.el.dataset.ready = String(this.ready);
     this.updateTempoLabel();
     for (const el of Object.values(this.buttons)) el.disabled = !this.ready;
     this.buttons.headphone.disabled = !this.ready || !bus?.split;
     this.buttons.play.replaceChildren(icon(this.playing() ? Pause : Play));
     this.buttons.play.setAttribute('aria-pressed', String(this.playing()));
+    this.buttons.mute.replaceChildren(icon(this.wave?.getMediaElement().muted ? VolumeX : Volume2));
+    this.buttons.mute.setAttribute('aria-pressed', String(Boolean(this.wave?.getMediaElement().muted)));
     this.buttons.headphone.setAttribute('aria-pressed', String(this.headphone && Boolean(bus?.split)));
     this.buttons.loop.setAttribute('aria-pressed', String(this.looping));
     this.buttons.loopIn.setAttribute('aria-pressed', String(this.loopStart !== null));
@@ -660,12 +707,21 @@ class Deck {
     }
   }
 
+  updateNavigation() {
+    if (this.index) return;
+    const tracks = host()?.visibleTracks || [], index = tracks.findIndex(t => t.job_id === this.track?.job_id);
+    $('[data-action="next"]', this.el).disabled = !tracks.slice(index + 1).some(t => t.streamable);
+    $('[data-action="previous"]', this.el).disabled = this.position() <= 3 && !tracks.slice(0, Math.max(0, index)).some(t => t.streamable);
+  }
+
   async eject(force = false) {
     const version = this.version;
     if (!force && this.playing() && !await window.TuneSaverDialogs.confirm(`Vider la platine ${this.letter} en lecture ?`, { confirmText: 'Vider' })) return;
     if (version !== this.version) return;
     this.clearAudio();
     this.track = null;
+    if (!this.index) host()?.setCurrentTrack(null);
+    this.control('bpm').value = '';
     this.hotcues = Array(8).fill(null);
     this.cue = 0;
     $('.mix-cover', this.el).replaceWith(cover(null));
@@ -734,6 +790,7 @@ function browseFocus(back = false) {
 }
 
 function sync() {
+  decks.forEach(d => d.updateNavigation());
   if (!active) return;
   const analyzed = host().library.tracks.filter(t => t.streamable);
   const done = analyzed.filter(t => t.mix_analysis?.status === 'done').length;
@@ -741,46 +798,32 @@ function sync() {
   $('#mix-analysis-status').textContent = `Analyse : ${done}/${analyzed.length}${failed ? ` · ${failed} en échec` : ''}`;
   updateBrowserFocus();
 }
-function open(transfer = true) {
-  if (!host()?.signedIn) return;
-  const previous = transfer ? host().currentPlayback : null;
-  active = true;
-  host().resetPlayer();
-  document.body.dataset.mixer = 'true';
-  performance.hidden = false;
-  $('#dock-empty').hidden = true;
-  $('#mixer-nav').setAttribute('aria-pressed', 'true');
-  $('#mixer-nav').setAttribute('aria-expanded', 'true');
-  if (!decks.length) decks = [new Deck(0), new Deck(1)];
-  const target = decks[0];
-  if (previous?.track) run(async () => {
-    const loading = target.load(previous.track), version = target.version;
-    await loading;
-    if (!active || decks[0] !== target || target.version !== version || !target.ready) return;
-    target.seek(previous.position);
-    if (previous.playing) await target.toggle();
-  });
-  sync();
+function initialize() {
+  if (decks.length) return;
+  decks = [new Deck(0), new Deck(1)];
   cancelAnimationFrame(animation);
   animate();
   clearInterval(analysisTimer);
   analysisTimer = setInterval(() => decks.filter(d => d.track && !['done', 'failed'].includes(d.analysisData?.status)).forEach(d => run(() => d.fetchAnalysis())), 4000);
-  run(ensureAudio);
 }
 
-function close(transfer = false) {
-  const previous = transfer && decks[0]?.ready ? { track: decks[0].track, position: decks[0].position(), playing: decks[0].playing() } : null;
+function open() {
+  if (!host()?.signedIn) return;
+  initialize();
+  active = true;
+  document.body.dataset.mixer = 'true';
+  $('#mixer-nav').setAttribute('aria-pressed', 'true');
+  $('#mixer-nav').setAttribute('aria-expanded', 'true');
+  sync();
+}
+
+function close() {
   active = false;
-  cancelAnimationFrame(animation);
-  clearInterval(analysisTimer);
-  pause();
-  performance.hidden = true;
   $('#mixer-nav').setAttribute('aria-pressed', 'false');
-  $('#dock-empty').hidden = !$('#player-bar').hidden;
   delete document.body.dataset.mixer;
   $('#mixer-nav').setAttribute('aria-expanded', 'false');
   updateBrowserFocus();
-  if (previous) run(() => host().playNormally(previous.track, previous.position, previous.playing));
+  $$('.deck-controls').forEach(panel => panel.hidePopover());
 }
 
 function pause() { decks.forEach(d => d.wave?.pause()); }
@@ -1068,6 +1111,8 @@ function reset() {
   mixerEpoch++;
   saves.clear();
   close();
+  cancelAnimationFrame(animation);
+  clearInterval(analysisTimer);
   decks.forEach(d => d.eject(true));
   decks.forEach(d => d.timeline.destroy());
   run(disconnectMIDI);
@@ -1076,6 +1121,7 @@ function reset() {
   if (context && context.state !== 'closed') context.close().catch(() => {});
   decks = [];
   $('#mix-decks').replaceChildren();
+  $('#mix-controls').hidePopover();
   refreshKnobs();
   $('#mix-settings').hidden = true;
   $('#mix-audio-settings').setAttribute('aria-expanded', 'false');
@@ -1084,10 +1130,12 @@ function reset() {
   browserFocus = 'tracks'; collectionCursor = '';
   $('#mix-analysis-status').textContent = '';
   cueMemory.clear(); message();
+  initialize();
 }
 
 $('#mixer-nav').prepend(icon(Gauge));
-$('#mixer-nav').addEventListener('click', () => active ? close(true) : open());
+$('#mixer-nav').addEventListener('click', () => active ? close() : open());
+$('#mix-controls-toggle').append(icon(Settings2));
 $('.library-sidebar').addEventListener('click', e => {
   if (e.target.closest('[data-collection]')) setBrowserFocus('tracks');
 });
@@ -1110,7 +1158,7 @@ $('#mix-stop').append(icon(Square));
 $('#mix-stop').addEventListener('click', pause);
 let waveWheelDelta = 0, waveWheelTime = 0;
 $('#mix-timelines').addEventListener('wheel', event => {
-  if (!active || !event.shiftKey || event.ctrlKey || event.metaKey) { waveWheelDelta = 0; return; }
+  if (!event.shiftKey || event.ctrlKey || event.metaKey) { waveWheelDelta = 0; return; }
   // Shift can remap a vertical wheel to deltaX; normalize line/page units too.
   const delta = (event.deltaY || event.deltaX) * (event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 100 : 1);
   if (!delta) return;
@@ -1158,14 +1206,19 @@ window.addEventListener('beforeunload', event => {
 navigator.mediaDevices?.addEventListener('devicechange', () => {
   if (active && bus && !$('#mix-settings').hidden) run(refreshOutputs);
 });
-window.Mixer = { get active() { return active; }, sync, reset, pause, async loadTrack(track, index) {
-  if (!active) open(index !== 0);
+window.Mixer = { get active() { return active; }, sync, reset, pause,
+  get currentPlayback() { const d = decks[0]; return { track: d?.track, position: d?.position() || 0, playing: d?.playing() || false }; },
+  clearPrimary() { if (decks[0]?.track) void decks[0].eject(true); },
+  seekPrimary(position) { decks[0]?.seek(position); },
+  async loadTrack(track, index) {
+  if (!active) open();
   await decks[index]?.load(track);
 }, removeTrack(jobId) {
   decks.filter(deck => deck.track?.job_id === jobId).forEach(deck => run(() => deck.eject(true)));
 }, async playTrack(track) {
-  if (!active) open(false);
+  initialize();
   const target = decks[0];
   const loaded = await target.load(track);
-  if (loaded && active && decks[0] === target && target.ready && !target.playing()) await target.toggle();
+  if (loaded && decks[0] === target && target.track?.job_id === track.job_id && target.ready && !target.playing()) await target.toggle();
 } };
+initialize();

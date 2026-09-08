@@ -7,10 +7,9 @@
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
     <link rel="stylesheet" href="/style.css?v=20260908-19">
-    <link rel="stylesheet" href="/mixer.css?v=20260908-20">
-    <script src="/app.js?v=20260908-19" defer></script>
-    <script src="/mixer.js?v=20260908-19" type="module"></script>
-    <script src="/player.js?v=20260908-20" type="module"></script>
+    <link rel="stylesheet" href="/mixer.css?v=20260909-21">
+    <script src="/app.js?v=20260909-21" defer></script>
+    <script src="/mixer.js?v=20260909-21" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -244,8 +243,9 @@
       </div>
     </main>
       <section id="playback-dock" aria-label="Lecture et mix">
-        <div class="dock-mode"><button id="mixer-nav" type="button" aria-controls="mix-performance" aria-expanded="false" aria-pressed="false">Mixer</button></div>
-        <div id="mix-performance" hidden>
+        <div class="dock-mode"><button id="mixer-nav" type="button" aria-controls="mix-decks" aria-expanded="false" aria-pressed="false">Mixer</button><button id="mix-controls-toggle" class="mix-icon" type="button" popovertarget="mix-controls" title="Réglages du lecteur et MIDI" aria-label="Réglages du lecteur et MIDI"></button></div>
+        <div id="mix-performance">
+          <div id="mix-controls" popover>
           <div class="mix-toolbar">
             <button id="mix-connect" type="button" class="secondary-button">Connecter le FLX4</button>
             <span id="mix-midi-status" role="status">Non connecté</span>
@@ -263,35 +263,15 @@
           </div>
           <div id="mix-message" role="status" aria-live="polite"></div>
           <div class="mix-wave-toolbar"><span id="mix-analysis-status" role="status"></span><label>Fenêtre (s)<input id="mix-wave-zoom" type="number" min="1" max="24" step="1" value="4" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
-          <div id="mix-timelines" class="mix-timelines"></div>
-          <div id="mix-decks" class="mix-decks"></div>
           <div class="mix-master">
             <label class="mix-cross-label">Crossfader <input id="mix-cross" type="range" min="0" max="1" step="0.001" value="0.5" aria-label="Crossfader A vers B"><span class="mix-cross-ends"><span>A</span><span>B</span></span></label>
             <label>Master <input id="mix-master" type="range" min="0" max="1" step="0.01" value="0.7"></label>
             <label>Casque <input id="mix-head-level" type="range" min="0" max="1" step="0.01" value="0.5" disabled></label>
             <label>Cue / Master <input id="mix-head-mix" type="range" min="0" max="1" step="0.01" value="0" disabled></label>
           </div>
+          </div>
+          <div id="mix-timelines" class="mix-timelines"><div id="mix-decks" class="mix-decks"></div></div>
         </div>
-        <div id="dock-empty">Aucun morceau</div>
-        <div id="player-bar" class="player-bar" hidden>
-        <div class="player-cover" id="player-cover"><span>?</span></div>
-        <div class="player-info">
-          <strong id="player-title">Aucun son</strong>
-          <span id="player-artist">Sélectionne un morceau</span>
-          <span id="player-metadata"></span>
-        </div>
-        <div class="player-transport">
-          <button id="player-previous" type="button" class="mix-icon" title="Morceau précédent" aria-label="Morceau précédent"></button>
-          <button id="player-toggle" type="button" class="mix-icon" data-action="play" title="Lire" aria-label="Lire"></button>
-          <button id="player-next" type="button" class="mix-icon" title="Morceau suivant" aria-label="Morceau suivant"></button>
-        </div>
-        <div class="player-wave-area">
-          <canvas id="player-waveform" tabindex="0" role="slider" aria-label="Position dans le morceau" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></canvas>
-          <div class="player-time"><span id="player-elapsed">0:00</span><span id="player-status" role="status"></span><button id="player-retry" class="mix-icon" type="button" hidden></button><span id="player-duration">0:00</span></div>
-        </div>
-        <button id="player-mute" type="button" class="mix-icon" title="Couper le son" aria-label="Couper le son" aria-pressed="false"></button>
-        <audio id="audio-player" class="audio-player" preload="none" hidden></audio>
-      </div>
       </section>
     </div>
 

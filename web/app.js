@@ -55,12 +55,6 @@ const playlistList = document.querySelector("#playlist-list");
 const tagList = document.querySelector("#tag-list");
 const libraryTracks = document.querySelector("#library-tracks");
 const libraryCount = document.querySelector("#library-count");
-const playerBar = document.querySelector("#player-bar");
-const playerCover = document.querySelector("#player-cover");
-const playerTitle = document.querySelector("#player-title");
-const playerArtist = document.querySelector("#player-artist");
-const audioPlayer = document.querySelector("#audio-player");
-let playerLoadVersion = 0;
 const adminRefreshButton = document.querySelector("#admin-refresh");
 const adminMessage = document.querySelector("#admin-message");
 const adminUsers = document.querySelector("#admin-users");
@@ -365,14 +359,8 @@ async function loadPrivateImage(image, url) {
 }
 
 function resetPlayer() {
-  playerLoadVersion++;
-  window.TuneSaverPlayer?.reset();
-  audioPlayer.pause();
-  audioPlayer.removeAttribute("src");
-  audioPlayer.load();
+  window.Mixer?.clearPrimary();
   currentTrackId = "";
-  playerBar.hidden = true;
-  document.querySelector('#dock-empty').hidden = Boolean(window.Mixer?.active);
 }
 
 function clearCoverCache() {
@@ -419,6 +407,7 @@ function showApp() {
 }
 
 function showAdmin() {
+  window.Mixer?.reset();
   window.clearInterval(queueTimer);
   queueTimer = null;
   saveSession(null);
@@ -926,47 +915,11 @@ async function downloadReadyJob(jobId) {
   window.setTimeout(refreshQueue, 2500);
 }
 
-function setPlayerCover(track) {
-  playerCover.replaceChildren();
-  const fallback = document.createElement("span");
-  fallback.textContent = (track.title || track.file_name || "?").trim().slice(0, 1).toUpperCase() || "?";
-  playerCover.append(fallback);
-  playerCover.dataset.loaded = "false";
-  if (!track.cover_url) return;
-  const image = document.createElement("img");
-  image.alt = "";
-  if (coverUrlCache.has(track.cover_url)) playerCover.dataset.loaded = "true";
-  image.addEventListener("load", () => { playerCover.dataset.loaded = "true"; });
-  playerCover.append(image);
-  loadPrivateImage(image, track.cover_url);
-}
-
-function setPlayerTrack(track) {
-  currentTrackId = track.job_id;
-  playerTitle.textContent = track.title || track.file_name || track.job_id;
-  playerArtist.textContent = track.artist || providerLabels[track.provider] || "TuneSaver";
-  setPlayerCover(track);
-  playerBar.hidden = false;
-  document.querySelector('#dock-empty').hidden = true;
-  window.TuneSaverPlayer?.setTrack(track);
-}
-
-async function streamTrack(track, options = {}) {
-  const jobId = typeof track === "string" ? track : track.job_id;
+async function streamTrack(track) {
   const fullTrack = typeof track === "string"
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
     : track;
-  if (window.Mixer?.active && !options.normal) return window.Mixer.playTrack(fullTrack);
-  const version = ++playerLoadVersion;
-  const response = await requestJson("/api/stream-ticket", {
-    method: "POST",
-    body: JSON.stringify({ job_id: jobId }),
-  });
-  if (version !== playerLoadVersion || !session) return;
-  setPlayerTrack(fullTrack);
-  audioPlayer.src = response.url;
-  if (options.start) audioPlayer.addEventListener('loadedmetadata', () => { if (version === playerLoadVersion) audioPlayer.currentTime = Math.min(options.start, audioPlayer.duration || options.start); }, { once: true });
-  if (options.autoplay !== false) await audioPlayer.play();
+  return window.Mixer.playTrack(fullTrack);
 }
 
 async function playNextTrack() {
@@ -983,7 +936,7 @@ async function playNextTrack() {
 }
 
 async function playPreviousTrack() {
-  if (audioPlayer.currentTime > 3) { audioPlayer.currentTime = 0; return; }
+  if (window.Mixer.currentPlayback.position > 3) { window.Mixer.seekPrimary(0); return; }
   const index = renderedTracks.findIndex(track => track.job_id === currentTrackId);
   const previous = renderedTracks.slice(0, Math.max(0, index)).reverse().find(track => track.streamable);
   if (previous) await streamTrack(previous);
@@ -1427,7 +1380,6 @@ function renderLibrary() {
   renderedTracks = tracks;
   if (!tracks.some(track => track.job_id === selectedLibraryTrackId)) selectedLibraryTrackId = tracks[0]?.job_id || '';
   window.Mixer?.sync();
-  window.TuneSaverPlayer?.refreshMetadata(libraryState.tracks.find(track => track.job_id === currentTrackId));
   document.querySelector("#library-title").textContent = currentLibraryTitle();
   libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
   const renderKey = JSON.stringify([tracks, selectedPlaylistId, selectedTagId, selectedFolderId]);
@@ -1770,7 +1722,6 @@ createTagButton.addEventListener("click", async () => {
   }
 });
 
-audioPlayer.addEventListener("ended", playNextTrack);
 
 function renderHistory(history, localJobs) {
   const localById = new Map(localJobs.map((job) => [job.id, job]));
@@ -2254,8 +2205,7 @@ async function start() {
 }
 
 window.TuneSaverMixerHost = {
-  get currentPlayback() { return { track: libraryState.tracks.find(t => t.job_id === currentTrackId), position: audioPlayer.currentTime || 0, playing: !audioPlayer.paused }; },
-  playNormally: (track, start, autoplay) => streamTrack(track, { normal: true, start, autoplay }),
+  setCurrentTrack: track => { currentTrackId = track?.job_id || ''; },
   get library() { return libraryState; },
   get visibleTracks() { return renderedTracks; },
   get selectedTrackId() { return selectedLibraryTrackId; },

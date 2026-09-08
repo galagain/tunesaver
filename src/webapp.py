@@ -1334,7 +1334,6 @@ async def api_middleware(
             "/app.js",
             "/style.css",
             "/mixer.js",
-            "/player.js",
             "/vendor/player-icons.js",
             "/flx4.js",
             "/mix-waveforms.js",
@@ -3393,7 +3392,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("mixer.js", "player.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js", "vendor/player-icons.js"):
+    for asset in ("mixer.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js", "vendor/player-icons.js"):
         app.router.add_get(f"/{asset}", mixer_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)

@@ -49,6 +49,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.waitForFunction(() => window.Mixer && publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture', user: { email: 'fixture@example.com' } }; showApp(); });
       await page.locator('#mixer-nav').click();
+      await page.locator('#mix-controls-toggle').click();
       await page.locator('#mix-connect').click();
       const status = page.locator('#mix-midi-status');
       if (mode === 'access-hangs') {

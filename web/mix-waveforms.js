@@ -98,6 +98,9 @@ export class Timeline {
       deck.seek(Math.max(0, cue ?? at));
     });
     this.canvas.addEventListener('keydown', event => {
+      if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault(); deck.seek(event.key === 'Home' ? 0 : deck.wave?.getDuration() || 0);
+      }
       if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
         event.preventDefault(); deck.seek(deck.position() + (event.key === 'ArrowRight' ? 1 : -1) * 60 / (deck.grid().bpm || 120));
       }
@@ -123,7 +126,7 @@ export class Timeline {
     if (this.canvas.width !== Math.round(w * dpr)) this.canvas.width = Math.round(w * dpr);
     if (this.canvas.height !== Math.round(h * dpr)) this.canvas.height = Math.round(h * dpr);
     const ctx = this.canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#101010'; ctx.fillRect(0, 0, w, h);
+    ctx.clearRect(0, 0, w, h);
     // Rasterize fixed track coordinates once, then translate cached tiles every frame.
     const scale = w * dpr / this.span, tileWidth = 512, used = new Set();
     const duration = analysis?.duration ?? raw?.duration ?? 0;
@@ -137,7 +140,7 @@ export class Timeline {
         paint(tile.getContext('2d'), analysis, raw, i * tileWidth / scale, tileWidth / scale, tile.width, tile.height);
         this.tiles.set(i, tile);
       }
-      ctx.drawImage(this.tiles.get(i), (i * tileWidth - this.start * scale) / dpr, 18, tileWidth / dpr, h - 20);
+      ctx.drawImage(this.tiles.get(i), (i * tileWidth - this.start * scale) / dpr, 10, tileWidth / dpr, h - 20);
     }
     for (const key of this.tiles.keys()) if (!used.has(key)) this.tiles.delete(key);
     const xFor = t => (t - this.start) / this.span * w;

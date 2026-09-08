@@ -14,7 +14,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
     await page.waitForFunction(() => window.Mixer && publicConfig !== null);
     await page.evaluate(() => { session = { access_token: 'fixture', user: { email: 'fixture@example.com' } }; showApp(); });
     await page.locator('#mixer-nav').click();
-    const canvas = page.locator('#mix-timelines canvas').first(), zoom = page.locator('#mix-wave-zoom');
+    const canvas = page.locator('.mix-timeline-lane canvas').first(), zoom = page.locator('#mix-wave-zoom');
     const wheel = (options, selector = '#mix-timelines canvas') => page.evaluate(({ options, selector }) => {
       const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...options });
       document.querySelector(selector).dispatchEvent(event);
