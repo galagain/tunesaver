@@ -1,6 +1,6 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260908-8';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260908-17';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 

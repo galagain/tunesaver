@@ -41,12 +41,23 @@ export function peakRange(bytes, first, last) {
   return peak;
 }
 
-function paint(ctx, analysis, raw, start, span, width, height, top = 0) {
+export function interpolatedPeak(bytes, position) {
+  const frames = bytes.length / 5;
+  if (position < 0 || position >= frames) return [0, 0, 0, 0, 0];
+  const first = Math.floor(position), last = Math.min(first + 1, frames - 1), fraction = position - first;
+  return Array.from({ length: 5 }, (_, band) => bytes[first * 5 + band] * (1 - fraction) + bytes[last * 5 + band] * fraction);
+}
+
+function paint(ctx, analysis, raw, start, span, width, height) {
   const waveform = analysis?.waveform, bytes = unpackWaveform(waveform);
-  for (let x = 0; x < width; x++) {
+  if (!bytes && !raw) return;
+  const points = [], gradient = ctx.createLinearGradient(0, 0, width, 0);
+  for (let x = 0; x <= width; x++) {
     const from = start + x / width * span, to = start + (x + 1) / width * span;
     let peak;
-    if (bytes) peak = peakRange(bytes, Math.floor(from * waveform.rate), Math.ceil(to * waveform.rate));
+    if (bytes) peak = span / width * waveform.rate < 1
+      ? interpolatedPeak(bytes, from * waveform.rate)
+      : peakRange(bytes, Math.floor(from * waveform.rate), Math.ceil(to * waveform.rate));
     else if (raw) {
       peak = [60, 110, 140, 0, 0];
       for (let channel = 0; channel < raw.numberOfChannels; channel++) {
@@ -57,10 +68,13 @@ function paint(ctx, analysis, raw, start, span, width, height, top = 0) {
       }
     } else continue;
     const strongest = Math.max(peak[0], peak[1], peak[2], 1);
-    ctx.fillStyle = `rgb(${Math.round(35 + peak[0] / strongest * 220)},${Math.round(20 + peak[1] / strongest * 185)},${Math.round(35 + peak[2] / strongest * 220)})`;
-    const positive = peak[3] / 255 * height / 2, negative = peak[4] / 255 * height / 2;
-    ctx.fillRect(x, top + height / 2 - positive, 1, positive + negative);
+    gradient.addColorStop(x / width, `rgb(${Math.round(35 + peak[0] / strongest * 220)},${Math.round(20 + peak[1] / strongest * 185)},${Math.round(35 + peak[2] / strongest * 220)})`);
+    points.push([height / 2 - peak[3] / 255 * height / 2, height / 2 + peak[4] / 255 * height / 2]);
   }
+  ctx.beginPath();
+  points.forEach((point, x) => x ? ctx.lineTo(x, point[0]) : ctx.moveTo(x, point[0]));
+  for (let x = points.length - 1; x >= 0; x--) ctx.lineTo(x, points[x][1]);
+  ctx.closePath(); ctx.fillStyle = gradient; ctx.fill();
 }
 
 export function overviewRenderer(analysis) {
@@ -71,6 +85,7 @@ export function overviewRenderer(analysis) {
 export class Timeline {
   constructor(container, deck) {
     this.deck = deck; this.seconds = 4; this.start = 0; this.span = 4;
+    this.tiles = new Map();
     this.lane = document.createElement('div'); this.lane.className = 'mix-timeline-lane';
     this.canvas = document.createElement('canvas');
     this.canvas.setAttribute('aria-label', `Forme d'onde et grille de la platine ${deck.letter}`); this.canvas.tabIndex = 0;
@@ -80,7 +95,7 @@ export class Timeline {
       const box = this.canvas.getBoundingClientRect();
       const at = this.start + (event.clientX - box.left) / box.width * this.span;
       const cue = deck.hotcues.find(t => t !== null && Math.abs(t - at) < this.span * 10 / box.width);
-      deck.seek(cue ?? at);
+      deck.seek(Math.max(0, cue ?? at));
     });
     this.canvas.addEventListener('keydown', event => {
       if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
@@ -95,19 +110,39 @@ export class Timeline {
     if (!rect.width) return;
     const dpr = Math.min(devicePixelRatio || 1, 2), w = rect.width, h = rect.height;
     this.span = seconds * deck.rate;
-    this.start = Math.floor(deck.position() / this.span) * this.span;
-    this.cursor.style.left = `${(deck.position() - this.start) / this.span * 100}%`;
+    this.start = deck.position() - this.span / 2;
+    this.cursor.style.left = '50%';
     this.cursor.hidden = !deck.ready;
     const grid = deck.grid(), analysis = deck.analysisData?.analysis, raw = deck.wave?.getDecodedData();
     const stamp = JSON.stringify([w, h, dpr, this.start, this.span, grid, deck.hotcues, deck.loopStart, deck.loopEnd, deck.looping]);
     if (stamp === this.stamp && this.analysis === analysis && this.raw === raw) return;
+    const tileStamp = JSON.stringify([w, h, dpr, this.span]);
+    if (tileStamp !== this.tileStamp || this.analysis !== analysis || this.raw !== raw) this.tiles.clear();
+    this.tileStamp = tileStamp;
     this.stamp = stamp; this.analysis = analysis; this.raw = raw;
-    this.canvas.width = Math.round(w * dpr); this.canvas.height = Math.round(h * dpr);
+    if (this.canvas.width !== Math.round(w * dpr)) this.canvas.width = Math.round(w * dpr);
+    if (this.canvas.height !== Math.round(h * dpr)) this.canvas.height = Math.round(h * dpr);
     const ctx = this.canvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#101010'; ctx.fillRect(0, 0, w, h);
-    paint(ctx, analysis, raw, this.start, this.span, w, h - 20, 18);
+    // Rasterize fixed track coordinates once, then translate cached tiles every frame.
+    const scale = w * dpr / this.span, tileWidth = 512, used = new Set();
+    const duration = analysis?.duration ?? raw?.duration ?? 0;
+    const first = Math.max(0, Math.floor(this.start * scale / tileWidth));
+    const last = Math.ceil(Math.min(duration, this.start + this.span) * scale / tileWidth);
+    for (let i = first; i < last; i++) {
+      used.add(i);
+      if (!this.tiles.has(i)) {
+        const tile = document.createElement('canvas');
+        tile.width = tileWidth; tile.height = Math.max(1, Math.round((h - 20) * dpr));
+        paint(tile.getContext('2d'), analysis, raw, i * tileWidth / scale, tileWidth / scale, tile.width, tile.height);
+        this.tiles.set(i, tile);
+      }
+      ctx.drawImage(this.tiles.get(i), (i * tileWidth - this.start * scale) / dpr, 18, tileWidth / dpr, h - 20);
+    }
+    for (const key of this.tiles.keys()) if (!used.has(key)) this.tiles.delete(key);
     const xFor = t => (t - this.start) / this.span * w;
     const line = (at, bar, label) => {
+      if (at < 0 || at > duration) return;
       const x = xFor(at); ctx.strokeStyle = bar ? '#eee' : '#707070'; ctx.lineWidth = bar ? 1 : .5;
       ctx.beginPath(); ctx.moveTo(x, 18); ctx.lineTo(x, h); ctx.stroke();
       if (bar) { ctx.fillStyle = '#ddd'; ctx.font = '9px sans-serif'; ctx.fillText(label, x + 2, h - 3); }
@@ -132,5 +167,5 @@ export class Timeline {
     ctx.fillStyle = deck.index ? '#ef8eb3' : '#00d79d'; ctx.font = 'bold 11px sans-serif'; ctx.fillText(deck.letter, 3, 12);
   }
 
-  destroy() { this.lane.remove(); this.raw = this.analysis = null; }
+  destroy() { this.lane.remove(); this.tiles.clear(); this.raw = this.analysis = null; }
 }

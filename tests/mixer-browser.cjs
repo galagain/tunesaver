@@ -106,11 +106,20 @@ function audioFixture() {
       const before = await canvas.evaluate(c => c.toDataURL());
       const cursor = await page.locator('.mix-timeline-cursor').first().getAttribute('style');
       await page.waitForTimeout(120);
-      if (before !== await canvas.evaluate(c => c.toDataURL())) throw Error('Waveform background animates within a page');
-      if (cursor === await page.locator('.mix-timeline-cursor').first().getAttribute('style')) throw Error('Playback cursor is frozen');
+      if (before === await canvas.evaluate(c => c.toDataURL())) throw Error('Waveform does not scroll during playback');
+      if (cursor !== await page.locator('.mix-timeline-cursor').first().getAttribute('style')) throw Error('Playback cursor must stay fixed');
+      await expect(page.locator('.mix-timeline-cursor').first()).toHaveCSS('left', `${(await canvas.boundingBox()).width / 2}px`);
       const colored = await canvas.evaluate(c => { const p = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < p.length; i += 4) if (p[i] > p[i + 1] + 30) n++; return n; });
       if (colored < 100) throw Error('Empty high-resolution waveform');
       await page.locator('#mix-stop').click();
+      await page.waitForTimeout(100);
+      const paused = await canvas.evaluate(c => c.toDataURL());
+      await page.waitForTimeout(150);
+      expect(await canvas.evaluate(c => c.toDataURL())).toBe(paused);
+      await page.locator('#mix-wave-zoom').fill('1');
+      await page.waitForTimeout(100);
+      expect(await canvas.evaluate(c => c.toDataURL())).not.toBe(paused);
+      await page.locator('#mix-wave-zoom').fill('4');
       await deck(0);
       await page.evaluate(() => { __contexts[0].sources[0].media.currentTime = 1; });
       await a.locator('[data-action="loopIn"]').click();
@@ -152,12 +161,20 @@ function audioFixture() {
       await a.locator('[data-action="gridForward"]').click();
       await page.waitForFunction(() => __mixSettings.one.grid_offset === .01);
       await a.locator('.mix-grid-editor summary').click();
+      await a.locator('[data-action="play"]').click();
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await page.evaluate(() => { __port.state = 'disconnected'; __midi.onstatechange({ port: __port }); });
       await expect(page.locator('#mix-midi-status')).toContainText('Aucune entrée MIDI');
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
+      await page.waitForFunction(() => !__contexts[0].sources[0].media.paused);
       await page.evaluate(() => { __port.name = 'USB MIDI Interface'; __port.state = 'connected'; __midi.onstatechange({ port: __port }); });
       await expect(page.locator('#mix-midi-status')).toContainText('Sélectionne');
       await page.locator('#mix-midi-input').selectOption('flx4');
       await expect(page.locator('#mix-midi-status')).toHaveText('USB MIDI Interface connecté');
+      await page.locator('#mix-midi-refresh').click();
+      await expect(page.locator('#mix-midi-status')).toHaveText('USB MIDI Interface connecté');
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
+      await page.locator('#mix-stop').click();
       await page.evaluate(() => __sendMIDI([0x90, 0x0b, 127]));
       await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await page.locator('#mix-stop').click();
@@ -187,7 +204,7 @@ function audioFixture() {
       await page.waitForTimeout(800);
       if (await page.evaluate(() => __contexts[0].sources.some(s => s.media.hasAttribute('src') || !s.media.paused))) throw Error('Audio retained after logout');
       if (errors.length) throw Error(errors.join('\n'));
-      await page.close(); console.log(`${isFirefox ? 'Firefox' : 'Chromium'} ${width}: persistent dock, normal/mix handoff, static waveforms, knobs, MIDI discovery and cues OK`);
+      await page.close(); console.log(`${isFirefox ? 'Firefox' : 'Chromium'} ${width}: persistent dock, normal/mix handoff, scrolling waveforms, knobs, MIDI reset without audio interruption and cues OK`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

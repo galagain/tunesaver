@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
-import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid } from '../web/mix-waveforms.js';
+import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak } from '../web/mix-waveforms.js';
 
 test('variable grids use adjacent detected beats, not the average track tempo', () => {
   assert.deepEqual(detectedGrid([0, .5, 1.1, 1.8], .2), { bpm: 120, offset: 0 });
@@ -22,6 +22,16 @@ test('waveform downsampling preserves narrow transients and signed extrema', () 
   const waveform = { encoding: 'u8-lmhpn', frames: 100, data: Buffer.from(bytes).toString('base64') };
   assert.deepEqual(unpackWaveform(waveform), bytes);
   assert.equal(unpackWaveform(waveform), unpackWaveform(waveform));
+});
+
+test('zoomed waveform contours interpolate signed extrema without overshoot or repeating outside the track', () => {
+  const bytes = new Uint8Array([20, 50, 90, 100, 0, 40, 90, 50, 200, 100]);
+  assert.deepEqual(interpolatedPeak(bytes, 0), [20, 50, 90, 100, 0]);
+  assert.deepEqual(interpolatedPeak(bytes, .25), [25, 60, 80, 125, 25]);
+  assert.deepEqual(interpolatedPeak(bytes, .5), [30, 70, 70, 150, 50]);
+  assert.deepEqual(interpolatedPeak(bytes, 1.5), [40, 90, 50, 200, 100]);
+  assert.deepEqual(interpolatedPeak(bytes, -.01), [0, 0, 0, 0, 0]);
+  assert.deepEqual(interpolatedPeak(bytes, 2), [0, 0, 0, 0, 0]);
 });
 
 test('browser push selects collections then tracks, shift push goes back', () => {
