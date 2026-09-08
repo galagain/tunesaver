@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
-    <link rel="stylesheet" href="/style.css?v=20260908-1">
-    <script src="/app.js?v=20260908-1" defer></script>
-    <script src="/dig.js?v=20260908-1" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20260908-2">
+    <script src="/app.js?v=20260908-2" defer></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -196,7 +195,6 @@
             <h3>Sections</h3>
             <button class="playlist-filter" data-playlist-id="" data-selected="true" type="button">Mes sons</button>
             <button id="unassigned-tracks" class="playlist-filter" type="button">Sons sans playlist</button>
-            <button id="dig-nav" class="playlist-filter" type="button">Dig</button>
             <div class="sidebar-heading">
               <h3 id="playlist-title">Mes playlists</h3>
               <button id="create-playlist" class="sidebar-create" type="button">+</button>
@@ -210,7 +208,6 @@
             <div id="tag-list" class="tag-list"></div>
           </aside>
           <div class="library-main">
-            <div id="library-content">
             <div class="library-table-head" aria-hidden="true">
               <span></span>
               <span></span>
@@ -220,31 +217,6 @@
             <div id="library-tracks" class="library-tracks">
               <p class="empty-copy">Aucun son disponible.</p>
             </div>
-            </div>
-            <section id="dig-panel" hidden aria-label="Dig">
-              <div id="dig-references-panel">
-                <div class="dig-reference-heading"><h3>Références</h3><button id="dig-add" type="button" class="secondary-button">Ajouter des références</button></div>
-                <div id="dig-references" class="dig-references"></div>
-              </div>
-              <div id="dig-status" role="status" aria-live="polite"></div>
-              <details id="dig-details" hidden><summary>Références et sources</summary><div id="dig-detail-content"></div></details>
-              <div id="dig-results-toolbar" class="dig-toolbar" hidden>
-                <label class="sr-only" for="dig-filter">Afficher les suggestions</label>
-                <select id="dig-filter"><option value="all">Suggestions</option><option value="kept">Gardés</option><option value="rejected">Ignorés</option></select>
-                <label class="dig-checkbox"><input id="dig-available" type="checkbox"> Disponibles</label>
-                <label class="sr-only" for="dig-text-filter">Filtrer les suggestions</label>
-                <input id="dig-text-filter" type="search" placeholder="Titre ou artiste">
-                <label class="sr-only" for="dig-destination">Playlist de destination</label>
-                <select id="dig-destination"><option value="">Mes sons</option></select>
-                <button id="dig-create-playlist" class="secondary-button" type="button">Créer une playlist</button>
-              </div>
-              <div id="dig-results"></div>
-              <div class="dig-footer">
-                <button id="dig-more" class="secondary-button" type="button" hidden>Afficher 20 de plus</button>
-                <button id="dig-retry" class="secondary-button" type="button" hidden>Réessayer</button>
-                <button id="dig-cancel" class="secondary-button" type="button" hidden>Arrêter</button>
-              </div>
-            </section>
           </div>
         </div>
       </section>
@@ -258,15 +230,6 @@
         <audio id="audio-player" class="audio-player" controls preload="none"></audio>
       </div>
     </div>
-
-    <dialog id="dig-picker" class="dig-picker">
-      <div class="dig-toolbar"><h2>Ajouter des références</h2><button id="dig-picker-close" class="collection-rename" type="button" aria-label="Fermer" title="Fermer"></button></div>
-      <div class="dig-toolbar"><label class="sr-only" for="dig-picker-kind">Type de référence</label><select id="dig-picker-kind"><option value="track">Sons</option><option value="playlist">Playlists</option><option value="tag">Tags</option><option value="folder">Dossiers</option></select><label class="sr-only" for="dig-picker-query">Rechercher une référence</label><input id="dig-picker-query" type="search" placeholder="Rechercher"></div>
-      <div id="dig-picker-list"></div>
-      <div class="dig-footer"><span id="dig-picker-count"></span><button id="dig-picker-done" class="primary-button" type="button">Ajouter</button></div>
-    </dialog>
-
-    <template id="icon-heart"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"/></svg></template>
 
     <div id="admin-view" hidden>
       <main class="container admin-container">

@@ -302,7 +302,6 @@ function clearCoverCache() {
 }
 
 function showAuth(message = "") {
-  window.Dig?.reset();
   window.clearInterval(queueTimer);
   queueTimer = null;
   saveSession(null);
@@ -1210,12 +1209,6 @@ function renderTags() {
 
 function renderLibrary() {
   if (draggedTrackTag || draggedPlaylist) return;
-  if (window.Dig?.active) {
-    renderPlaylists();
-    renderTags();
-    window.Dig.sync();
-    return;
-  }
   if (selectedPlaylistId || selectedTagId) onlyUnassigned = false;
   renderImports();
   renderPlaylists();
