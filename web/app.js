@@ -1016,6 +1016,41 @@ function makeRenameButton(item, collection) {
   return button;
 }
 
+function makePlaylistExportButton(playlist) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "collection-rename playlist-export";
+  button.title = "Exporter les liens téléchargés";
+  button.setAttribute("aria-label", `${button.title} : ${playlist.name}`);
+  import("/vendor/mixer-icons.js").then(({ createElement, LogOut }) => {
+    const icon = createElement(LogOut);
+    icon.setAttribute("aria-hidden", "true");
+    button.append(icon);
+  });
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const result = await requestJson(`/api/playlists/${playlist.id}/export`);
+      if (!result.links.length) {
+        showToast("Aucun lien de morceau téléchargé à exporter.", "error");
+        return;
+      }
+      const blob = new Blob([result.links.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const name = result.name.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, "_").trim().slice(0, 80);
+      link.href = url;
+      link.download = `playlist-${name || "tunesaver"}.txt`;
+      document.body.append(link);
+      try { link.click(); }
+      finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000); }
+      showToast(`${result.links.length} lien(s) exporté(s).${result.skipped ? ` ${result.skipped} morceau(x) non téléchargé(s) ou sans lien ignoré(s).` : ""}`);
+    } catch (error) { showToast(error.message, "error"); }
+    finally { button.disabled = false; }
+  });
+  return button;
+}
+
 async function movePlaylist(playlistId, folderId) {
   try {
     await requestJson(`/api/playlists/${playlistId}/folder`, { method: "PATCH", body: JSON.stringify({ folder_id: folderId || null }) });
@@ -1092,7 +1127,7 @@ function renderPlaylists() {
   playlistList.append(root);
   for (const playlist of libraryState.playlists) {
     const row = document.createElement("div");
-    row.className = "playlist-row";
+    row.className = "playlist-row playlist-entry";
     const button = document.createElement("button");
     button.className = "playlist-filter";
     button.type = "button";
@@ -1146,7 +1181,7 @@ function renderPlaylists() {
       if (selectedPlaylistId === playlist.id) selectedPlaylistId = "";
       await refreshLibrary();
     });
-    row.append(button, makeRenameButton(playlist, "playlists"), remove);
+    row.append(button, makePlaylistExportButton(playlist), makeRenameButton(playlist, "playlists"), remove);
     (containers.get(playlist.folder_id) || root).append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");

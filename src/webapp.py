@@ -2665,6 +2665,35 @@ async def library_handler(request: web.Request) -> web.Response:
     return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports, "folders": folders})
 
 
+def local_playlist_export(user_id: str, playlist_id: str) -> dict[str, Any]:
+    with local_db() as db:
+        playlist = db.execute("select name from playlists where id=? and user_id=?",
+                              (playlist_id, user_id)).fetchone()
+        if not playlist:
+            raise PublicError("Playlist introuvable.", status=404)
+        rows = db.execute("""select h.source_url, h.state from playlist_items p
+          left join download_history h on h.job_id=p.job_id and h.user_id=?
+          where p.playlist_id=? order by p.created_at, p.rowid""",
+                          (user_id, playlist_id)).fetchall()
+    links = []
+    for row in rows:
+        url = str(row["source_url"] or "").strip()
+        if row["state"] != "done" or any(c.isspace() for c in url):
+            continue
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password:
+                links.append(url)
+        except ValueError:
+            continue
+    return {"name": playlist["name"], "links": links, "skipped": len(rows) - len(links)}
+
+
+async def playlist_export_handler(request: web.Request) -> web.Response:
+    result = await asyncio.to_thread(local_playlist_export, request["user"]["id"], request.match_info["playlist_id"])
+    return web.json_response(result)
+
+
 async def playlist_folder_handler(request: web.Request) -> web.Response:
     user_id = request["user"]["id"]
     folder_id = request.match_info.get("folder_id")
@@ -3220,6 +3249,7 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
+    app.router.add_get("/api/playlists/{playlist_id}/export", playlist_export_handler)
     app.router.add_post("/api/playlist-folders", playlist_folder_handler)
     app.router.add_patch("/api/playlist-folders/{folder_id}", playlist_folder_handler)
     app.router.add_delete("/api/playlist-folders/{folder_id}", playlist_folder_handler)

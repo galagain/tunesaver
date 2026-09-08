@@ -1186,6 +1186,7 @@ h1 {
 }
 
 .collection-rename svg { width: 14px; height: 14px; }
+.playlist-entry { grid-template-columns: minmax(0, 1fr) repeat(3, 28px); }
 
 .playlist-folder { min-width: 0; margin-bottom: 6px; }
 .sidebar-heading { gap: 6px; }
