@@ -60,6 +60,7 @@ const playerCover = document.querySelector("#player-cover");
 const playerTitle = document.querySelector("#player-title");
 const playerArtist = document.querySelector("#player-artist");
 const audioPlayer = document.querySelector("#audio-player");
+let playerLoadVersion = 0;
 const adminRefreshButton = document.querySelector("#admin-refresh");
 const adminMessage = document.querySelector("#admin-message");
 const adminUsers = document.querySelector("#admin-users");
@@ -289,11 +290,13 @@ async function loadPrivateImage(image, url) {
 }
 
 function resetPlayer() {
+  playerLoadVersion++;
   audioPlayer.pause();
   audioPlayer.removeAttribute("src");
   audioPlayer.load();
   currentTrackId = "";
   playerBar.hidden = true;
+  document.querySelector('#dock-empty').hidden = Boolean(window.Mixer?.active);
 }
 
 function clearCoverCache() {
@@ -866,21 +869,25 @@ function setPlayerTrack(track) {
   playerArtist.textContent = track.artist || providerLabels[track.provider] || "TuneSaver";
   setPlayerCover(track);
   playerBar.hidden = false;
+  document.querySelector('#dock-empty').hidden = true;
 }
 
-async function streamTrack(track) {
-  window.Mixer?.pause();
+async function streamTrack(track, options = {}) {
   const jobId = typeof track === "string" ? track : track.job_id;
   const fullTrack = typeof track === "string"
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
     : track;
+  if (window.Mixer?.active && !options.normal) return window.Mixer.playTrack(fullTrack);
+  const version = ++playerLoadVersion;
   const response = await requestJson("/api/stream-ticket", {
     method: "POST",
     body: JSON.stringify({ job_id: jobId }),
   });
+  if (version !== playerLoadVersion || !session) return;
   setPlayerTrack(fullTrack);
   audioPlayer.src = response.url;
-  await audioPlayer.play();
+  if (options.start) audioPlayer.addEventListener('loadedmetadata', () => { if (version === playerLoadVersion) audioPlayer.currentTime = Math.min(options.start, audioPlayer.duration || options.start); }, { once: true });
+  if (options.autoplay !== false) await audioPlayer.play();
 }
 
 async function playNextTrack() {
@@ -2030,6 +2037,8 @@ async function start() {
 }
 
 window.TuneSaverMixerHost = {
+  get currentPlayback() { return { track: libraryState.tracks.find(t => t.job_id === currentTrackId), position: audioPlayer.currentTime || 0, playing: !audioPlayer.paused }; },
+  playNormally: (track, start, autoplay) => streamTrack(track, { normal: true, start, autoplay }),
   get library() { return libraryState; },
   get signedIn() { return Boolean(session); },
   requestJson,

@@ -1,7 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FLX4Decoder, crossfade } from '../web/flx4.js';
-import { gridPosition, phaseAlignedTime } from '../web/mix-waveforms.js';
+import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
+import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid } from '../web/mix-waveforms.js';
+
+test('variable grids use adjacent detected beats, not the average track tempo', () => {
+  assert.deepEqual(detectedGrid([0, .5, 1.1, 1.8], .2), { bpm: 120, offset: 0 });
+  assert.ok(Math.abs(detectedGrid([0, .5, 1.1, 1.8], .7).bpm - 100) < 1e-9);
+  assert.equal(detectedGrid([0, .5, 1.1], 5).offset, .5);
+  assert.equal(detectedGrid([], .2), null);
+});
+
+test('Firefox and OS MIDI name variants are recognized without guessing generic devices', () => {
+  for (const name of ['DDJ-FLX4', 'Pioneer DDJ\u2011FLX4 MIDI 1', 'FLX4', 'DDJ FLX 4']) assert.ok(isFLX4Port({ name }));
+  assert.equal(isFLX4Port({ name: 'USB MIDI Interface' }), false);
+  assert.equal(isFLX4Port({ name: 'DDJ-FLX6' }), false);
+});
+
+test('waveform downsampling preserves narrow transients and signed extrema', () => {
+  const bytes = new Uint8Array(100 * 5); bytes[53 * 5 + 3] = 255; bytes[54 * 5 + 4] = 180;
+  assert.deepEqual(peakRange(bytes, 0, 100).slice(3), [255, 180]);
+  const waveform = { encoding: 'u8-lmhpn', frames: 100, data: Buffer.from(bytes).toString('base64') };
+  assert.deepEqual(unpackWaveform(waveform), bytes);
+  assert.equal(unpackWaveform(waveform), unpackWaveform(waveform));
+});
 
 test('browser push selects collections then tracks, shift push goes back', () => {
   const d = new FLX4Decoder();

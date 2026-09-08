@@ -42,3 +42,6 @@ export class FLX4Decoder {
     return { action, deck: channel < 2 ? channel : undefined, value: full / 16383, raw: full };
   }
 }
+export function isFLX4Port(port) {
+  return /FLX4/.test(`${port.name || ''} ${port.manufacturer || ''}`.toUpperCase().replace(/[^A-Z0-9]/g, ''));
+}

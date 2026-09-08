@@ -30,13 +30,18 @@ def init_store(db_factory):
             settings text not null default '{}'
           );
         """)
+        if 'summary' not in {row[1] for row in db.execute('pragma table_info(mixer_analysis)')}:
+            db.execute('alter table mixer_analysis add column summary text')
+        db.execute("""update mixer_analysis set summary=json_object('bpm',json_extract(result,'$.bpm'),
+          'key',json_extract(result,'$.key'),'duration',json_extract(result,'$.duration'),
+          'grid_quality',json_extract(result,'$.grid_quality')) where result is not null and summary is null""")
+        db.execute("""update mixer_analysis set status='pending',updated=0
+          where status='done' and coalesce(json_extract(result,'$.version'),1)<2""")
 
 
 def summaries(db_factory, owner):
     with db_factory() as db:
-        rows = db.execute("""select h.job_id, a.status, a.error, s.settings,
-          json_object('bpm',json_extract(a.result,'$.bpm'), 'key',json_extract(a.result,'$.key'),
-            'duration',json_extract(a.result,'$.duration'), 'grid_quality',json_extract(a.result,'$.grid_quality')) as result
+        rows = db.execute("""select h.job_id, a.status, a.error, s.settings, a.summary as result
           from download_history h left join mixer_analysis a on a.job_id=h.job_id
           left join mixer_settings s on s.job_id=h.job_id and s.user_id=h.user_id
           where h.user_id=? and h.state='done'""", (owner,)).fetchall()
@@ -145,8 +150,9 @@ class MixerAnalysis:
         return dict(row) if row else None
 
     def finish(self, job, status, result=None, error="", signature=""):
+        summary = {k: result.get(k) for k in ('bpm', 'key', 'duration', 'grid_quality')} if result else None
         with self.db() as db:
-            db.execute("update mixer_analysis set status=?,result=?,error=?,signature=?,updated=? where job_id=?", (status, json.dumps(result) if result else None, error[:240], signature, time.time(), job))
+            db.execute("update mixer_analysis set status=?,result=?,summary=?,error=?,signature=?,updated=? where job_id=?", (status, json.dumps(result) if result else None, json.dumps(summary) if summary else None, error[:240], signature, time.time(), job))
 
     async def analyze_job(self, row):
         job = row["job_id"]

@@ -1,11 +1,23 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
-import { FLX4Decoder, clamp, crossfade } from './flx4.js?v=20260908-5';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime } from './mix-waveforms.js?v=20260908-7';
+import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260908-8';
+import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const host = () => window.TuneSaverMixerHost;
 const panel = $('#mixer-panel');
+const performance = $('#mix-performance');
+for (const selector of ['.mix-toolbar', '#mix-settings', '#mix-message', '.mix-wave-toolbar', '#mix-timelines', '#mix-decks', '.mix-master']) performance.append($(selector, panel));
+const deckTabs = document.createElement('div'); deckTabs.className = 'mix-deck-tabs'; deckTabs.setAttribute('role', 'group'); deckTabs.setAttribute('aria-label', 'Platine affichée');
+for (const [i, letter] of ['A', 'B'].entries()) {
+  const tab = document.createElement('button'); tab.type = 'button'; tab.textContent = letter; tab.setAttribute('aria-pressed', String(i === 0));
+  tab.addEventListener('click', () => { performance.dataset.mobileDeck = i; Array.from(deckTabs.children).forEach((el, n) => el.setAttribute('aria-pressed', String(i === n))); });
+  deckTabs.append(tab);
+}
+performance.insertBefore(deckTabs, $('#mix-decks'));
+const dockObserver = new ResizeObserver(() => document.documentElement.style.setProperty('--playback-height', `${$('#playback-dock').getBoundingClientRect().height}px`));
+dockObserver.observe($('#playback-dock'));
 const message = (text = '') => {
   const target = $('#mix-message');
   target.replaceChildren();
@@ -31,6 +43,9 @@ let midiInput = null;
 let midiOutput = null;
 let midiWanted = false;
 let midiEpoch = 0;
+let midiSelection = '';
+let midiBinding = Promise.resolve();
+let midiTimer = null;
 let decoder = new FLX4Decoder();
 let ticketQueue = Promise.resolve();
 const cueMemory = new Map();
@@ -45,7 +60,7 @@ const collapsedFolders = new Set();
 
 function animate() {
   if (!active) return;
-  if (!document.hidden) decks.forEach(d => d.timeline.draw(Number($('#mix-wave-zoom').value)));
+  if (!document.hidden) decks.forEach(d => d.timeline.draw(clamp(Number($('#mix-wave-zoom').value) || 4, 1, 24)));
   animation = requestAnimationFrame(animate);
 }
 
@@ -126,7 +141,8 @@ class AudioBus {
     this.guard.connect(this.monitor);
     this.head.disconnect();
     this.merger.disconnect();
-    ctx.destination.channelCount = this.split ? 4 : Math.min(2, ctx.destination.maxChannelCount || 2);
+    // Firefox can expose an unknown (zero) maximum. Keep its default routing.
+    if (ctx.destination.maxChannelCount > 0) ctx.destination.channelCount = this.split ? 4 : Math.min(2, ctx.destination.maxChannelCount);
     ctx.destination.channelInterpretation = this.split ? 'discrete' : 'speakers';
     if (this.split) {
       this.guard.connect(this.masterSplit);
@@ -146,9 +162,14 @@ class AudioBus {
   set(param, value) { param.setTargetAtTime(value, this.context.currentTime, 0.015); }
 }
 
-function ensureAudio() {
+async function ensureAudio() {
   if (!bus) bus = new AudioBus();
-  return bus.context.resume();
+  let timer;
+  try {
+    await Promise.race([bus.context.resume(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('La sortie audio ne démarre pas. Vérifie la sortie système et l’autorisation de lecture audio du site, puis réessaie.')), 6000);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
 // Serialize ticket creation through response headers: issuing another ticket for
@@ -240,6 +261,8 @@ class Deck {
       $('.mix-transport', this.el).append(el);
     }
     $('.mix-deck-heading', this.el).append(button('eject', `Vider la platine ${this.letter}`, X, () => this.eject()));
+    const bpmLabel = document.createElement('span'); bpmLabel.className = 'mix-current-bpm';
+    $('.mix-deck-heading', this.el).insertBefore(bpmLabel, $('[data-action="eject"]', this.el));
     for (const [name, label, min, max, value, group] of [
       ['low', 'Graves', -24, 12, 0, '.mix-eq'], ['mid', 'Médiums', -24, 12, 0, '.mix-eq'], ['high', 'Aigus', -24, 12, 0, '.mix-eq'],
       ['trim', 'Gain', 0, 2, 1, '.mix-levels'], ['volume', 'Volume', 0, 1, 1, '.mix-levels'], ['filter', 'Filtre', -1, 1, 0, '.mix-levels'],
@@ -265,6 +288,7 @@ class Deck {
     for (const key of [...notes, ...notes.map(n => n + 'm')]) this.control('key').append(new Option(key, key));
     this.control('key').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { key: this.control('key').value || null })));
     const tools = $('.mix-grid-tools', this.el);
+    tools.prepend(this.control('bpm').parentElement);
     tools.append(button('anchor', 'Premier temps à la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
       button('gridBack', 'Reculer la grille de 10 ms', Minus, () => this.shiftGrid(-.01)),
       button('gridForward', 'Avancer la grille de 10 ms', Plus, () => this.shiftGrid(.01)),
@@ -304,6 +328,7 @@ class Deck {
       run(() => this.load(track));
     });
     this.timeline = new Timeline($('#mix-timelines'), this);
+    $$('input[type="range"]', this.el).forEach(makeKnob);
     this.update();
   }
 
@@ -357,7 +382,7 @@ class Deck {
       const media = new Audio();
       media.preload = 'auto';
       this.wave = WaveSurfer.create({
-        container: $('.mix-wave', this.el), media, height: 52,
+        container: $('.mix-wave', this.el), media, height: 32,
         waveColor: '#626262', progressColor: this.index ? '#ef8eb3' : '#00d79d', cursorColor: '#ffffff',
         barWidth: 2, barGap: 1, dragToSeek: true, normalize: true,
         cspNonce: $('meta[name="mixer-style-nonce"]').content,
@@ -410,9 +435,13 @@ class Deck {
     }
   }
 
-  grid() {
+  grid(position = this.position()) {
     const analysis = this.analysisData?.analysis || {};
     const settings = this.analysisData?.settings || {};
+    if (analysis.grid_quality === 'variable' && !('bpm' in settings || 'grid_offset' in settings)) {
+      const detected = detectedGrid(analysis.beats, position);
+      if (detected) return detected;
+    }
     const value = Number(this.control('bpm').value);
     const bpm = Number.isFinite(value) && value >= 40 && value <= 300 ? value : null;
     return { bpm, offset: settings.grid_offset ?? analysis.grid_offset ?? 0 };
@@ -431,6 +460,7 @@ class Deck {
   }
 
   applyAnalysis(data) {
+    const previousWaveform = this.analysisData?.analysis?.waveform;
     this.analysisData = data;
     const a = data.analysis || {}, s = data.settings || {};
     this.control('bpm').value = s.bpm ?? a.bpm ?? '';
@@ -442,9 +472,9 @@ class Deck {
     $('.mix-key', this.el).textContent = key ? `${key}${!s.key && a.camelot ? ` · ${a.camelot}` : ''}` : 'Clé —';
     const quality = { stable: 'Grille estimée · 4/4', variable: 'Tempo variable · grille à vérifier', uncertain: 'Rythme incertain · grille à renseigner' }[a.grid_quality] || '';
     $('.mix-analysis-info', this.el).textContent = data.status === 'done'
-      ? [quality, key ? 'Clé estimée' : 'Clé indéterminée', a.codec?.toUpperCase(), a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : '', a.bit_rate ? `${Math.round(a.bit_rate / 1000)} kb/s` : ''].filter(Boolean).join(' · ')
+      ? [a.engine, quality, a.grid_error_ms != null ? `Écart de grille P90 : ${a.grid_error_ms} ms` : '', key ? s.key ? 'Clé corrigée' : 'Clé estimée' : 'Clé indéterminée', a.codec?.toUpperCase(), a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : '', a.bit_rate ? `${Math.round(a.bit_rate / 1000)} kb/s` : ''].filter(Boolean).join(' · ')
       : data.status === 'failed' ? data.error || 'Analyse échouée' : data.status === 'running' ? 'Analyse en cours…' : 'Analyse en attente';
-    if (a.waveform && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a) });
+    if (a.waveform?.data && a.waveform.data !== previousWaveform?.data && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a) });
     this.update();
   }
 
@@ -460,13 +490,14 @@ class Deck {
   }
 
   quantize(position) {
-    const grid = this.grid();
+    const grid = this.grid(position);
     if (!this.control('quantize').checked || !grid.bpm) return position;
     const step = 60 / grid.bpm;
     return clamp(grid.offset + Math.round((position - grid.offset) / step) * step, 0, this.wave?.getDuration() || position);
   }
 
   applySound() {
+    refreshKnobs();
     if (!this.nodes.length) return;
     for (const name of ['low', 'mid', 'high', 'trim']) bus.set(this[name].gain, Number(this.control(name).value));
     bus.set(this.fader.gain, Number(this.control('volume').value));
@@ -487,6 +518,8 @@ class Deck {
   updateTempoLabel() {
     const bpm = this.grid().bpm;
     $('.mix-value', this.el).textContent = `${this.rate >= 1 ? '+' : ''}${((this.rate - 1) * 100).toFixed(2)} %${bpm ? ` · ${(bpm * this.rate).toFixed(2)} BPM` : ''}`;
+    $('.mix-current-bpm', this.el).textContent = bpm ? `${(bpm * this.rate).toFixed(2)}` : '—';
+    refreshKnobs();
   }
 
   applyRate(bend = 0) {
@@ -554,8 +587,8 @@ class Deck {
   matchTempo() {
     const other = decks[1 - this.index];
     if (!this.ready || !other.ready) return;
-    const bpm = Number(this.control('bpm').value);
-    const target = Number(other.control('bpm').value) * other.rate;
+    const bpm = this.grid().bpm;
+    const target = other.grid().bpm * other.rate;
     if (!(bpm >= 40 && bpm <= 300 && target > 0)) { message('Renseigne le BPM original des deux morceaux pour aligner leur tempo.'); return; }
     const percent = (target / bpm - 1) * 100;
     if (Math.abs(percent) > 16) { message('Écart de tempo supérieur à la plage de ±16 %.'); return; }
@@ -576,6 +609,7 @@ class Deck {
   tick() {
     if (this.ready && this.looping && this.position() >= this.loopEnd) this.seek(this.loopStart);
     $('[data-time]', this.el).textContent = time(this.position());
+    if (this.analysisData?.analysis?.grid_quality === 'variable') this.updateTempoLabel();
   }
 
   update() {
@@ -651,7 +685,9 @@ function filteredTracks() {
   const [kind, id] = value.split(':');
   const collection = library[kind]?.find(item => item.id === id);
   const query = $('#mix-search').value.trim().toLocaleLowerCase();
+  const assigned = value === 'unassigned' ? new Set(library.playlists.flatMap(p => p.track_ids)) : null;
   return library.tracks.filter(track => track.streamable
+    && (!assigned || !assigned.has(track.job_id))
     && (!collection || collection.track_ids.includes(track.job_id))
     && `${track.title || track.file_name || ''} ${track.artist || ''}`.toLocaleLowerCase().includes(query));
 }
@@ -775,6 +811,7 @@ function renderCollections() {
   }
   all.push(...library.playlists.filter(p => !folderIds.has(p.folder_id)).map(p => playlistItem(p)));
   all.push(...library.tags.map(t => ({ id: `tags:${t.id}`, name: t.name, tag: true, depth: 0 })));
+  all.push({ id: 'unassigned', name: 'Sons sans playlist', depth: 0 });
   visibleCollections = all;
   if (!all.some(c => c.id === collectionCursor)) collectionCursor = '';
   const nav = $('#mix-collections');
@@ -814,6 +851,7 @@ function sync() {
   const select = $('#mix-collection');
   const value = select.value;
   select.replaceChildren(new Option('Tous mes sons', ''));
+  select.append(new Option('Sons sans playlist', 'unassigned'));
   for (const [kind, name] of [['playlists', 'Playlists'], ['tags', 'Tags']]) {
     const group = document.createElement('optgroup');
     group.label = name;
@@ -827,14 +865,26 @@ function sync() {
 
 function open() {
   if (!host()?.signedIn) return;
+  const previous = host().currentPlayback;
   active = true;
   host().resetPlayer();
   document.body.dataset.mixer = 'true';
   $('#library-content').hidden = true;
   $('#results-section').hidden = true;
   panel.hidden = false;
+  performance.hidden = false;
+  $('#dock-empty').hidden = true;
+  $('#mixer-nav').setAttribute('aria-pressed', 'true');
   $('#mixer-nav').setAttribute('aria-expanded', 'true');
   if (!decks.length) decks = [new Deck(0), new Deck(1)];
+  const target = decks[0];
+  if (previous?.track) run(async () => {
+    const loading = target.load(previous.track), version = target.version;
+    await loading;
+    if (!active || decks[0] !== target || target.version !== version || !target.ready) return;
+    target.seek(previous.position);
+    if (previous.playing) await target.toggle();
+  });
   sync();
   cancelAnimationFrame(animation);
   animate();
@@ -843,15 +893,21 @@ function open() {
   run(ensureAudio);
 }
 
-function close() {
+function close(transfer = false) {
+  const previous = transfer && decks[0]?.ready ? { track: decks[0].track, position: decks[0].position(), playing: decks[0].playing() } : null;
   active = false;
   cancelAnimationFrame(animation);
   clearInterval(analysisTimer);
   pause();
   panel.hidden = true;
+  performance.hidden = true;
+  $('#mixer-nav').setAttribute('aria-pressed', 'false');
+  $('#dock-empty').hidden = !$('#player-bar').hidden;
   $('#library-content').hidden = false;
   delete document.body.dataset.mixer;
   $('#mixer-nav').setAttribute('aria-expanded', 'false');
+  if (transfer) host().renderLibrary();
+  if (previous) run(() => host().playNormally(previous.track, previous.position, previous.playing));
 }
 
 function pause() { decks.forEach(d => d.wave?.pause()); }
@@ -904,10 +960,21 @@ function handleMIDI(event) {
   if (actions[cmd.action]) run(actions[cmd.action]);
 }
 
-async function bindMIDI() {
+function bindMIDI() {
+  midiBinding = midiBinding.catch(() => {}).then(bindMIDINow);
+  return midiBinding;
+}
+
+async function bindMIDINow() {
   if (!midiWanted || !midi) return;
   const epoch = midiEpoch;
-  const input = Array.from(midi.inputs.values()).find(p => /DDJ[- ]?FLX4/i.test(p.name || '') && p.state === 'connected');
+  const inputs = Array.from(midi.inputs.values()).filter(p => p.state === 'connected');
+  const select = $('#mix-midi-input');
+  select.replaceChildren(new Option('Détection automatique', ''));
+  inputs.forEach((port, i) => select.append(new Option(port.name || `Entrée MIDI ${i + 1}`, port.id)));
+  select.value = inputs.some(p => p.id === midiSelection) ? midiSelection : '';
+  const input = inputs.find(p => p.id === midiSelection) || inputs.find(isFLX4Port);
+  if (input && midiInput === input && input.connection === 'open') return;
   if (midiInput && midiInput !== input) { midiInput.onmidimessage = null; await midiInput.close(); }
   midiInput = input || null;
   if (midiOutput) await midiOutput.close();
@@ -916,21 +983,25 @@ async function bindMIDI() {
     await input.open();
     if (epoch !== midiEpoch || !midiWanted) { await input.close(); return; }
     input.onmidimessage = handleMIDI;
-    const output = Array.from(midi.outputs.values()).find(p => /DDJ[- ]?FLX4/i.test(p.name || '') && p.state === 'connected');
+    const output = Array.from(midi.outputs.values()).find(p => p.state === 'connected' && (p.name === input.name || isFLX4Port(p)));
     if (output) {
-      await output.open();
-      if (epoch !== midiEpoch || !midiWanted) { await output.close(); return; }
-      midiOutput = output;
+      try {
+        await output.open();
+        if (epoch !== midiEpoch || !midiWanted) { await output.close(); return; }
+        midiOutput = output;
+      } catch { message('Contrôle MIDI actif ; sortie des voyants indisponible.'); }
     }
     decoder = new FLX4Decoder();
     decks.forEach(sendLEDs);
   }
-  $('#mix-midi-status').textContent = input ? `DDJ-FLX4 connecté` : 'FLX4 introuvable. Vérifie le câble USB et ferme les autres logiciels DJ.';
+  const browser = /Firefox\//.test(navigator.userAgent) ? 'Firefox' : 'le navigateur';
+  $('#mix-midi-status').textContent = input ? `${input.name || 'Entrée MIDI'} connecté` : inputs.length ? 'Sélectionne l’entrée MIDI de ton FLX4.' : `Aucune entrée MIDI exposée par ${browser}. Vérifie l’autorisation MIDI de ce site et le port USB de données du contrôleur.`;
   $('#mix-midi-status').dataset.connected = String(Boolean(input));
 }
 
 async function disconnectMIDI() {
   midiWanted = false; midiEpoch++;
+  clearInterval(midiTimer);
   if (midi) midi.onstatechange = null;
   if (midiInput) { midiInput.onmidimessage = null; await midiInput.close(); }
   if (midiOutput) await midiOutput.close();
@@ -942,11 +1013,10 @@ async function disconnectMIDI() {
 
 async function connectMIDI() {
   if (midiWanted) { await disconnectMIDI(); return; }
-  if (!navigator.requestMIDIAccess) { message('MIDI indisponible dans ce navigateur. Utilise Chrome ou Edge sur ordinateur.'); return; }
+  if (!navigator.requestMIDIAccess) { message('Web MIDI indisponible dans ce navigateur ou ce contexte. Ouvre le site HTTPS dans un navigateur compatible MIDI sur ordinateur.'); return; }
   const epoch = ++midiEpoch;
   $('#mix-connect').disabled = true;
   try {
-    await ensureAudio();
     const access = await navigator.requestMIDIAccess({ sysex: false });
     if (epoch !== midiEpoch || !host()?.signedIn) return;
     midi = access; midiWanted = true;
@@ -961,14 +1031,17 @@ async function connectMIDI() {
       if (event.port.type === 'input' && event.port.state === 'connected' && event.port !== midiInput) run(bindMIDI);
     };
     await bindMIDI();
+    clearInterval(midiTimer);
+    midiTimer = setInterval(() => { if (!midiInput) run(bindMIDI); }, 2000);
     $('#mix-connect').replaceChildren(icon(Unplug), document.createTextNode('Déconnecter le MIDI'));
   } catch (e) {
     await disconnectMIDI();
-    message(e.name === 'NotAllowedError' ? 'Accès MIDI refusé. Autorise le MIDI dans les permissions du site.' : 'Connexion MIDI impossible. Vérifie le contrôleur et son câble USB.');
+    message(['NotAllowedError', 'SecurityError'].includes(e.name) ? 'Accès MIDI refusé. Autorise le MIDI pour tunesaver.galagain.com ; Firefox peut demander une permission de site à installer.' : `Impossible d’ouvrir le port MIDI (${e.name || 'erreur'}). Le port peut être occupé ou déconnecté.`);
   } finally { $('#mix-connect').disabled = false; }
 }
 
 function updateMaster() {
+  refreshKnobs();
   if (!bus) return;
   bus.set(bus.master.gain, Number($('#mix-master').value));
   bus.set(bus.head.gain, Number($('#mix-head-level').value));
@@ -1004,6 +1077,7 @@ function reset() {
   if (context && context.state !== 'closed') context.close().catch(() => {});
   decks = [];
   $('#mix-decks').replaceChildren();
+  refreshKnobs();
   $('#mix-tracks').replaceChildren();
   $('#mix-collection').replaceChildren(new Option('Tous mes sons', ''));
   $('#mix-search').value = '';
@@ -1019,12 +1093,25 @@ function reset() {
   cueMemory.clear(); message();
 }
 
-$('#mixer-nav').addEventListener('click', open);
+$('#mixer-nav').prepend(icon(Gauge));
+$('#mixer-nav').addEventListener('click', () => active ? close(true) : open());
 $('.library-sidebar').addEventListener('click', e => {
-  if (active && e.target.closest('.playlist-filter:not(#mixer-nav), .tag-filter')) close();
+  if (!active) return;
+  const target = e.target.closest('.playlist-filter, .tag-filter');
+  if (!target) return;
+  const collection = target.id === 'unassigned-tracks' ? 'unassigned' : target.dataset.tagId ? `tags:${target.dataset.tagId}` : target.dataset.playlistId ? `playlists:${target.dataset.playlistId}` : '';
+  $('#mix-collection').value = collection; collectionCursor = collection;
+  setBrowserFocus('tracks');
+  renderTracks();
 }, true);
 $('#mix-connect').prepend(icon(Usb));
 $('#mix-connect').addEventListener('click', () => run(connectMIDI));
+$('#mix-midi-input').addEventListener('change', () => { midiSelection = $('#mix-midi-input').value; run(bindMIDI); });
+$('#mix-midi-refresh').append(icon(RefreshCw));
+$('#mix-midi-refresh').addEventListener('click', () => run(async () => {
+  if (!midiWanted) return connectMIDI();
+  await bindMIDI();
+}));
 $('#mix-stop').append(icon(Square));
 $('#mix-stop').addEventListener('click', pause);
 $('#mix-audio-settings').append(icon(Settings2));
@@ -1050,6 +1137,7 @@ $('#mix-routing').addEventListener('change', () => {
   if (bus) { bus.route($('#mix-routing').value === 'split'); updateMaster(); }
 });
 for (const id of ['mix-cross', 'mix-master', 'mix-head-level', 'mix-head-mix']) $(`#${id}`).addEventListener('input', updateMaster);
+for (const id of ['mix-master', 'mix-head-level', 'mix-head-mix']) makeKnob($(`#${id}`));
 $('#mix-cross').addEventListener('dblclick', () => { $('#mix-cross').value = '0.5'; updateMaster(); });
 $('#mix-search').addEventListener('input', renderTracks);
 $('#mix-collection').addEventListener('change', () => { collectionCursor = $('#mix-collection').value; setBrowserFocus('tracks'); renderTracks(); });
@@ -1060,4 +1148,9 @@ window.addEventListener('beforeunload', event => {
 navigator.mediaDevices?.addEventListener('devicechange', () => {
   if (active && bus && !$('#mix-settings').hidden) run(refreshOutputs);
 });
-window.Mixer = { get active() { return active; }, sync, reset, pause };
+window.Mixer = { get active() { return active; }, sync, reset, pause, async playTrack(track) {
+  if (!active) open();
+  const target = decks[0];
+  await target.load(track);
+  if (active && decks[0] === target && target.ready && !target.playing()) await target.toggle();
+} };

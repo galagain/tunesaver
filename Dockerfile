@@ -16,6 +16,16 @@ RUN mkdir libkeyfinder keyfinder-cli sources \
     && cmake -S keyfinder-cli -B keyfinder-cli/build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build keyfinder-cli/build -j2
 
+FROM golang:1.26.7-trixie AS rhythm-builder
+RUN apt-get update && apt-get install -y --no-install-recommends g++ make curl libsndfile1-dev
+WORKDIR /src
+RUN curl -fLsS https://codeload.github.com/c4dm/qm-dsp/tar.gz/e34a3cc188332ed7c33cd9257ef164de5b587191 -o qm-dsp.tgz \
+    && echo "34d77740f926a73be1a996a2ed77c064e0555a346ea2734b91d1cfdf9a1ac215  qm-dsp.tgz" | sha256sum -c - \
+    && mkdir qm-dsp && tar -xzf qm-dsp.tgz -C qm-dsp --strip-components=1 \
+    && make -C qm-dsp -f build/general/Makefile.inc -j2 CXXFLAGS='-O2 -std=c++11 -DUSE_PTHREADS -I. -Iext/kissfft -Iext/kissfft/tools -Dkiss_fft_scalar=double' CFLAGS='-O2 -I. -Iext/kissfft -Iext/kissfft/tools -Dkiss_fft_scalar=double -DNO_BLAS_WRAP -DADD_ -Iext/clapack/include -Iext/cblas/include'
+COPY src/qm_beats.cpp /src/qm_beats.cpp
+RUN g++ -O2 -std=c++17 -Iqm-dsp qm_beats.cpp qm-dsp/libqm-dsp.a -lsndfile -lpthread -o qm-beats
+
 FROM golang:1.26.7-trixie AS beatport-builder
 
 ARG BEATPORTDL_COMMIT=878d3f61c5a98cffd43b9e0306b8cbc75488999e
@@ -78,6 +88,7 @@ RUN apt-get update \
         ca-certificates \
         ffmpeg \
         libfftw3-double3 \
+        libsndfile1 \
         chromium \
         libstdc++6 \
         libtag-c2 \
@@ -94,6 +105,9 @@ RUN python -m pip install --no-cache-dir --disable-pip-version-check --requireme
 COPY --from=keyfinder-builder /src/keyfinder-cli/build/keyfinder-cli /usr/local/bin/keyfinder-cli
 COPY --from=keyfinder-builder /src/sources /usr/share/keyfinder-sources
 COPY --from=keyfinder-builder /src/keyfinder-cli/LICENSE /usr/share/licenses/keyfinder-cli/LICENSE
+COPY --from=rhythm-builder /src/qm-beats /usr/local/bin/qm-beats
+COPY --from=rhythm-builder /src/qm-dsp.tgz /src/qm_beats.cpp /usr/share/qm-sources/
+COPY --from=rhythm-builder /src/qm-dsp/COPYING /usr/share/licenses/qm-dsp/COPYING
 
 COPY --from=beatport-builder /out/beatportdl /usr/local/bin/beatportdl
 COPY --from=beatport-builder /out/beatport-search /usr/local/bin/beatport-search

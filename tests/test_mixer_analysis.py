@@ -1,4 +1,5 @@
 import contextlib
+import base64
 import json
 from pathlib import Path
 import sqlite3
@@ -53,6 +54,17 @@ class MixerStoreTests(unittest.TestCase):
                 action()
             self.assertEqual(exc.exception.status, 404)
 
+    def test_v2_migration_preserves_cues_and_does_not_requeue_current_analysis(self):
+        with self.db() as db:
+            db.execute("insert into mixer_analysis(job_id,status,result) values('one','done',?)", (json.dumps({'version': 1, 'bpm': 120}),))
+            db.execute("insert into mixer_analysis(job_id,status,result) values('two','done',?)", (json.dumps({'version': 2, 'bpm': 128}),))
+        self.service.patch('a', 'one', {'hotcue': {'index': 2, 'time': 3}})
+        mixer_analysis.init_store(self.db)
+        self.assertEqual(self.service.read('a', 'one')['status'], 'pending')
+        self.assertEqual(self.service.read('a', 'one')['settings']['hotcues'][2], 3)
+        self.assertEqual(self.service.read('b', 'two')['status'], 'done')
+        self.assertEqual(mixer_analysis.summaries(self.db, 'b')['two']['bpm'], 128)
+
     def test_analysis_queue_and_settings_survive_reopening(self):
         self.assertEqual(self.service.read('a', 'one')['status'], 'pending')
         row = self.service.next_job()
@@ -93,6 +105,27 @@ class MixerStoreTests(unittest.TestCase):
 
 
 class AudioAnalysisTests(unittest.TestCase):
+    def test_long_fractional_tempo_with_silent_break(self):
+        import numpy as np
+        import soundfile as sf
+        from analyze_audio import analyze
+        sr, duration, bpm, offset = 22050, 90, 127.5, .73
+        audio = np.zeros(sr * duration)
+        pulse = np.sin(2 * np.pi * 90 * np.arange(1500) / sr) * np.exp(-np.arange(1500) / 250)
+        for start in np.arange(offset, duration - 1, 60 / bpm):
+            if 30 < start < 36:
+                continue
+            i = int(start * sr)
+            audio[i:i + len(pulse)] += pulse * .85
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'long.wav'
+            sf.write(path, audio, sr)
+            result = analyze(path)
+        self.assertAlmostEqual(result['bpm'], bpm, delta=.02)
+        step = 60 / bpm
+        phase_error = ((result['grid_offset'] - offset + step / 2) % step) - step / 2
+        self.assertLess(abs(phase_error), .02)
+
     def test_real_click_track_and_key(self):
         import numpy as np
         import soundfile as sf
@@ -111,10 +144,15 @@ class AudioAnalysisTests(unittest.TestCase):
             self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
             result = json.loads(process.stdout)
             self.assertAlmostEqual(result['duration'], 24, delta=.01)
-            self.assertAlmostEqual(result['bpm'], 120, delta=2)
+            self.assertAlmostEqual(result['bpm'], 120, delta=.05)
+            self.assertAlmostEqual(result['grid_offset'], .25, delta=.025)
             self.assertIn(result['key'], ('C', 'Am'))
             self.assertGreater(len(result['beats']), 30)
-            self.assertGreater(max(result['waveform']['bands'][0]), 0)
+            self.assertEqual(result['engine'], 'Queen Mary DSP')
+            self.assertEqual(result['waveform']['rate'], 441)
+            packed = base64.b64decode(result['waveform']['data'])
+            self.assertEqual(len(packed), result['waveform']['frames'] * 5)
+            self.assertGreater(max(packed[3::5]), 100)
             sf.write(path, np.zeros(sr * 3), sr)
             silence = analyze(path)
             self.assertIsNone(silence['bpm'])

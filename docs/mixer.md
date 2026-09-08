@@ -7,8 +7,16 @@ conserves dans SQLite, avec verification du proprietaire a chaque acces.
 
 ## Utilisation
 
-- Ouvrir Mixer, brancher le DDJ-FLX4 en USB, puis Connecter le FLX4.
-- Accepter la permission MIDI dans Chrome ou Edge sur ordinateur.
+- Le lecteur reste fixe en bas. Le bouton Mixer, tout a gauche, bascule entre
+  lecture simple et deux platines. Le morceau A et sa position passent d'un mode
+  a l'autre ; la transition peut interrompre brievement le son pendant le chargement.
+- Brancher le DDJ-FLX4 sur son port USB de donnees, puis Connecter le FLX4.
+- Accepter la permission MIDI du site dans le navigateur. Firefox peut proposer
+  une permission de site a installer : https://support.mozilla.org/en-US/kb/site-permission-add-ons
+- La liste MIDI affiche toutes les entrees exposees, y compris celles dont le nom
+  est generique. Choisir manuellement le port du FLX4 si necessaire. Aucun port
+  expose n'est pas un diagnostic de cable defectueux : verifier aussi les permissions.
+  La selection manuelle applique le mapping FLX4, pas un mapping universel.
 - Fermer rekordbox, Serato ou tout autre logiciel utilisant deja le controleur.
 - Charger un morceau avec les boutons A/B, par glisser-deposer, ou avec BROWSE/LOAD.
 - Appuyer sur BROWSE pour parcourir les playlists et tags. Tourner pour choisir,
@@ -18,8 +26,13 @@ conserves dans SQLite, avec verification du proprietaire a chaque acces.
 - Le routage quatre canaux est propose uniquement si `maxChannelCount >= 4` :
   master 1/2 et casque 3/4. Verifier physiquement le routage et commencer a faible volume.
   En stereo, la preecoute est desactivee et n'est jamais rabattue dans le master.
-- Le debranchement MIDI met la lecture en pause. La fermeture du Mixer met aussi
-  les platines en pause, mais conserve leurs morceaux jusqu'a la deconnexion.
+- Changer de playlist ne ferme plus les platines. Le debranchement MIDI met la
+  lecture en pause ; le rebranchement est detecte automatiquement.
+- Gain, EQ, filtre, volume et tempo ont des commandes rotatives : glisser
+  verticalement, Maj pour le reglage fin, fleches au clavier, double-clic pour
+  revenir au reglage initial. Le crossfader reste un fader horizontal.
+- Sur petit ecran, A/B choisit les commandes visibles ; les deux courbes restent
+  affichees et les deux platines continuent de jouer.
 
 ## Commandes implementees
 
@@ -53,15 +66,30 @@ arriere-plan, un fichier a la fois : BPM, tonalite et notation Camelot, duree,
 format, debit, frequence et canaux. Les courbes colorees utilisent trois bandes
 de frequences du fichier reel, pas une separation des instruments.
 
-Le BPM et la tonalite sont des estimations. La grille constante suppose du 4/4 ;
+Le detecteur rythmique utilise Queen Mary DSP (egalement utilise par Mixxx), puis
+un recalage local sur les attaques et une regression robuste pour la grille fixe.
+L'analyse v2 remplace automatiquement les resultats v1, sans effacer les cues et
+corrections manuelles. Les resumes de bibliotheque sont stockes separement des
+courbes pour ne pas reparcourir ces dernieres a chaque rafraichissement.
+
+Le BPM et la tonalite sont des estimations, pas une garantie d'equivalence avec
+le moteur proprietaire de rekordbox. La grille constante suppose du 4/4 ;
 le premier temps de mesure n'est pas detecte de facon certaine. Les tempos variables
 et rythmes incertains sont signales. Dans Grille et analyse, on peut corriger le
 BPM, le diviser/multiplier par deux, placer le premier temps, decaler la grille
 de 10 ms et choisir la tonalite. Les corrections sont conservees lors d'une
 nouvelle analyse. Quantize cale les nouveaux cues et boucles sur cette grille.
+Pour un tempo variable sans correction manuelle, les temps detectes sont affiches
+directement ; Quantize et Sync utilisent l'intervalle local. L'ecart P90 indique
+la dispersion des temps autour de la grille fixe, pas une certitude musicale.
 
-Les deux courbes defilantes ont une tete de lecture commune et une echelle de
-temps tenant compte du tempo de chaque platine. Le zoom est commun ; clic pour
+Les courbes conservent les extrema positifs et negatifs reels tous les 50
+echantillons a 22050 Hz, soit 441 points/seconde (2,27 ms), plus trois bandes
+filtrees avec etat continu. Le format binaire u8-lmhpn est encode en base64.
+Le rendu prend les maxima de chaque intervalle de pixels : les attaques ne sont
+pas perdues au dezoom. Sans analyse v2, le signal decode localement est utilise.
+Le fond ne defile pas et ne change pas de couleur en lecture : seul un curseur
+avance. La fenetre suivante remplace la precedente sans animation. Clic pour
 chercher, fleches gauche/droite pour avancer ou reculer d'un temps.
 
 Le traitement est isole dans un processus sans secrets dans son environnement,
@@ -77,10 +105,14 @@ disponibles. Aucune donnee audio n'est envoyee a une API externe.
 - `web/mixer.js` : platines, graphe Web Audio, routage et connexion Web MIDI.
 - `web/flx4.js` : decodeur MIDI sans dependance DOM, teste avec Node.
 - `web/mix-waveforms.js` : courbes Canvas, grille et calcul de phase.
+- `web/mix-knobs.js` : potentiometres accessibles reposant sur des inputs natifs.
 - `src/mixer_analysis.py` : API privee, stockage SQLite et file d'analyse.
-- `src/analyze_audio.py` : FFmpeg, librosa 0.11.0 (ISC) pour le rythme, et
-  keyfinder-cli/libkeyfinder pour la tonalite. Dependances Python epinglees dans
+- `src/analyze_audio.py` : FFmpeg, SciPy (filtres et regression), Queen Mary DSP
+  pour le rythme, keyfinder-cli/libkeyfinder pour la tonalite. Dependances epinglees dans
   `requirements-analysis.lock`.
+- `src/qm_beats.cpp` : adaptateur CLI GPL-2.0-or-later de QM DSP. Sources completes
+  et adaptateur dans `/usr/share/qm-sources`, licence dans `/usr/share/licenses/qm-dsp`.
+  Le Dockerfile contient les commandes de compilation et le hash des sources.
 - keyfinder-cli et libkeyfinder sont sous GPL-3.0. Le Dockerfile epingle et verifie
   leurs sources ; archives sources completes dans `/usr/share/keyfinder-sources`
   et licence dans `/usr/share/licenses/keyfinder-cli/LICENSE` dans l'image.
@@ -107,12 +139,18 @@ node --test tests/test_flx4.mjs
 python -m unittest discover -s tests
 ```
 
-`tests/mixer-browser.cjs` necessite `@playwright/test`, Chromium et une instance
+`tests/mixer-browser.cjs` necessite `@playwright/test`, Chromium/Firefox et une instance
 locale du site (8081 par defaut, surchargeable avec `MIXER_URL`). Le test ne se
 connecte a aucun vrai compte et utilise des fichiers WAV synthetiques en memoire.
 `CHROMIUM_PATH` permet de choisir le binaire ; les captures sont placees dans `/work`.
+`MIXER_BROWSER=firefox` execute le meme parcours dans Firefox. Utiliser une version
+de Playwright correspondant a ses binaires (1.58.2 avec l'image Docker 1.58.2).
+Firefox headless necessite une sortie audio, par exemple un serveur PulseAudio
+avec `module-null-sink` dans le conteneur de test ; sans sortie, le contexte audio
+peut rester suspendu. Le test mesure le signal reel, il ne simule pas cette sortie.
 Il verifie lecture simultanee et signal audio non nul, commandes MIDI simulees,
-waveforms colorees non vides et mobiles, grille, phase, cues persistants et
-supprimables, navigation MIDI dans les playlists, filtres, deconnexion et tailles
+courbes fixes non vides, curseur mobile, cues supprimables, potentiometres,
+navigation MIDI, decouverte de ports sans nom standard, lecture simple/mix,
+lecteur fixe, deconnexion et tailles
 1440/390 px. Ces tests ne remplacent pas un essai avec un FLX4 physique, notamment
 pour la latence, les jogs, les voyants et la preecoute casque.

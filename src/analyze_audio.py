@@ -1,5 +1,6 @@
 """Isolated, bounded audio analysis. No network, credentials or database access."""
 import json
+import base64
 import math
 import os
 from pathlib import Path
@@ -25,9 +26,9 @@ def command(args, timeout=120):
 
 
 def analyze(path: Path) -> dict:
-    import librosa
     import numpy as np
     import soundfile as sf
+    from scipy import signal, optimize
 
     with tempfile.TemporaryDirectory(prefix="tunesaver-analysis-") as folder:
         root = Path(folder)
@@ -52,61 +53,61 @@ def analyze(path: Path) -> dict:
             raise ValueError("Analyse disponible pour les sons de 2 secondes à 60 minutes.")
         decoded = root / "audio.wav"
         command(["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-i", str(path), "-map", "0:a:0", "-t", str(MAX_DURATION), "-ac", "1", "-ar", "22050", "-c:a", "pcm_s16le", str(decoded)])
-        sr, hop, fft = 22050, 256, 2048
-        onsets, bands = [], []
-        previous = None
-        mel = librosa.filters.mel(sr=sr, n_fft=fft, n_mels=64)
-        frequencies = librosa.fft_frequencies(sr=sr, n_fft=fft)
-        masks = [frequencies < 250, (frequencies >= 250) & (frequencies < 2500), frequencies >= 2500]
-        # Streaming overlapping FFT blocks keep memory independent of track length.
-        for block in sf.blocks(decoded, blocksize=fft + hop * 511, overlap=fft - hop, dtype="float32"):
-            if len(block) < fft:
-                break
-            spectrum = np.abs(librosa.stft(block, n_fft=fft, hop_length=hop, center=False))
-            power = spectrum ** 2
-            log_mel = librosa.power_to_db(mel @ power, ref=1.0, top_db=None)
-            padded = np.concatenate([previous, log_mel], axis=1) if previous is not None else log_mel
-            flux = librosa.onset.onset_strength(S=padded, sr=sr, hop_length=hop, center=False)
-            onsets.append(flux[-log_mel.shape[1]:])
-            previous = log_mel[:, -1:]
-            bands.append(np.stack([np.sqrt(power[m].sum(axis=0)) for m in masks]))
-        if not onsets:
-            raise ValueError("Signal audio trop court.")
-        onset = np.concatenate(onsets)
-        band_values = np.concatenate(bands, axis=1)
-        tempo, beats = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=hop, units="time", trim=False)
-        beats = np.asarray(beats) + fft / (2 * sr)
+        sr, bin_size = 22050, 50
+        rate = sr / bin_size
+        filters = [signal.butter(2, 250, fs=sr, output='sos'),
+                   signal.butter(2, [250, 2500], btype='bandpass', fs=sr, output='sos'),
+                   signal.butter(2, 2500, btype='highpass', fs=sr, output='sos')]
+        states = [np.zeros((len(sos), 2)) for sos in filters]
+        chunks = []
+        # Preserve positive/negative sample extrema, with continuous band filters.
+        # 441 bins/s retain transients at 2.27 ms instead of smoothed FFT energy.
+        for block in sf.blocks(decoded, blocksize=sr * 10, dtype='float32'):
+            padded = np.pad(block, (0, (-len(block)) % bin_size))
+            bins = padded.reshape(-1, bin_size)
+            values = []
+            for i, sos in enumerate(filters):
+                band, states[i] = signal.sosfilt(sos, padded, zi=states[i])
+                values.append(np.max(np.abs(band.reshape(-1, bin_size)), axis=1))
+            values.extend([np.maximum(0, bins.max(axis=1)), np.maximum(0, -bins.min(axis=1))])
+            chunks.append(np.stack(values, axis=1))
+        peaks = np.concatenate(chunks)
+        rhythm = json.loads(command(['qm-beats', str(decoded)]).stdout)
+        beats = np.asarray(rhythm['beats'], dtype=float)
         beats = beats[(beats >= 0) & (beats < duration)]
-        bpm = float(np.asarray(tempo).reshape(-1)[0])
-        variation = float(np.std(np.diff(beats)) / np.mean(np.diff(beats))) if len(beats) > 4 else 1.0
-        reliable = len(beats) >= 8 and float(np.max(onset)) > 0.1 and 40 <= bpm <= 250
-        offset = None
-        if reliable:
-            # Fit the full set of detected beats, not the quantized tempo bin alone.
-            slope, intercept = np.polyfit(np.arange(len(beats)), beats, 1)
-            bpm = round(60 / slope, 3)
-            offset = round(float(intercept % slope), 5)
-        else:
-            bpm = None
-        rate = min(40, 16384 / duration)
-        count = math.ceil(duration * rate)
-        peaks = np.zeros((3, count), dtype=np.float32)
-        indices = np.minimum(count - 1, ((np.arange(band_values.shape[1]) * hop + fft / 2) / sr * rate).astype(int))
-        for i in range(3):
-            np.maximum.at(peaks[i], indices, band_values[i])
-        scale = max(float(np.quantile(peaks.sum(axis=0), 0.995)), 1e-6)
-        peaks = np.clip(np.sqrt(peaks / scale) * 255, 0, 255).astype(np.uint8)
+        bpm, offset, residual_ms = None, None, None
+        quality = 'uncertain'
+        if len(beats) >= 8 and float(peaks[:, 3:].max()) > .005:
+            # Refine QM beat positions against local attacks, then fit with an
+            # outlier-resistant regression so breaks do not drag the entire grid.
+            attacks = np.maximum(0, np.diff(peaks[:, 0] + peaks[:, 1], prepend=0))
+            positions, _ = signal.find_peaks(attacks, distance=int(rate * .08), prominence=float(np.quantile(attacks, .8)))
+            for i, beat in enumerate(beats):
+                near = positions[np.abs(positions / rate - beat) < .065]
+                if len(near):
+                    best = near[np.argmax(attacks[near])]
+                    beats[i] = best / rate
+            indices = np.arange(len(beats))
+            fit = optimize.least_squares(lambda p: p[0] * indices + p[1] - beats,
+                                         np.polyfit(indices, beats, 1), loss='soft_l1', f_scale=.012)
+            slope, intercept = fit.x
+            if slope > 0 and 40 <= 60 / slope <= 300:
+                bpm = round(float(60 / slope), 3)
+                offset = round(float(intercept % slope), 6)
+                residual_ms = round(float(np.quantile(np.abs(fit.fun), .9)) * 1000, 1)
+                quality = 'stable' if residual_ms <= 30 else 'variable'
+        packed = np.clip(peaks * 255, 0, 255).astype(np.uint8)
         key = command(["keyfinder-cli", "-n", "standard", str(decoded)]).stdout.decode().strip()
         if key not in KEYS:
             key = None
         return {
-            "version": 1, "duration": round(duration, 4), "bpm": bpm, "grid_offset": offset,
-            "beats": np.round(beats, 4).tolist() if reliable else [],
-            "grid_quality": "stable" if reliable and variation < 0.04 else "variable" if reliable else "uncertain",
+            "version": 2, "engine": "Queen Mary DSP", "duration": round(duration, 4), "bpm": bpm, "grid_offset": offset,
+            "beats": np.round(beats, 5).tolist() if bpm else [],
+            "grid_quality": quality, "grid_error_ms": residual_ms,
             "key": key, "camelot": KEYS.get(key), "key_estimated": True,
             "sample_rate": int(stream.get("sample_rate") or 0), "channels": int(stream.get("channels") or 0),
             "codec": str(stream.get("codec_name") or ""), "bit_rate": int(stream.get("bit_rate") or probe.get("format", {}).get("bit_rate") or 0),
-            "waveform": {"rate": rate, "bands": peaks.tolist()},
+            "waveform": {"rate": rate, "frames": len(packed), "encoding": "u8-lmhpn", "data": base64.b64encode(packed.tobytes()).decode('ascii')},
         }
 
 

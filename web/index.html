@@ -6,10 +6,10 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260908-7">
-    <link rel="stylesheet" href="/mixer.css?v=20260908-7">
-    <script src="/app.js?v=20260908-7" defer></script>
-    <script src="/mixer.js?v=20260908-7" type="module"></script>
+    <link rel="stylesheet" href="/style.css?v=20260908-8">
+    <link rel="stylesheet" href="/mixer.css?v=20260908-8">
+    <script src="/app.js?v=20260908-8" defer></script>
+    <script src="/mixer.js?v=20260908-8" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -198,7 +198,6 @@
             <h3>Sections</h3>
             <button class="playlist-filter" data-playlist-id="" data-selected="true" type="button">Mes sons</button>
             <button id="unassigned-tracks" class="playlist-filter" type="button">Sons sans playlist</button>
-            <button id="mixer-nav" class="playlist-filter" type="button" aria-controls="mixer-panel" aria-expanded="false">Mixer</button>
             <div class="sidebar-heading">
               <h3 id="playlist-title">Mes playlists</h3>
               <button id="create-playlist" class="sidebar-create" type="button">+</button>
@@ -227,6 +226,8 @@
               <div class="mix-toolbar">
                 <button id="mix-connect" type="button" class="secondary-button">Connecter le FLX4</button>
                 <span id="mix-midi-status" role="status">Non connecté</span>
+                <select id="mix-midi-input" aria-label="Entrée MIDI"><option value="">Détection automatique</option></select>
+                <button id="mix-midi-refresh" type="button" class="collection-rename" title="Actualiser les ports MIDI" aria-label="Actualiser les ports MIDI"></button>
                 <button id="mix-audio-settings" type="button" class="collection-rename" aria-label="Réglages audio" title="Réglages audio" aria-expanded="false"></button>
                 <button id="mix-stop" type="button" class="collection-rename" aria-label="Arrêter les deux platines" title="Arrêter les deux platines"></button>
               </div>
@@ -237,7 +238,7 @@
                 <span id="mix-audio-status" role="status"></span>
               </div>
               <div id="mix-message" role="status" aria-live="polite"></div>
-              <div class="mix-wave-toolbar"><span id="mix-analysis-status" role="status"></span><label>Zoom<input id="mix-wave-zoom" type="range" min="2" max="24" step="1" value="8" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
+              <div class="mix-wave-toolbar"><span id="mix-analysis-status" role="status"></span><label>Fenêtre (s)<input id="mix-wave-zoom" type="number" min="1" max="24" step="1" value="4" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
               <div id="mix-timelines" class="mix-timelines"></div>
               <div id="mix-decks" class="mix-decks"></div>
               <div class="mix-master">
@@ -260,7 +261,11 @@
         </div>
       </section>
     </main>
-      <div id="player-bar" class="player-bar" hidden>
+      <section id="playback-dock" aria-label="Lecture et mix">
+        <div class="dock-mode"><button id="mixer-nav" type="button" aria-controls="mix-performance" aria-expanded="false" aria-pressed="false">Mixer</button></div>
+        <div id="mix-performance" hidden></div>
+        <div id="dock-empty">Aucun morceau</div>
+        <div id="player-bar" class="player-bar" hidden>
         <div class="player-cover" id="player-cover"><span>?</span></div>
         <div class="player-info">
           <strong id="player-title">Aucun son</strong>
@@ -268,6 +273,7 @@
         </div>
         <audio id="audio-player" class="audio-player" controls preload="none"></audio>
       </div>
+      </section>
     </div>
 
     <div id="admin-view" hidden>
