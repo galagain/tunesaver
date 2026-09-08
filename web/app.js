@@ -302,6 +302,7 @@ function clearCoverCache() {
 }
 
 function showAuth(message = "") {
+  window.Mixer?.reset();
   window.clearInterval(queueTimer);
   queueTimer = null;
   saveSession(null);
@@ -868,6 +869,7 @@ function setPlayerTrack(track) {
 }
 
 async function streamTrack(track) {
+  window.Mixer?.pause();
   const jobId = typeof track === "string" ? track : track.job_id;
   const fullTrack = typeof track === "string"
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
@@ -1209,6 +1211,12 @@ function renderTags() {
 
 function renderLibrary() {
   if (draggedTrackTag || draggedPlaylist) return;
+  if (window.Mixer?.active) {
+    renderPlaylists();
+    renderTags();
+    window.Mixer.sync();
+    return;
+  }
   if (selectedPlaylistId || selectedTagId) onlyUnassigned = false;
   renderImports();
   renderPlaylists();
@@ -2020,5 +2028,14 @@ async function start() {
     showAuth(`Configuration impossible : ${error.message}`);
   }
 }
+
+window.TuneSaverMixerHost = {
+  get library() { return libraryState; },
+  get signedIn() { return Boolean(session); },
+  requestJson,
+  loadPrivateImage,
+  renderLibrary,
+  resetPlayer,
+};
 
 start();
