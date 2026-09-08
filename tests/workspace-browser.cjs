@@ -14,6 +14,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
         folders: [{ id: 'f', name: 'DJ Sets', collapsed: false }],
         tags: [{ id: 't', name: 'House', color: '#e5a467', track_ids: ['track-0'] }], imports: [],
       };
+      library.tracks[9].state = 'failed'; library.tracks[9].streamable = false;
       await page.route('**/api/**', route => {
         const request = route.request(), path = new URL(request.url()).pathname;
         if (path === '/api/config') return route.continue();
@@ -64,6 +65,33 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await expect(page.locator('.library-track[data-job-id="track-3"] .track-tag')).toHaveText('House');
       await page.locator('[data-tag-id="t"]').click();
       await expect(page.locator('#library-tracks .library-track')).toHaveCount(2);
+      await page.locator('.playlist-filter[data-playlist-id=""]').click();
+      await page.locator('#library-search').fill('Studio');
+      await page.evaluate(() => {
+        window.libraryNodes = [...document.querySelectorAll('.library-track, .library-nav-content button')];
+        window.sharedRow = document.querySelector('.library-track');
+        window.libraryStyles = libraryNodes.map(el => {
+          const s = getComputedStyle(el), b = el.getBoundingClientRect();
+          return [s.display, s.fontSize, s.backgroundColor, b.width, b.height];
+        });
+      });
+      await page.locator('#mixer-nav').click();
+      await expect(page.locator('.library-track[data-state="failed"]')).toHaveCount(1);
+      await expect(page.locator('#tag-list')).toBeVisible();
+      await expect(page.locator('.library-track[data-job-id="track-3"] .track-tag')).toHaveText('House');
+      await expect(page.locator('#unassigned-tracks, #mix-tracks, #mix-collections')).toHaveCount(0);
+      expect(await page.evaluate(() => {
+        const nodes = [...document.querySelectorAll('.library-track, .library-nav-content button')];
+        return nodes.every((el, i) => el === libraryNodes[i] && JSON.stringify(libraryStyles[i]) === JSON.stringify((() => {
+          const s = getComputedStyle(el), b = el.getBoundingClientRect();
+          return [s.display, s.fontSize, s.backgroundColor, b.width, b.height];
+        })()));
+      })).toBe(true);
+      await page.evaluate(() => refreshQueue());
+      expect(await page.evaluate(() => sharedRow === document.querySelector('.library-track'))).toBe(true);
+      await page.locator('#mixer-nav').click();
+      await expect(page.locator('#library-search')).toHaveValue('Studio');
+      expect(await page.evaluate(() => sharedRow === document.querySelector('.library-track'))).toBe(true);
       await page.locator('[data-playlist-id="p"]').click();
       await page.locator('#collection-menu > summary').click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

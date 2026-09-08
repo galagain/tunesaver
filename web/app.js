@@ -87,7 +87,7 @@ let adminDailyStats = [];
 let selectedPlaylistId = "";
 let selectedTagId = "";
 let selectedFolderId = "";
-let onlyUnassigned = false;
+let selectedLibraryTrackId = '';
 let draggedPlaylist = false;
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
@@ -261,7 +261,8 @@ function saveSession(value) {
   if (value) {
     localStorage.setItem("tunesaver.session", JSON.stringify(value));
   } else {
-    onlyUnassigned = false;
+    selectedLibraryTrackId = '';
+    document.querySelector('#library-search').value = '';
     localStorage.removeItem("tunesaver.session");
   }
 }
@@ -365,6 +366,7 @@ async function loadPrivateImage(image, url) {
 
 function resetPlayer() {
   playerLoadVersion++;
+  window.TuneSaverPlayer?.reset();
   audioPlayer.pause();
   audioPlayer.removeAttribute("src");
   audioPlayer.load();
@@ -946,6 +948,7 @@ function setPlayerTrack(track) {
   setPlayerCover(track);
   playerBar.hidden = false;
   document.querySelector('#dock-empty').hidden = true;
+  window.TuneSaverPlayer?.setTrack(track);
 }
 
 async function streamTrack(track, options = {}) {
@@ -979,6 +982,13 @@ async function playNextTrack() {
   }
 }
 
+async function playPreviousTrack() {
+  if (audioPlayer.currentTime > 3) { audioPlayer.currentTime = 0; return; }
+  const index = renderedTracks.findIndex(track => track.job_id === currentTrackId);
+  const previous = renderedTracks.slice(0, Math.max(0, index)).reverse().find(track => track.streamable);
+  if (previous) await streamTrack(previous);
+}
+
 async function fetchLibrary() {
   return requestJson("/api/library", { method: "GET" });
 }
@@ -997,7 +1007,6 @@ function trackInTag(track, tagId) {
 
 function currentLibraryTitle() {
   if (selectedFolderId) return libraryState.folders?.find(folder => folder.id === selectedFolderId)?.name || 'Dossier';
-  if (onlyUnassigned) return "Sons sans playlist";
   if (selectedPlaylistId) {
     const playlist = libraryState.playlists.find((item) => item.id === selectedPlaylistId);
     return playlist ? playlist.name : "Mes playlists";
@@ -1244,7 +1253,7 @@ function renderCollectionActions() {
 }
 
 function renderPlaylists() {
-  const key = JSON.stringify([libraryState.playlists, libraryState.folders, selectedPlaylistId, selectedTagId, selectedFolderId, onlyUnassigned]);
+  const key = JSON.stringify([libraryState.playlists, libraryState.folders, selectedPlaylistId, selectedTagId, selectedFolderId]);
   if (playlistList.renderKey === key) return;
   playlistList.renderKey = key;
   playlistList.replaceChildren();
@@ -1261,6 +1270,7 @@ function renderPlaylists() {
     const count = libraryState.playlists.filter((p) => p.folder_id === folder.id).length;
     collectionRowLabel(toggle, `${folder.collapsed ? "▸" : "▾"} ${folder.name}`, count);
     toggle.dataset.selected = String(selectedFolderId === folder.id);
+    toggle.dataset.collection = `folders:${folder.id}`;
     const children = document.createElement("div");
     children.className = "folder-playlists";
     children.hidden = Boolean(folder.collapsed);
@@ -1269,7 +1279,6 @@ function renderPlaylists() {
     toggle.addEventListener("click", async () => {
       selectedFolderId = folder.id;
       selectedPlaylistId = selectedTagId = '';
-      onlyUnassigned = false;
       toggle.disabled = true;
       try {
         await requestJson(`/api/playlist-folders/${folder.id}`, { method: "PATCH", body: JSON.stringify({ collapsed: !folder.collapsed }) });
@@ -1294,6 +1303,7 @@ function renderPlaylists() {
     button.className = "playlist-filter";
     button.type = "button";
     button.dataset.playlistId = playlist.id;
+    button.dataset.collection = `playlists:${playlist.id}`;
     button.dataset.selected = playlist.id === selectedPlaylistId ? "true" : "false";
     collectionRowLabel(button, playlist.name, playlist.track_ids.length);
     button.draggable = true;
@@ -1339,8 +1349,7 @@ function renderPlaylists() {
     (containers.get(playlist.folder_id) || root).append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");
-  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId || selectedFolderId || onlyUnassigned ? "false" : "true";
-  document.querySelector("#unassigned-tracks").dataset.selected = String(onlyUnassigned);
+  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId || selectedFolderId ? "false" : "true";
 }
 
 function renderTags() {
@@ -1357,6 +1366,7 @@ function renderTags() {
     button.draggable = true;
     applyTagStyle(button, tag);
     button.dataset.tagId = tag.id;
+    button.dataset.collection = `tags:${tag.id}`;
     button.dataset.selected = tag.id === selectedTagId ? "true" : "false";
     collectionRowLabel(button, tag.name, tag.track_ids.length);
     button.addEventListener("dragstart", (event) => {
@@ -1403,13 +1413,6 @@ function renderTags() {
 
 function renderLibrary() {
   if (draggedTrackTag || draggedPlaylist) return;
-  if (window.Mixer?.active) {
-    renderPlaylists();
-    renderTags();
-    window.Mixer.sync();
-    return;
-  }
-  if (selectedPlaylistId || selectedTagId) onlyUnassigned = false;
   renderImports();
   renderPlaylists();
   renderTags();
@@ -1418,10 +1421,13 @@ function renderLibrary() {
     .filter(trackInFolder)
     .filter((track) => trackInPlaylist(track, selectedPlaylistId))
     .filter((track) => trackInTag(track, selectedTagId));
-  const assigned = new Set(libraryState.playlists.flatMap((p) => p.track_ids));
+  const query = document.querySelector('#library-search').value.trim().toLocaleLowerCase();
   const tracks = [...liveTracksForLibrary(), ...storedTracks]
-    .filter((track) => !onlyUnassigned || !assigned.has(track.job_id));
+    .filter(track => `${track.title || track.file_name || ''} ${track.artist || ''}`.toLocaleLowerCase().includes(query));
   renderedTracks = tracks;
+  if (!tracks.some(track => track.job_id === selectedLibraryTrackId)) selectedLibraryTrackId = tracks[0]?.job_id || '';
+  window.Mixer?.sync();
+  window.TuneSaverPlayer?.refreshMetadata(libraryState.tracks.find(track => track.job_id === currentTrackId));
   document.querySelector("#library-title").textContent = currentLibraryTitle();
   libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
   const renderKey = JSON.stringify([tracks, selectedPlaylistId, selectedTagId, selectedFolderId]);
@@ -1445,6 +1451,12 @@ function renderLibrary() {
     row.draggable = !track.is_live && track.state !== "failed";
     row.dataset.jobId = track.job_id;
     row.dataset.state = track.state || "done";
+    row.dataset.selected = String(track.job_id === selectedLibraryTrackId);
+    row.tabIndex = 0;
+    row.addEventListener('click', () => selectLibraryTrack(track.job_id));
+    row.addEventListener('keydown', event => {
+      if (event.target === row && event.key === 'Enter') { event.preventDefault(); selectLibraryTrack(track.job_id); }
+    });
     row.addEventListener("dragstart", (event) => {
       if (track.is_live || track.state === "failed") {
         event.preventDefault();
@@ -1498,7 +1510,7 @@ function renderLibrary() {
     const title = document.createElement("strong");
     title.textContent = track.title || track.file_name || track.job_id;
     const meta = document.createElement("span");
-    meta.textContent = `${track.artist || "Artiste inconnu"}${track.created_at ? ` · ${formatAdminDate(track.created_at)}` : ""}`;
+    meta.textContent = track.artist || "Artiste inconnu";
     const badges = document.createElement("div");
     badges.className = "track-tags";
     for (const tag of track.tags || []) {
@@ -1527,6 +1539,12 @@ function renderLibrary() {
     body.append(title, meta, badges);
     const actions = document.createElement("div");
     actions.className = "library-track-actions";
+    const menu = document.createElement('details'); menu.className = 'workspace-menu track-menu';
+    const summary = document.createElement('summary');
+    summary.title = 'Actions du morceau'; summary.setAttribute('aria-label', `Actions : ${track.title || 'ce son'}`);
+    appendUIIcon(summary, 'Settings2');
+    const extraActions = document.createElement('div'); extraActions.className = 'workspace-menu-items';
+    menu.append(summary, extraActions);
     if (track.streamable) {
       const play = document.createElement("button");
       play.className = "play-button";
@@ -1541,6 +1559,12 @@ function renderLibrary() {
         finally { play.disabled = false; }
       });
       actions.append(play);
+      for (const [index, letter] of ['A', 'B'].entries()) {
+        const load = document.createElement('button'); load.type = 'button'; load.title = `Charger sur ${letter}`;
+        appendUIIcon(load, 'LogIn'); load.append(document.createTextNode(`Charger sur ${letter}`));
+        load.addEventListener('click', () => window.Mixer?.loadTrack(track, index).catch(error => showToast(error.message, 'error')));
+        extraActions.append(load);
+      }
     }
     actions.append(makeSourceBadge(track));
     if (track.is_live || track.state === "failed") {
@@ -1562,7 +1586,8 @@ function renderLibrary() {
         try { await downloadReadyJob(track.job_id); }
         catch (error) { showToast(error.message, "error"); download.disabled = false; }
       });
-      actions.append(download);
+      download.append(document.createTextNode('Télécharger le fichier'));
+      extraActions.append(download);
     }
     actions.append(makeTrackDeleteButton(track));
     if (selectedPlaylistId || selectedTagId) {
@@ -1579,18 +1604,27 @@ function renderLibrary() {
         await requestJson(url, { method: "DELETE" });
         await refreshLibrary();
       });
-      actions.append(remove);
+      remove.append(document.createTextNode(remove.title));
+      extraActions.append(remove);
     }
     const analysis = track.mix_analysis || {};
     const bpm = document.createElement('span'); bpm.className = 'track-bpm';
-    bpm.textContent = analysis.bpm ? Number(analysis.bpm).toFixed(1) : '—';
+    bpm.textContent = analysis.bpm ? Number(analysis.bpm).toFixed(2) : '—';
     const key = document.createElement('span'); key.className = 'track-key'; key.textContent = analysis.camelot || analysis.key || '—';
     const duration = document.createElement('span'); duration.className = 'track-duration';
     duration.textContent = analysis.duration ? `${Math.floor(analysis.duration / 60)}:${String(Math.floor(analysis.duration % 60)).padStart(2, '0')}` : '—';
+    if (extraActions.childElementCount) actions.insertBefore(menu, actions.querySelector('.track-delete'));
     row.append(cover, body, bpm, key, duration, actions);
     libraryTracks.append(row);
   });
 }
+
+function selectLibraryTrack(id) {
+  selectedLibraryTrackId = id;
+  libraryTracks.querySelectorAll('.library-track').forEach(row => { row.dataset.selected = String(row.dataset.jobId === id); });
+}
+
+document.querySelector('#library-search').addEventListener('input', renderLibrary);
 
 const dismissedImports = new Set((() => {
   try {
@@ -1680,19 +1714,11 @@ async function refreshLibrary() {
 
 document.querySelector(".playlist-filter[data-playlist-id='']").addEventListener("click", () => {
   selectedFolderId = '';
-  onlyUnassigned = false;
   selectedPlaylistId = "";
   selectedTagId = "";
   renderLibrary();
 });
 
-document.querySelector("#unassigned-tracks").addEventListener("click", () => {
-  selectedFolderId = '';
-  selectedPlaylistId = "";
-  selectedTagId = "";
-  onlyUnassigned = true;
-  renderLibrary();
-});
 
 document.querySelector("#create-folder").addEventListener("click", async () => {
   const name = await siteDialogs.prompt("Nom du dossier", "", { maxLength: 80 });
@@ -1717,7 +1743,6 @@ createPlaylistButton.addEventListener("click", async () => {
     selectedPlaylistId = result.playlist.id;
     selectedFolderId = selectedTagId = '';
     await refreshLibrary();
-    if (window.Mixer?.active) window.Mixer.selectCollection(`playlists:${result.playlist.id}`);
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -1738,7 +1763,6 @@ createTagButton.addEventListener("click", async () => {
     selectedPlaylistId = "";
     selectedFolderId = '';
     await refreshLibrary();
-    if (window.Mixer?.active) window.Mixer.selectCollection(`tags:${result.tag.id}`);
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -2233,6 +2257,12 @@ window.TuneSaverMixerHost = {
   get currentPlayback() { return { track: libraryState.tracks.find(t => t.job_id === currentTrackId), position: audioPlayer.currentTime || 0, playing: !audioPlayer.paused }; },
   playNormally: (track, start, autoplay) => streamTrack(track, { normal: true, start, autoplay }),
   get library() { return libraryState; },
+  get visibleTracks() { return renderedTracks; },
+  get selectedTrackId() { return selectedLibraryTrackId; },
+  get collectionValue() { return selectedPlaylistId ? `playlists:${selectedPlaylistId}` : selectedTagId ? `tags:${selectedTagId}` : selectedFolderId ? `folders:${selectedFolderId}` : ''; },
+  selectTrack: selectLibraryTrack,
+  playNextTrack,
+  playPreviousTrack,
   get signedIn() { return Boolean(session); },
   requestJson,
   loadPrivateImage,
@@ -2240,15 +2270,6 @@ window.TuneSaverMixerHost = {
   resetPlayer,
   makeTrackDeleteButton,
   collectionRowLabel,
-  setCollectionContext(value) {
-    const [kind, id] = value.split(':');
-    selectedPlaylistId = kind === 'playlists' ? id : '';
-    selectedTagId = kind === 'tags' ? id : '';
-    selectedFolderId = '';
-    onlyUnassigned = value === 'unassigned';
-    renderCollectionActions();
-    document.querySelector('#library-title').textContent = currentLibraryTitle();
-  },
 };
 
 start();

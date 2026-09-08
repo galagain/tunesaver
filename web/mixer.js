@@ -6,10 +6,7 @@ import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, U
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const host = () => window.TuneSaverMixerHost;
-const panel = $('#mixer-panel');
 const performance = $('#mix-performance');
-$('.library-sidebar').append($('#mix-collections'));
-for (const selector of ['.mix-toolbar', '#mix-settings', '#mix-message', '.mix-wave-toolbar', '#mix-timelines', '#mix-decks', '.mix-master']) performance.append($(selector, panel));
 const deckTabs = document.createElement('div'); deckTabs.className = 'mix-deck-tabs'; deckTabs.setAttribute('role', 'group'); deckTabs.setAttribute('aria-label', 'Platine affichée');
 for (const [i, letter] of ['A', 'B'].entries()) {
   const tab = document.createElement('button'); tab.type = 'button'; tab.textContent = letter; tab.setAttribute('aria-pressed', String(i === 0));
@@ -36,9 +33,6 @@ const run = (callback) => { Promise.resolve().then(callback).catch(e => message(
 let active = false;
 let bus = null;
 let decks = [];
-let visibleTracks = [];
-let selectedId = '';
-let fingerprint = '';
 let midi = null;
 let midiInput = null;
 let midiOpening = null;
@@ -60,8 +54,6 @@ let animation = null;
 let analysisTimer = null;
 let browserFocus = 'tracks';
 let collectionCursor = '';
-let visibleCollections = [];
-const collapsedFolders = new Set();
 
 function animate() {
   if (!active) return;
@@ -689,203 +681,72 @@ class Deck {
 
 function $$(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
 
-function filteredTracks() {
-  const library = host().library;
-  const value = $('#mix-collection').value;
-  const [kind, id] = value.split(':');
-  const collection = library[kind]?.find(item => item.id === id);
-  const query = $('#mix-search').value.trim().toLocaleLowerCase();
-  const assigned = value === 'unassigned' ? new Set(library.playlists.flatMap(p => p.track_ids)) : null;
-  return library.tracks.filter(track => track.streamable
-    && (!assigned || !assigned.has(track.job_id))
-    && (!collection || collection.track_ids.includes(track.job_id))
-    && `${track.title || track.file_name || ''} ${track.artist || ''}`.toLocaleLowerCase().includes(query));
-}
-
-function renderTracks() {
-  visibleTracks = filteredTracks();
-  if (!visibleTracks.some(t => t.job_id === selectedId)) selectedId = visibleTracks[0]?.job_id || '';
-  $('#mix-track-count').textContent = `${visibleTracks.length} sons`;
-  const list = $('#mix-tracks');
-  list.replaceChildren();
-  if (!visibleTracks.length) {
-    const empty = document.createElement('p');
-    empty.className = 'empty-copy';
-    empty.textContent = 'Aucun son disponible.';
-    list.append(empty);
-  }
-  for (const track of visibleTracks) {
-    const row = document.createElement('div');
-    row.className = 'mix-library-row';
-    row.dataset.jobId = track.job_id;
-    row.dataset.selected = String(track.job_id === selectedId);
-    row.setAttribute('role', 'listitem');
-    row.tabIndex = 0;
-    row.draggable = true;
-    row.addEventListener('dragstart', e => { selectedId = track.job_id; e.dataTransfer.setData('application/x-tunesaver-job', track.job_id); });
-    row.addEventListener('click', () => selectTrack(track.job_id));
-    row.addEventListener('keydown', e => {
-      if (e.target !== row) return;
-      if (e.key === 'Enter') { e.preventDefault(); selectTrack(track.job_id); }
-      if (['ArrowUp', 'ArrowDown'].includes(e.key)) { e.preventDefault(); browse(e.key === 'ArrowDown' ? 1 : -1, true); }
-    });
-    const info = document.createElement('div');
-    info.className = 'mix-track-info';
-    const title = document.createElement('strong');
-    title.textContent = track.title || track.file_name || 'Sans titre';
-    const artist = document.createElement('span');
-    artist.textContent = track.artist || '';
-    info.append(title, artist);
-    row.append(cover(track), info);
-    const analysis = track.mix_analysis || {};
-    for (const [className, value] of [['bpm', analysis.bpm ? Number(analysis.bpm).toFixed(2) : analysis.status === 'failed' ? '!' : '—'], ['key', analysis.camelot || analysis.key || '—'], ['duration', analysis.duration ? time(analysis.duration) : '—']]) {
-      const cell = document.createElement('span'); cell.className = `mix-meta-${className}`; cell.textContent = value;
-      cell.title = className === 'key' ? [analysis.key, analysis.camelot].filter(Boolean).join(' · ') : analysis.error || '';
-      row.append(cell);
-    }
-    decks.forEach(deck => {
-      const load = document.createElement('button');
-      load.type = 'button'; load.textContent = deck.letter;
-      load.title = `Charger sur ${deck.letter}`;
-      load.setAttribute('aria-label', `Charger ${title.textContent} sur ${deck.letter}`);
-      load.addEventListener('click', () => run(() => deck.load(track)));
-      row.append(load);
-    });
-    row.append(host().makeTrackDeleteButton(track));
-    list.append(row);
-  }
-}
-
 function selectTrack(id) {
-  selectedId = id;
+  host().selectTrack(id);
   setBrowserFocus('tracks');
-  $$('.mix-library-row').forEach(row => { row.dataset.selected = String(row.dataset.jobId === id); });
+}
+
+function collectionButtons() {
+  return $$('.library-nav-content [data-collection]').filter(el => !el.closest('[hidden]'));
 }
 
 function browse(delta, focus = false) {
   if (!delta) return;
   if (browserFocus === 'collections' && !focus) {
-    if (!visibleCollections.length) return;
-    const current = visibleCollections.findIndex(c => c.id === collectionCursor);
-    collectionCursor = visibleCollections[clamp(current + Math.sign(delta), 0, visibleCollections.length - 1)].id;
-    renderCollections();
-    $('#mix-collections [data-cursor="true"]')?.scrollIntoView({ block: 'nearest' });
+    const buttons = collectionButtons();
+    if (!buttons.length) return;
+    const current = buttons.findIndex(el => el.dataset.collection === collectionCursor);
+    const target = buttons[clamp(current + Math.sign(delta), 0, buttons.length - 1)];
+    collectionCursor = target.dataset.collection;
+    updateBrowserFocus();
+    target.scrollIntoView({ block: 'nearest' });
     return;
   }
-  if (!visibleTracks.length) return;
-  const index = visibleTracks.findIndex(t => t.job_id === selectedId);
-  selectTrack(visibleTracks[clamp(index + Math.sign(delta), 0, visibleTracks.length - 1)].job_id);
-  const row = $('.mix-library-row[data-selected="true"]');
+  const tracks = host().visibleTracks.filter(track => track.streamable);
+  if (!tracks.length) return;
+  const index = tracks.findIndex(t => t.job_id === host().selectedTrackId);
+  selectTrack(tracks[clamp(index + Math.sign(delta), 0, tracks.length - 1)].job_id);
+  const row = $('.library-track[data-selected="true"]');
   row?.scrollIntoView({ block: 'nearest' });
   if (focus) row?.focus();
 }
 
-function setBrowserFocus(focus) {
-  browserFocus = focus;
-  $('.mix-browser').dataset.focus = focus;
-  renderCollections();
+function updateBrowserFocus() {
+  $('.library-layout').dataset.focus = browserFocus;
+  collectionButtons().forEach(el => {
+    el.dataset.cursor = String(active && browserFocus === 'collections' && el.dataset.collection === collectionCursor);
+  });
 }
 
-function chooseCollection(item) {
-  if (item.folder) {
-    if (collapsedFolders.has(item.folder)) collapsedFolders.delete(item.folder);
-    else collapsedFolders.add(item.folder);
-    collectionCursor = item.id;
-    renderCollections();
-    return;
-  }
-  $('#mix-collection').value = item.id;
-  collectionCursor = item.id;
-  renderTracks();
-  setBrowserFocus('tracks');
+function setBrowserFocus(focus) {
+  browserFocus = focus;
+  updateBrowserFocus();
 }
 
 function browseFocus(back = false) {
   if (back || browserFocus === 'tracks') {
-    collectionCursor = $('#mix-collection').value;
+    collectionCursor = host().collectionValue;
     setBrowserFocus('collections');
   } else {
-    const item = visibleCollections.find(c => c.id === collectionCursor);
-    if (item) chooseCollection(item);
+    collectionButtons().find(el => el.dataset.collection === collectionCursor)?.click();
+    setBrowserFocus('tracks');
   }
-}
-
-function renderCollections() {
-  const library = host().library;
-  const all = [{ id: '', name: 'Tous mes sons', depth: 0 }];
-  const folders = library.folders || [];
-  const folderIds = new Set(folders.map(f => f.id));
-  const playlistItem = (p, depth = 0) => ({ id: `playlists:${p.id}`, name: p.name, depth });
-  for (const folder of folders) {
-    all.push({ id: `folder:${folder.id}`, name: folder.name, folder: folder.id, depth: 0 });
-    if (!collapsedFolders.has(folder.id)) all.push(...library.playlists.filter(p => p.folder_id === folder.id).map(p => playlistItem(p, 1)));
-  }
-  all.push(...library.playlists.filter(p => !folderIds.has(p.folder_id)).map(p => playlistItem(p)));
-  all.push(...library.tags.map(t => ({ id: `tags:${t.id}`, name: t.name, tag: true, depth: 0 })));
-  all.push({ id: 'unassigned', name: 'Sons sans playlist', depth: 0 });
-  visibleCollections = all;
-  if (!all.some(c => c.id === collectionCursor)) collectionCursor = '';
-  const nav = $('#mix-collections');
-  nav.replaceChildren();
-  const heading = document.createElement('h3'); heading.textContent = 'Playlists'; nav.append(heading);
-  let tagsHeading = false;
-  for (const item of all) {
-    if (item.tag && !tagsHeading) { const title = document.createElement('h3'); title.textContent = 'Tags'; nav.append(title); tagsHeading = true; }
-    const el = document.createElement('button'); el.type = 'button';
-    el.dataset.collection = item.id; el.dataset.depth = item.depth;
-    el.dataset.selected = String(item.id === $('#mix-collection').value);
-    el.dataset.cursor = String(browserFocus === 'collections' && item.id === collectionCursor);
-    const collection = item.id.startsWith('playlists:') ? library.playlists.find(p => `playlists:${p.id}` === item.id)
-      : item.id.startsWith('tags:') ? library.tags.find(t => `tags:${t.id}` === item.id) : null;
-    host().collectionRowLabel(el, item.folder ? `${collapsedFolders.has(item.folder) ? '▸' : '▾'} ${item.name}` : item.name, collection?.track_ids.length ?? '');
-    if (item.folder) el.setAttribute('aria-expanded', String(!collapsedFolders.has(item.folder)));
-    else el.setAttribute('aria-pressed', String(item.id === $('#mix-collection').value));
-    el.addEventListener('click', () => chooseCollection(item));
-    el.addEventListener('keydown', event => {
-      if (['ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); browserFocus = 'collections'; collectionCursor = item.id; browse(event.key === 'ArrowUp' ? -1 : 1); $('#mix-collections [data-cursor="true"]')?.focus(); }
-    });
-    nav.append(el);
-  }
-  host().setCollectionContext($('#mix-collection').value);
 }
 
 function sync() {
   if (!active) return;
-  host().setCollectionContext($('#mix-collection').value);
-  $('#library-count').textContent = 'Deux platines';
-  $$('.playlist-filter, .tag-filter').forEach(el => { el.dataset.selected = String(el.id === 'mixer-nav'); });
-  const library = host().library;
-  const analyzed = library.tracks.filter(t => t.streamable);
+  const analyzed = host().library.tracks.filter(t => t.streamable);
   const done = analyzed.filter(t => t.mix_analysis?.status === 'done').length;
   const failed = analyzed.filter(t => t.mix_analysis?.status === 'failed').length;
   $('#mix-analysis-status').textContent = `Analyse : ${done}/${analyzed.length}${failed ? ` · ${failed} en échec` : ''}`;
-  const next = JSON.stringify([library.tracks, library.playlists, library.tags, library.folders]);
-  if (next === fingerprint) return;
-  fingerprint = next;
-  const select = $('#mix-collection');
-  const value = select.value;
-  select.replaceChildren(new Option('Tous mes sons', ''));
-  select.append(new Option('Sons sans playlist', 'unassigned'));
-  for (const [kind, name] of [['playlists', 'Playlists'], ['tags', 'Tags']]) {
-    const group = document.createElement('optgroup');
-    group.label = name;
-    for (const item of library[kind]) group.append(new Option(item.name, `${kind}:${item.id}`));
-    select.append(group);
-  }
-  if (Array.from(select.options).some(o => o.value === value)) select.value = value;
-  renderCollections();
-  renderTracks();
+  updateBrowserFocus();
 }
-
-function open() {
+function open(transfer = true) {
   if (!host()?.signedIn) return;
-  const previous = host().currentPlayback;
+  const previous = transfer ? host().currentPlayback : null;
   active = true;
   host().resetPlayer();
   document.body.dataset.mixer = 'true';
-  $('#library-content').hidden = true;
-  $('#results-section').hidden = true;
-  panel.hidden = false;
   performance.hidden = false;
   $('#dock-empty').hidden = true;
   $('#mixer-nav').setAttribute('aria-pressed', 'true');
@@ -913,14 +774,12 @@ function close(transfer = false) {
   cancelAnimationFrame(animation);
   clearInterval(analysisTimer);
   pause();
-  panel.hidden = true;
   performance.hidden = true;
   $('#mixer-nav').setAttribute('aria-pressed', 'false');
   $('#dock-empty').hidden = !$('#player-bar').hidden;
-  $('#library-content').hidden = false;
   delete document.body.dataset.mixer;
   $('#mixer-nav').setAttribute('aria-expanded', 'false');
-  if (transfer) host().renderLibrary();
+  updateBrowserFocus();
   if (previous) run(() => host().playNormally(previous.track, previous.position, previous.playing));
 }
 
@@ -947,7 +806,7 @@ function handleMIDI(event) {
   if (cmd.action === 'browse') return browse(cmd.value);
   if (cmd.action === 'browseFocus') return browseFocus(cmd.back);
   if (cmd.action === 'load') {
-    const track = visibleTracks.find(t => t.job_id === selectedId);
+    const track = host().visibleTracks.find(t => t.job_id === host().selectedTrackId && t.streamable);
     if (track) run(() => d.load(track));
     return;
   }
@@ -1218,17 +1077,11 @@ function reset() {
   decks = [];
   $('#mix-decks').replaceChildren();
   refreshKnobs();
-  $('#mix-tracks').replaceChildren();
-  $('#mix-collection').replaceChildren(new Option('Tous mes sons', ''));
-  $('#mix-search').value = '';
   $('#mix-settings').hidden = true;
   $('#mix-audio-settings').setAttribute('aria-expanded', 'false');
   $('#mix-routing').value = 'stereo';
   for (const [id, value] of [['mix-cross', '0.5'], ['mix-master', '0.7'], ['mix-head-level', '0.5'], ['mix-head-mix', '0']]) $(`#${id}`).value = value;
-  visibleTracks = []; selectedId = ''; fingerprint = '';
-  browserFocus = 'tracks'; collectionCursor = ''; visibleCollections = [];
-  collapsedFolders.clear();
-  $('#mix-collections').replaceChildren();
+  browserFocus = 'tracks'; collectionCursor = '';
   $('#mix-analysis-status').textContent = '';
   cueMemory.clear(); message();
 }
@@ -1236,14 +1089,13 @@ function reset() {
 $('#mixer-nav').prepend(icon(Gauge));
 $('#mixer-nav').addEventListener('click', () => active ? close(true) : open());
 $('.library-sidebar').addEventListener('click', e => {
-  if (!active) return;
-  const target = e.target.closest('.playlist-filter, .tag-filter');
-  if (!target) return;
-  const collection = target.id === 'unassigned-tracks' ? 'unassigned' : target.dataset.tagId ? `tags:${target.dataset.tagId}` : target.dataset.playlistId ? `playlists:${target.dataset.playlistId}` : '';
-  $('#mix-collection').value = collection; collectionCursor = collection;
-  setBrowserFocus('tracks');
-  renderTracks();
-}, true);
+  if (e.target.closest('[data-collection]')) setBrowserFocus('tracks');
+});
+$('#library-tracks').addEventListener('keydown', e => {
+  if (e.target.matches('.library-track') && ['ArrowUp', 'ArrowDown'].includes(e.key)) {
+    e.preventDefault(); browse(e.key === 'ArrowDown' ? 1 : -1, true);
+  }
+});
 $('#mix-connect').prepend(icon(Usb));
 $('#mix-connect').addEventListener('click', () => run(connectMIDI));
 $('#mix-midi-input').addEventListener('change', () => { midiSelection = $('#mix-midi-input').value; run(bindMIDI); });
@@ -1299,8 +1151,6 @@ $('#mix-routing').addEventListener('change', () => {
 for (const id of ['mix-cross', 'mix-master', 'mix-head-level', 'mix-head-mix']) $(`#${id}`).addEventListener('input', updateMaster);
 for (const id of ['mix-master', 'mix-head-level', 'mix-head-mix']) makeKnob($(`#${id}`));
 $('#mix-cross').addEventListener('dblclick', () => { $('#mix-cross').value = '0.5'; updateMaster(); });
-$('#mix-search').addEventListener('input', renderTracks);
-$('#mix-collection').addEventListener('change', () => { collectionCursor = $('#mix-collection').value; setBrowserFocus('tracks'); renderTracks(); });
 window.addEventListener('pagehide', reset);
 window.addEventListener('beforeunload', event => {
   if (decks.some(d => d.playing())) { event.preventDefault(); event.returnValue = ''; }
@@ -1308,12 +1158,13 @@ window.addEventListener('beforeunload', event => {
 navigator.mediaDevices?.addEventListener('devicechange', () => {
   if (active && bus && !$('#mix-settings').hidden) run(refreshOutputs);
 });
-window.Mixer = { get active() { return active; }, sync, reset, pause, selectCollection(id) {
-  chooseCollection({ id });
+window.Mixer = { get active() { return active; }, sync, reset, pause, async loadTrack(track, index) {
+  if (!active) open(index !== 0);
+  await decks[index]?.load(track);
 }, removeTrack(jobId) {
   decks.filter(deck => deck.track?.job_id === jobId).forEach(deck => run(() => deck.eject(true)));
 }, async playTrack(track) {
-  if (!active) open();
+  if (!active) open(false);
   const target = decks[0];
   const loaded = await target.load(track);
   if (loaded && active && decks[0] === target && target.ready && !target.playing()) await target.toggle();

@@ -349,7 +349,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mixer_assets_are_public_but_library_stays_private(self) -> None:
         async with TestClient(TestServer(webapp.create_app())) as client:
-            for path in ("/mixer.js", "/flx4.js", "/mixer.css", "/vendor/mixer-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
+            for path in ("/mixer.js", "/player.js", "/flx4.js", "/mixer.css", "/vendor/mixer-icons.js", "/vendor/player-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
                 response = await client.get(path)
                 self.assertEqual(response.status, 200, path)
                 self.assertGreater(len(await response.read()), 100)
@@ -1271,9 +1271,25 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 headers={"Authorization": f"Bearer {TEST_TOKEN}"},
             )
             self.assertEqual(ticket.status, 200)
-            streamed = await client.get((await ticket.json())["url"])
+            stream_url = (await ticket.json())["url"]
+            streamed = await client.get(stream_url)
             self.assertEqual(streamed.status, 200)
             self.assertEqual(await streamed.read(), b"zip-audio")
+            for byte_range, content_range, expected in (
+                ("bytes=4-6", "bytes 4-6/9", b"aud"),
+                ("bytes=4-", "bytes 4-8/9", b"audio"),
+                ("bytes=-3", "bytes 6-8/9", b"dio"),
+                ("bytes=7-999", "bytes 7-8/9", b"io"),
+            ):
+                partial = await client.get(stream_url, headers={"Range": byte_range})
+                self.assertEqual(partial.status, 206)
+                self.assertEqual(partial.headers["Content-Range"], content_range)
+                self.assertEqual(partial.headers["Accept-Ranges"], "bytes")
+                self.assertEqual(await partial.read(), expected)
+            for byte_range in ("bytes=99-", "bytes=5-2", "bytes=0-1,4-5", "invalid"):
+                invalid = await client.get(stream_url, headers={"Range": byte_range})
+                self.assertEqual(invalid.status, 416)
+                self.assertEqual(invalid.headers["Content-Range"], "bytes */9")
 
     async def test_tidal_refresh_reuses_a_newer_token_from_disk(self) -> None:
         auth = {

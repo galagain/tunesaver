@@ -49,8 +49,8 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.evaluate(() => { selectedPlaylistId = selectedTagId = ''; renderLibrary(); });
       if (engine === chromium) {
         await page.locator('#mixer-nav').click();
-        await expect(page.locator('#mix-tracks .track-delete')).toHaveCount(1);
-        await page.locator('#mix-tracks .track-delete').click();
+        await expect(page.locator('#library-tracks .track-delete')).toHaveCount(4);
+        await page.locator('.library-track[data-state="done"] .track-delete').click();
         await page.locator('#action-dialog-cancel').click();
         await page.screenshot({ path: `/work/track-delete-mixer-${width}.png`, fullPage: true });
         await page.locator('#mixer-nav').click();

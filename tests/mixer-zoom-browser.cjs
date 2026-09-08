@@ -32,7 +32,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
     expect(await wheel({ deltaY: -100 })).toBe(false);
     expect(await wheel({ deltaY: -100, shiftKey: true, ctrlKey: true })).toBe(false);
     expect(await wheel({ deltaY: -100, shiftKey: true, metaKey: true })).toBe(false);
-    expect(await wheel({ deltaY: -100, shiftKey: true }, '#mix-search')).toBe(false);
+    expect(await wheel({ deltaY: -100, shiftKey: true }, '#library-search')).toBe(false);
     await expect(zoom).toHaveValue('4');
     expect(await wheel({ deltaX: -100, shiftKey: true })).toBe(true);
     await expect(zoom).toHaveValue('3');

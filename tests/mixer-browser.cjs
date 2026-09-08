@@ -40,10 +40,15 @@ function audioFixture() {
         window.__sendMIDI = data => __port.onmidimessage?.({ data });
         Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: async () => __midi });
       });
-      await page.route('**/fixture/audio**', route => route.fulfill({ body: audioFixture(), contentType: 'audio/wav' }));
+      await page.route('**/fixture/audio**', route => {
+        const body = audioFixture(), range = /^bytes=(\d+)-(\d*)$/.exec(route.request().headers().range || '');
+        const start = range ? Number(range[1]) : 0, end = range?.[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1;
+        return route.fulfill({ status: range ? 206 : 200, body: body.subarray(start, end + 1), contentType: 'audio/wav',
+          headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${body.length}` } : {}) } });
+      });
       await page.route('**/api/stream-ticket', route => route.fulfill({ json: { url: `/fixture/audio?id=${route.request().postDataJSON().job_id}` } }));
       await page.goto(process.env.MIXER_URL || 'http://127.0.0.1:8081');
-      await page.waitForFunction(() => window.Mixer && window.TuneSaverMixerHost && publicConfig !== null);
+      await page.waitForFunction(() => window.Mixer && window.TuneSaverPlayer && window.TuneSaverMixerHost && publicConfig !== null);
       await page.evaluate(() => {
         session = { access_token: 'fixture' };
         document.querySelector('#auth-view').hidden = true; document.querySelector('#app-view').hidden = false;
@@ -57,7 +62,7 @@ function audioFixture() {
           data.set([peak, Math.round(peak * .25), Math.round(peak * .15), peak, peak], i * 5);
         }
         const waveform = { encoding: 'u8-lmhpn', rate: 441, frames, data: btoa(Array.from(data, n => String.fromCharCode(n)).join('')) };
-        const analysis = bpm => ({ version: 2, engine: 'Queen Mary DSP', bpm, duration: 12, grid_offset: 0, key: 'Am', camelot: '8A', grid_quality: 'stable', waveform });
+        const analysis = bpm => ({ version: 2, engine: 'Queen Mary DSP', bpm, duration: 12, grid_offset: 0, key: 'Am', camelot: '8A', grid_quality: 'stable', codec: 'pcm_s16le', sample_rate: 44100, bit_rate: 1411200, waveform });
         libraryState.tracks.forEach((t, i) => { t.mix_analysis = { status: 'done', bpm: i ? 128 : 120, duration: 12, key: 'Am', camelot: '8A' }; });
         window.__mixSettings = {};
         TuneSaverMixerHost.requestJson = async (path, options) => {
@@ -79,11 +84,40 @@ function audioFixture() {
       await page.evaluate(() => streamTrack(libraryState.tracks[0]));
       await page.waitForFunction(() => !audioPlayer.paused && audioPlayer.currentTime > .2);
       await expect(page.locator('#player-bar')).toBeVisible();
+      await expect(page.locator('#player-metadata')).toContainText('120.00 BPM');
+      await expect(page.locator('#player-metadata')).toContainText('8A');
+      await expect(page.locator('#player-metadata')).toContainText('44.1 kHz');
+      await expect(page.locator('#player-toggle')).toHaveCSS('background-color', 'rgb(0, 215, 157)');
+      await expect(page.locator('#audio-player')).not.toHaveAttribute('controls');
+      const playerWave = page.locator('#player-waveform');
+      await expect.poll(() => playerWave.evaluate(c => {
+        const p = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0; for (let i = 0; i < p.length; i += 4) if (p[i] > p[i + 1] + 30) n++;
+        return n;
+      })).toBeGreaterThan(100);
+      await page.locator('#player-toggle').click();
+      const playerBox = await playerWave.boundingBox();
+      await playerWave.click({ position: { x: playerBox.width / 2, y: playerBox.height / 2 } });
+      await expect.poll(() => page.evaluate(() => audioPlayer.currentTime)).toBeCloseTo(6, 0);
+      await playerWave.press('Home');
+      await expect.poll(() => page.evaluate(() => audioPlayer.currentTime)).toBe(0);
+      await page.locator('#player-mute').click();
+      expect(await page.evaluate(() => audioPlayer.muted)).toBe(true);
+      await page.locator('#player-mute').click();
+      expect(await page.evaluate(() => audioPlayer.muted)).toBe(false);
+      await page.screenshot({ path: `/work/player-${isFirefox ? 'firefox-' : ''}${width}.png`, fullPage: true });
+      await page.evaluate(() => { audioPlayer.currentTime = 11.95; });
+      await page.locator('#player-toggle').click();
+      await expect(page.locator('#player-title')).toContainText('Another very long track');
+      await expect(page.locator('#player-metadata')).toContainText('128.00 BPM');
+      await expect(page.locator('#player-next')).toBeDisabled();
+      await page.locator('#player-previous').click();
+      await expect(page.locator('#player-title')).toHaveText('First light');
       await page.locator('#mixer-nav').click();
       const a = await deck(0);
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
       await expect(a.locator('.mix-deck-status')).toHaveText('En lecture', { timeout: 15000 });
-      await page.locator('.mix-library-row[data-job-id="two"] button').first().click();
+      await page.locator('.library-track[data-job-id="two"] .play-button').click();
       await expect(page.locator('#action-dialog')).toBeVisible();
       await page.locator('#action-dialog-cancel').click();
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
@@ -94,7 +128,8 @@ function audioFixture() {
       await page.locator('#mix-stop').click();
       await expect(page.locator('#player-bar')).toBeHidden();
       await expect(page.locator('#mix-performance')).toBeVisible();
-      await page.locator('.mix-library-row[data-job-id="two"] button[title="Charger sur B"]').click();
+      await page.locator('.library-track[data-job-id="two"] .track-menu > summary').click();
+      await page.locator('.library-track[data-job-id="two"] button[title="Charger sur B"]').click();
       const b = await deck(1);
       await expect(b.locator('.mix-deck-status')).toHaveText('Prêt');
       await (await deck(0)).locator('[data-action="play"]').click();
@@ -146,8 +181,8 @@ function audioFixture() {
       await page.evaluate(() => { __midi.inputs.set('flx4', __port); __midi.onstatechange({ port: __port }); });
       await expect(page.locator('#mix-midi-status')).toContainText('connecté');
       await page.evaluate(() => { __sendMIDI([0x96, 0x41, 127]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0x96, 0x41, 127]); });
-      await expect(page.locator('#mix-collection')).toHaveValue('playlists:p');
-      await page.locator('#mix-collections [data-collection=""]').click();
+      await expect(page.locator('[data-collection="playlists:p"]')).toHaveAttribute('data-selected', 'true');
+      await page.locator('.library-nav-content [data-collection=""]').click();
       await expect(page.locator('#mix-performance')).toBeVisible();
       await expect(page.locator('#mixer-nav')).toHaveAttribute('aria-pressed', 'true');
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
@@ -190,8 +225,8 @@ function audioFixture() {
       await page.evaluate(() => __sendMIDI([0x90, 0x0b, 127]));
       await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await page.locator('#mix-stop').click();
-      await page.locator('#mix-search').fill('first'); await expect(page.locator('.mix-library-row')).toHaveCount(1);
-      await page.locator('#mix-search').fill(''); await expect(page.locator('.mix-library-row')).toHaveCount(2);
+      await page.locator('#library-search').fill('first'); await expect(page.locator('.library-track')).toHaveCount(1);
+      await page.locator('#library-search').fill(''); await expect(page.locator('.library-track')).toHaveCount(2);
       await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
       const dock = await page.locator('#playback-dock').boundingBox();
       if (Math.abs(dock.y + dock.height - 1000) > 1) throw Error('Playback dock is not fixed to viewport bottom');
@@ -201,14 +236,14 @@ function audioFixture() {
       await expect(page.locator('#mix-performance')).toBeHidden(); await expect(page.locator('#player-bar')).toBeVisible();
       await expect(page.locator('#player-title')).toHaveText('First light');
       await page.locator('#mixer-nav').click(); await expect(a.locator('.mix-deck-status')).toHaveText('Prêt');
-      await page.locator('#mix-collection').selectOption('unassigned');
-      await expect(page.locator('.mix-library-row')).toHaveCount(1);
-      await expect(page.locator('.mix-library-row')).toHaveAttribute('data-job-id', 'two');
+      await page.locator('[data-collection="tags:t"]').click();
+      await expect(page.locator('.library-track')).toHaveCount(1);
+      await expect(page.locator('.library-track')).toHaveAttribute('data-job-id', 'two');
       await page.route('**/fixture/audio**', async route => {
         await new Promise(resolve => setTimeout(resolve, 600));
         await route.fulfill({ body: audioFixture(), contentType: 'audio/wav' }).catch(() => {});
       });
-      await page.locator('.mix-library-row button').first().click();
+      await page.locator('.library-track .play-button').click();
       await expect(a.locator('.mix-deck-status')).toHaveText('Chargement…');
       await page.evaluate(() => showAuth());
       await expect(page.locator('#playback-dock')).toBeHidden();

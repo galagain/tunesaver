@@ -1334,6 +1334,8 @@ async def api_middleware(
             "/app.js",
             "/style.css",
             "/mixer.js",
+            "/player.js",
+            "/vendor/player-icons.js",
             "/flx4.js",
             "/mix-waveforms.js",
             "/mix-knobs.js",
@@ -3265,19 +3267,39 @@ async def zip_audio_response(
     content_type = audio_mime_type(Path(member.filename).name)
     if not content_type:
         raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
+    size = member.file_size
+    start, stop, partial = 0, size, False
+    if request.headers.get("Range") and not request.headers.get("If-Range"):
+        try:
+            requested = request.http_range
+            start = requested.start or 0
+            if start < 0:
+                start = max(0, size + start)
+            stop = min(size, requested.stop if requested.stop is not None else size)
+            if start >= stop:
+                raise ValueError("Unsatisfiable range")
+        except ValueError:
+            raise web.HTTPRequestRangeNotSatisfiable(headers={"Content-Range": f"bytes */{size}"})
+        partial = True
+    headers = {"Content-Type": content_type, "Content-Length": str(stop - start), "Accept-Ranges": "bytes"}
+    if partial:
+        headers["Content-Range"] = f"bytes {start}-{stop - 1}/{size}"
     response = web.StreamResponse(
-        headers={
-            "Content-Type": content_type,
-            "Content-Length": str(member.file_size),
-            "Accept-Ranges": "none",
-        }
+        status=206 if partial else 200,
+        headers=headers,
     )
     await response.prepare(request)
+    if request.method == "HEAD":
+        return response
     try:
         with zipfile.ZipFile(path) as archive:
             with archive.open(member) as handle:
-                while chunk := await asyncio.to_thread(handle.read, 1024 * 1024):
+                if start:
+                    await asyncio.to_thread(handle.seek, start)
+                remaining = stop - start
+                while remaining and (chunk := await asyncio.to_thread(handle.read, min(remaining, 1024 * 1024))):
                     await response.write(chunk)
+                    remaining -= len(chunk)
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
         raise PublicError("Fichier audio illisible.", status=404) from exc
     await response.write_eof()
@@ -3371,7 +3393,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("mixer.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js"):
+    for asset in ("mixer.js", "player.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js", "vendor/player-icons.js"):
         app.router.add_get(f"/{asset}", mixer_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)

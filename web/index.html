@@ -6,10 +6,11 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260908-15">
-    <link rel="stylesheet" href="/mixer.css?v=20260908-13">
-    <script src="/app.js?v=20260908-15" defer></script>
-    <script src="/mixer.js?v=20260908-18" type="module"></script>
+    <link rel="stylesheet" href="/style.css?v=20260908-19">
+    <link rel="stylesheet" href="/mixer.css?v=20260908-19">
+    <script src="/app.js?v=20260908-19" defer></script>
+    <script src="/mixer.js?v=20260908-19" type="module"></script>
+    <script src="/player.js?v=20260908-19" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -102,16 +103,15 @@
           </details>
         </div>
         <div class="library-nav-content">
-          <button class="playlist-filter" data-playlist-id="" data-selected="true" type="button">Mes sons</button>
-          <button id="unassigned-tracks" class="playlist-filter" type="button">Sons sans playlist</button>
-          <details class="nav-group" open>
-            <summary id="playlist-title">Mes playlists</summary>
+          <button class="playlist-filter" data-playlist-id="" data-collection="" data-selected="true" type="button">Tous mes sons</button>
+          <section class="nav-group">
+            <h3 id="playlist-title">Playlists</h3>
             <div id="playlist-list" class="playlist-list"></div>
-          </details>
-          <details class="nav-group" open>
-            <summary>Mes tags</summary>
+          </section>
+          <section class="nav-group">
+            <h3>Tags</h3>
             <div id="tag-list" class="tag-list"></div>
-          </details>
+          </section>
         </div>
       </aside>
       <div class="workspace-main">
@@ -225,6 +225,7 @@
         <div class="library-layout">
           <div class="library-main">
             <div id="library-content">
+            <div class="library-toolbar"><input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons"></div>
             <div class="library-table-head" aria-hidden="true">
               <span></span>
               <span>Titre / Artiste</span>
@@ -237,42 +238,6 @@
               <p class="empty-copy">Aucun son disponible.</p>
             </div>
             </div>
-            <section id="mixer-panel" aria-label="Mixer" hidden>
-              <div class="mix-toolbar">
-                <button id="mix-connect" type="button" class="secondary-button">Connecter le FLX4</button>
-                <span id="mix-midi-status" role="status">Non connecté</span>
-                <select id="mix-midi-input" aria-label="Entrée MIDI"><option value="">Détection automatique</option></select>
-                <button id="mix-midi-refresh" type="button" class="collection-rename" title="Réinitialiser le MIDI" aria-label="Réinitialiser le MIDI"></button>
-                <a id="mix-midi-help" href="https://support.mozilla.org/en-US/kb/site-permissions-panel" target="_blank" rel="noopener noreferrer" hidden>Autorisations MIDI</a>
-                <button id="mix-audio-settings" type="button" class="collection-rename" aria-label="Réglages audio" title="Réglages audio" aria-expanded="false"></button>
-                <button id="mix-stop" type="button" class="collection-rename" aria-label="Arrêter les deux platines" title="Arrêter les deux platines"></button>
-              </div>
-              <div id="mix-settings" hidden>
-                <label>Sortie audio<select id="mix-output"><option value="">Sortie système</option></select></label>
-                <button id="mix-output-refresh" type="button" class="collection-rename" title="Actualiser les sorties audio" aria-label="Actualiser les sorties audio"></button>
-                <label>Routage<select id="mix-routing"><option value="stereo">Master stéréo</option><option value="split" disabled>Master 1/2 + casque 3/4</option></select></label>
-                <span id="mix-audio-status" role="status"></span>
-              </div>
-              <div id="mix-message" role="status" aria-live="polite"></div>
-              <div class="mix-wave-toolbar"><span id="mix-analysis-status" role="status"></span><label>Fenêtre (s)<input id="mix-wave-zoom" type="number" min="1" max="24" step="1" value="4" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
-              <div id="mix-timelines" class="mix-timelines"></div>
-              <div id="mix-decks" class="mix-decks"></div>
-              <div class="mix-master">
-                <label class="mix-cross-label">Crossfader <input id="mix-cross" type="range" min="0" max="1" step="0.001" value="0.5" aria-label="Crossfader A vers B"><span class="mix-cross-ends"><span>A</span><span>B</span></span></label>
-                <label>Master <input id="mix-master" type="range" min="0" max="1" step="0.01" value="0.7"></label>
-                <label>Casque <input id="mix-head-level" type="range" min="0" max="1" step="0.01" value="0.5" disabled></label>
-                <label>Cue / Master <input id="mix-head-mix" type="range" min="0" max="1" step="0.01" value="0" disabled></label>
-              </div>
-              <div class="mix-library-toolbar">
-                <input id="mix-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans les sons du mixer">
-                <select id="mix-collection" aria-label="Playlist ou tag"><option value="">Tous mes sons</option></select>
-                <span id="mix-track-count"></span>
-              </div>
-              <div class="mix-browser" data-focus="tracks">
-                <nav id="mix-collections" aria-label="Playlists et tags du mixer"></nav>
-                <div class="mix-browser-tracks"><div class="mix-track-header"><span></span><span>Titre / Artiste</span><span>BPM</span><span>Clé</span><span>Durée</span><span></span><span></span></div><div id="mix-tracks" role="list" aria-label="Sons disponibles"></div></div>
-              </div>
-            </section>
           </div>
         </div>
       </section>
@@ -280,15 +245,52 @@
     </main>
       <section id="playback-dock" aria-label="Lecture et mix">
         <div class="dock-mode"><button id="mixer-nav" type="button" aria-controls="mix-performance" aria-expanded="false" aria-pressed="false">Mixer</button></div>
-        <div id="mix-performance" hidden></div>
+        <div id="mix-performance" hidden>
+          <div class="mix-toolbar">
+            <button id="mix-connect" type="button" class="secondary-button">Connecter le FLX4</button>
+            <span id="mix-midi-status" role="status">Non connecté</span>
+            <select id="mix-midi-input" aria-label="Entrée MIDI"><option value="">Détection automatique</option></select>
+            <button id="mix-midi-refresh" type="button" class="collection-rename" title="Réinitialiser le MIDI" aria-label="Réinitialiser le MIDI"></button>
+            <a id="mix-midi-help" href="https://support.mozilla.org/en-US/kb/site-permissions-panel" target="_blank" rel="noopener noreferrer" hidden>Autorisations MIDI</a>
+            <button id="mix-audio-settings" type="button" class="collection-rename" aria-label="Réglages audio" title="Réglages audio" aria-expanded="false"></button>
+            <button id="mix-stop" type="button" class="collection-rename" aria-label="Arrêter les deux platines" title="Arrêter les deux platines"></button>
+          </div>
+          <div id="mix-settings" hidden>
+            <label>Sortie audio<select id="mix-output"><option value="">Sortie système</option></select></label>
+            <button id="mix-output-refresh" type="button" class="collection-rename" title="Actualiser les sorties audio" aria-label="Actualiser les sorties audio"></button>
+            <label>Routage<select id="mix-routing"><option value="stereo">Master stéréo</option><option value="split" disabled>Master 1/2 + casque 3/4</option></select></label>
+            <span id="mix-audio-status" role="status"></span>
+          </div>
+          <div id="mix-message" role="status" aria-live="polite"></div>
+          <div class="mix-wave-toolbar"><span id="mix-analysis-status" role="status"></span><label>Fenêtre (s)<input id="mix-wave-zoom" type="number" min="1" max="24" step="1" value="4" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
+          <div id="mix-timelines" class="mix-timelines"></div>
+          <div id="mix-decks" class="mix-decks"></div>
+          <div class="mix-master">
+            <label class="mix-cross-label">Crossfader <input id="mix-cross" type="range" min="0" max="1" step="0.001" value="0.5" aria-label="Crossfader A vers B"><span class="mix-cross-ends"><span>A</span><span>B</span></span></label>
+            <label>Master <input id="mix-master" type="range" min="0" max="1" step="0.01" value="0.7"></label>
+            <label>Casque <input id="mix-head-level" type="range" min="0" max="1" step="0.01" value="0.5" disabled></label>
+            <label>Cue / Master <input id="mix-head-mix" type="range" min="0" max="1" step="0.01" value="0" disabled></label>
+          </div>
+        </div>
         <div id="dock-empty">Aucun morceau</div>
         <div id="player-bar" class="player-bar" hidden>
         <div class="player-cover" id="player-cover"><span>?</span></div>
         <div class="player-info">
           <strong id="player-title">Aucun son</strong>
           <span id="player-artist">Sélectionne un morceau</span>
+          <span id="player-metadata"></span>
         </div>
-        <audio id="audio-player" class="audio-player" controls preload="none"></audio>
+        <div class="player-transport">
+          <button id="player-previous" type="button" class="mix-icon" title="Morceau précédent" aria-label="Morceau précédent"></button>
+          <button id="player-toggle" type="button" class="mix-icon" data-action="play" title="Lire" aria-label="Lire"></button>
+          <button id="player-next" type="button" class="mix-icon" title="Morceau suivant" aria-label="Morceau suivant"></button>
+        </div>
+        <div class="player-wave-area">
+          <canvas id="player-waveform" tabindex="0" role="slider" aria-label="Position dans le morceau" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></canvas>
+          <div class="player-time"><span id="player-elapsed">0:00</span><span id="player-status" role="status"></span><button id="player-retry" class="mix-icon" type="button" hidden></button><span id="player-duration">0:00</span></div>
+        </div>
+        <button id="player-mute" type="button" class="mix-icon" title="Couper le son" aria-label="Couper le son" aria-pressed="false"></button>
+        <audio id="audio-player" class="audio-player" preload="none" hidden></audio>
       </div>
       </section>
     </div>
