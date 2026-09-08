@@ -1256,6 +1256,24 @@ $('#mix-midi-refresh').addEventListener('click', () => {
 });
 $('#mix-stop').append(icon(Square));
 $('#mix-stop').addEventListener('click', pause);
+let waveWheelDelta = 0, waveWheelTime = 0;
+$('#mix-timelines').addEventListener('wheel', event => {
+  if (!active || !event.shiftKey || event.ctrlKey || event.metaKey) { waveWheelDelta = 0; return; }
+  // Shift can remap a vertical wheel to deltaX; normalize line/page units too.
+  const delta = (event.deltaY || event.deltaX) * (event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? 100 : 1);
+  if (!delta) return;
+  event.preventDefault();
+  if (event.timeStamp - waveWheelTime > 200 || Math.sign(delta) !== Math.sign(waveWheelDelta)) waveWheelDelta = 0;
+  waveWheelTime = event.timeStamp;
+  waveWheelDelta += delta;
+  const steps = Math.trunc(waveWheelDelta / 100);
+  if (!steps) return;
+  waveWheelDelta -= steps * 100;
+  const zoom = $('#mix-wave-zoom');
+  zoom.value = clamp((Number(zoom.value) || 4) + steps, 1, 24);
+  if (zoom.value === '1' || zoom.value === '24') waveWheelDelta = 0;
+  zoom.dispatchEvent(new Event('input', { bubbles: true }));
+}, { passive: false });
 $('#mix-audio-settings').append(icon(Settings2));
 $('#mix-audio-settings').addEventListener('click', () => {
   const settings = $('#mix-settings');

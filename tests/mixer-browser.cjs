@@ -116,6 +116,18 @@ function audioFixture() {
       const paused = await canvas.evaluate(c => c.toDataURL());
       await page.waitForTimeout(150);
       expect(await canvas.evaluate(c => c.toDataURL())).toBe(paused);
+      const positions = await page.evaluate(() => __contexts[0].sources.map(s => s.media.currentTime));
+      const curves = await page.locator('#mix-timelines canvas').evaluateAll(cs => cs.map(c => c.toDataURL()));
+      await canvas.hover();
+      await page.keyboard.down('Shift');
+      await page.mouse.wheel(0, -100);
+      await page.keyboard.up('Shift');
+      await expect(page.locator('#mix-wave-zoom')).toHaveValue('3');
+      await page.waitForTimeout(100);
+      const zoomed = await page.locator('#mix-timelines canvas').evaluateAll(cs => cs.map(c => c.toDataURL()));
+      curves.forEach((curve, i) => expect(zoomed[i]).not.toBe(curve));
+      expect(await page.evaluate(() => __contexts[0].sources.map(s => s.media.currentTime))).toEqual(positions);
+      await expect(page.locator('.mix-timeline-cursor').first()).toHaveCSS('left', `${(await canvas.boundingBox()).width / 2}px`);
       await page.locator('#mix-wave-zoom').fill('1');
       await page.waitForTimeout(100);
       expect(await canvas.evaluate(c => c.toDataURL())).not.toBe(paused);
