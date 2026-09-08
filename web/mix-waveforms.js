@@ -48,10 +48,10 @@ export function interpolatedPeak(bytes, position) {
   return Array.from({ length: 5 }, (_, band) => bytes[first * 5 + band] * (1 - fraction) + bytes[last * 5 + band] * fraction);
 }
 
-function paint(ctx, analysis, raw, start, span, width, height, color = null) {
+function paint(ctx, analysis, raw, start, span, width, height) {
   const waveform = analysis?.waveform, bytes = unpackWaveform(waveform);
   if (!bytes && !raw) return;
-  const points = [], gradient = color ? null : ctx.createLinearGradient(0, 0, width, 0);
+  const points = [], gradient = ctx.createLinearGradient(0, 0, width, 0);
   for (let x = 0; x <= width; x++) {
     const from = start + x / width * span, to = start + (x + 1) / width * span;
     let peak;
@@ -68,22 +68,22 @@ function paint(ctx, analysis, raw, start, span, width, height, color = null) {
       }
     } else continue;
     const strongest = Math.max(peak[0], peak[1], peak[2], 1);
-    gradient?.addColorStop(x / width, `rgb(${Math.round(35 + peak[0] / strongest * 220)},${Math.round(20 + peak[1] / strongest * 185)},${Math.round(35 + peak[2] / strongest * 220)})`);
+    gradient.addColorStop(x / width, `rgb(${Math.round(35 + peak[0] / strongest * 220)},${Math.round(20 + peak[1] / strongest * 185)},${Math.round(35 + peak[2] / strongest * 220)})`);
     points.push([height / 2 - peak[3] / 255 * height / 2, height / 2 + peak[4] / 255 * height / 2]);
   }
   ctx.beginPath();
   points.forEach((point, x) => x ? ctx.lineTo(x, point[0]) : ctx.moveTo(x, point[0]));
   for (let x = points.length - 1; x >= 0; x--) ctx.lineTo(x, points[x][1]);
-  ctx.closePath(); ctx.fillStyle = color || gradient; ctx.fill();
+  ctx.closePath(); ctx.fillStyle = gradient; ctx.fill();
 }
 
-export function overviewRenderer(analysis, color = '#68e5bc') {
+export function overviewRenderer(analysis) {
   const analyzed = Boolean(unpackWaveform(analysis?.waveform));
   return (channels = [], ctx) => {
     const length = channels[0]?.length || 0;
     if (!analyzed && !length) return;
     const raw = analyzed ? null : { numberOfChannels: channels.length, sampleRate: 1, getChannelData: i => channels[i] };
-    paint(ctx, analyzed ? analysis : null, raw, 0, analyzed ? analysis.duration : length, ctx.canvas.width, ctx.canvas.height, color);
+    paint(ctx, analyzed ? analysis : null, raw, 0, analyzed ? analysis.duration : length, ctx.canvas.width, ctx.canvas.height);
   };
 }
 

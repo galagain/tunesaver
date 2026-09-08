@@ -5,6 +5,7 @@ import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid
 
 function overviewPath(analysis, channels = []) {
   const ctx = { canvas: { width: 1024, height: 40 }, points: [],
+    createLinearGradient() { return { stops: [], addColorStop(at, color) { this.stops.push([at, color]); } }; },
     beginPath() {}, closePath() {}, fill() {},
     moveTo(x, y) { this.points.push([x, y]); }, lineTo(x, y) { this.points.push([x, y]); } };
   overviewRenderer(analysis)(channels, ctx);
@@ -19,7 +20,15 @@ test('overview retains single-frame signed transients at the displayed resolutio
   assert.deepEqual(ctx.points[500], [500, 0]);
   assert.deepEqual(ctx.points[502], [502, 20]);
   assert.ok(ctx.points.some(([x, y]) => x === 502 && Math.abs(y - (20 + 128 / 255 * 20)) < .001));
-  assert.equal(ctx.fillStyle, '#68e5bc');
+  assert.equal(ctx.fillStyle.stops.length, 1025);
+});
+
+test('overview colors follow the low, mid and high frequency bands', () => {
+  const bytes = new Uint8Array([255, 0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255]);
+  const ctx = overviewPath({ duration: 3, waveform: { encoding: 'u8-lmhpn', rate: 1, frames: 3, data: Buffer.from(bytes).toString('base64') } });
+  assert.equal(ctx.fillStyle.stops[0][1], 'rgb(255,20,35)');
+  assert.equal(ctx.fillStyle.stops[341][1], 'rgb(35,205,35)');
+  assert.equal(ctx.fillStyle.stops[683][1], 'rgb(35,20,255)');
 });
 
 test('overview has a decoded-audio fallback and does not invent energy in silence', () => {

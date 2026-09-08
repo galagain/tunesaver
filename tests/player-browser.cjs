@@ -40,7 +40,11 @@ function audioFixture() {
         libraryState = { tracks: ['one', 'two'].map(id => ({ job_id: id, title: `${id} - A long original mix title`,
           artist: 'Studio Session and another artist', streamable: true })), playlists: [], tags: [] };
         const frames = 441 * 12, bytes = new Uint8Array(frames * 5);
-        for (let i = 0; i < frames; i++) { const p = Math.round(40 + 180 * Math.exp(-(i % 220) / 28)); bytes.set([p, 30, 10, p, p], i * 5); }
+        for (let i = 0; i < frames; i++) {
+          const p = Math.round(40 + 180 * Math.exp(-(i % 220) / 28)), bands = [10, 10, 10];
+          bands[Math.floor(i / (frames / 3))] = p;
+          bytes.set([...bands, p, p], i * 5);
+        }
         window.analysis = bpm => ({ status: 'done', analysis: { duration: 12, bpm, key: 'Am', camelot: '8A',
           codec: 'flac', sample_rate: 192000, bit_rate: 9216000,
           waveform: { encoding: 'u8-lmhpn', rate: 441, frames, data: btoa(String.fromCharCode(...bytes)) } } });
@@ -71,10 +75,18 @@ function audioFixture() {
       const play = await a.locator('[data-action="play"]').boundingBox();
       expect(Math.abs(canvasBox.y + canvasBox.height / 2 - play.y - play.height / 2)).toBeLessThan(1);
       const silhouette = overviewA.locator('.mix-wave canvas').first();
-      await expect.poll(() => silhouette.evaluate(c => {
+      const rgbPixels = c => {
         const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-        return data.filter((value, i) => i % 4 === 1 && value > data[i - 1] + 30).length;
-      })).toBeGreaterThan(50);
+        const counts = [0, 0, 0];
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] < 100) continue;
+          for (let band = 0; band < 3; band++) {
+            if (data[i + band] > data[i + (band + 1) % 3] + 30 && data[i + band] > data[i + (band + 2) % 3] + 30) counts[band]++;
+          }
+        }
+        return Math.min(...counts);
+      };
+      await expect.poll(() => silhouette.evaluate(rgbPixels)).toBeGreaterThan(50);
       expect(await silhouette.evaluate(c => c.getContext('2d').getImageData(c.width - 1, 0, 1, 1).data[3])).toBe(0);
       await page.evaluate(() => { window.keptRow = document.querySelector('.mix-deck[data-deck="0"]'); window.keptCanvas = keptRow.querySelector('.mix-timeline-lane > canvas'); window.keptOverview = keptRow.querySelector('.mix-overview'); mediaEvents.length = 0; });
       const before = await page.evaluate(() => Mixer.currentPlayback.position);
@@ -134,6 +146,9 @@ function audioFixture() {
       expect(await page.evaluate(() => ({ events: mediaEvents, playing: sources.map(m => !m.paused) })))
         .toEqual({ events: [], playing: [true, true] });
       await page.locator('#mixer-nav').click();
+      for (const view of [overviewA, overviewB]) {
+        await expect.poll(() => view.locator('.mix-wave canvas').first().evaluate(rgbPixels)).toBeGreaterThan(50);
+      }
       await page.screenshot({ path: `/work/unified-mix-${engine.name()}-${width}.png` });
       await page.evaluate(() => Mixer.pause());
       await page.locator('#mixer-nav').click();

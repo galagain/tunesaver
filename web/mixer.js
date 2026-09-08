@@ -1,6 +1,6 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260909-25';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260909-26';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
@@ -430,7 +430,7 @@ class Deck {
         waveColor: '#626262', progressColor: this.index ? '#ef8eb3' : '#00d79d', cursorColor: '#ffffff',
         dragToSeek: true, normalize: true,
         cspNonce: $('meta[name="mixer-style-nonce"]').content,
-        renderFunction: overviewRenderer(this.analysisData?.analysis, this.index ? '#ffabc9' : '#68e5bc'),
+        renderFunction: overviewRenderer(this.analysisData?.analysis),
       });
       const ctx = bus.context;
       this.source = ctx.createMediaElementSource(media);
@@ -520,7 +520,7 @@ class Deck {
     $('.mix-analysis-info', this.el).textContent = data.status === 'done'
       ? [a.engine, quality, a.grid_error_ms != null ? `Écart de grille P90 : ${a.grid_error_ms} ms` : '', key ? s.key ? 'Clé corrigée' : 'Clé estimée' : 'Clé indéterminée', a.codec?.toUpperCase(), a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : '', a.bit_rate ? `${Math.round(a.bit_rate / 1000)} kb/s` : ''].filter(Boolean).join(' · ')
       : data.status === 'failed' ? data.error || 'Analyse échouée' : data.status === 'running' ? 'Analyse en cours…' : 'Analyse en attente';
-    if (a.waveform?.data && a.waveform.data !== previousWaveform?.data && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a, this.index ? '#ffabc9' : '#68e5bc') });
+    if (a.waveform?.data && a.waveform.data !== previousWaveform?.data && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a) });
     this.update();
   }
 
