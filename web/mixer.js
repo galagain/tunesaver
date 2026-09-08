@@ -8,6 +8,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const host = () => window.TuneSaverMixerHost;
 const panel = $('#mixer-panel');
 const performance = $('#mix-performance');
+$('.library-sidebar').append($('#mix-collections'));
 for (const selector of ['.mix-toolbar', '#mix-settings', '#mix-message', '.mix-wave-toolbar', '#mix-timelines', '#mix-decks', '.mix-master']) performance.append($(selector, panel));
 const deckTabs = document.createElement('div'); deckTabs.className = 'mix-deck-tabs'; deckTabs.setAttribute('role', 'group'); deckTabs.setAttribute('aria-label', 'Platine affichée');
 for (const [i, letter] of ['A', 'B'].entries()) {
@@ -832,7 +833,9 @@ function renderCollections() {
     el.dataset.collection = item.id; el.dataset.depth = item.depth;
     el.dataset.selected = String(item.id === $('#mix-collection').value);
     el.dataset.cursor = String(browserFocus === 'collections' && item.id === collectionCursor);
-    el.textContent = item.folder ? `${collapsedFolders.has(item.folder) ? '▸' : '▾'} ${item.name}` : item.name;
+    const collection = item.id.startsWith('playlists:') ? library.playlists.find(p => `playlists:${p.id}` === item.id)
+      : item.id.startsWith('tags:') ? library.tags.find(t => `tags:${t.id}` === item.id) : null;
+    host().collectionRowLabel(el, item.folder ? `${collapsedFolders.has(item.folder) ? '▸' : '▾'} ${item.name}` : item.name, collection?.track_ids.length ?? '');
     if (item.folder) el.setAttribute('aria-expanded', String(!collapsedFolders.has(item.folder)));
     else el.setAttribute('aria-pressed', String(item.id === $('#mix-collection').value));
     el.addEventListener('click', () => chooseCollection(item));
@@ -841,11 +844,12 @@ function renderCollections() {
     });
     nav.append(el);
   }
+  host().setCollectionContext($('#mix-collection').value);
 }
 
 function sync() {
   if (!active) return;
-  $('#library-title').textContent = 'Mixer';
+  host().setCollectionContext($('#mix-collection').value);
   $('#library-count').textContent = 'Deux platines';
   $$('.playlist-filter, .tag-filter').forEach(el => { el.dataset.selected = String(el.id === 'mixer-nav'); });
   const library = host().library;
@@ -1240,7 +1244,9 @@ window.addEventListener('beforeunload', event => {
 navigator.mediaDevices?.addEventListener('devicechange', () => {
   if (active && bus && !$('#mix-settings').hidden) run(refreshOutputs);
 });
-window.Mixer = { get active() { return active; }, sync, reset, pause, removeTrack(jobId) {
+window.Mixer = { get active() { return active; }, sync, reset, pause, selectCollection(id) {
+  chooseCollection({ id });
+}, removeTrack(jobId) {
   decks.filter(deck => deck.track?.job_id === jobId).forEach(deck => run(() => deck.eject(true)));
 }, async playTrack(track) {
   if (!active) open();

@@ -6,10 +6,10 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260908-13">
+    <link rel="stylesheet" href="/style.css?v=20260908-15">
     <link rel="stylesheet" href="/mixer.css?v=20260908-13">
-    <script src="/app.js?v=20260908-13" defer></script>
-    <script src="/mixer.js?v=20260908-14" type="module"></script>
+    <script src="/app.js?v=20260908-15" defer></script>
+    <script src="/mixer.js?v=20260908-15" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -88,10 +88,35 @@
     </section>
 
     <div id="app-view" hidden>
-    <main class="container">
+    <main class="container workspace">
+      <aside class="library-sidebar" aria-label="Navigation bibliothèque">
+        <div class="sidebar-top">
+          <h2>Bibliothèque</h2>
+          <details id="library-menu" class="workspace-menu">
+            <summary aria-label="Actions de bibliothèque" title="Actions de bibliothèque"><span data-ui-icon="Settings2"></span></summary>
+            <div class="workspace-menu-items">
+              <button id="create-playlist" type="button"><span data-ui-icon="Plus"></span>Nouvelle playlist</button>
+              <button id="create-folder" type="button"><span data-ui-icon="Plus"></span>Nouveau dossier</button>
+              <button id="create-tag" type="button"><span data-ui-icon="Plus"></span>Nouveau tag</button>
+            </div>
+          </details>
+        </div>
+        <div class="library-nav-content">
+          <button class="playlist-filter" data-playlist-id="" data-selected="true" type="button">Mes sons</button>
+          <button id="unassigned-tracks" class="playlist-filter" type="button">Sons sans playlist</button>
+          <details class="nav-group" open>
+            <summary id="playlist-title">Mes playlists</summary>
+            <div id="playlist-list" class="playlist-list"></div>
+          </details>
+          <details class="nav-group" open>
+            <summary>Mes tags</summary>
+            <div id="tag-list" class="tag-list"></div>
+          </details>
+        </div>
+      </aside>
+      <div class="workspace-main">
       <section class="search-section" aria-labelledby="page-title">
-        <h1 id="page-title">Trouve et télécharge ta musique.</h1>
-        <p>Recherche un titre sur les trois plateformes ou colle un lien direct.</p>
+        <h1 id="page-title" class="sr-only">Rechercher de la musique</h1>
 
         <form id="search-form" class="search-form" novalidate>
           <label class="sr-only" for="search-input">Titre, artiste ou lien direct</label>
@@ -189,33 +214,23 @@
             <p id="library-count" class="library-subtitle"></p>
           </div>
           <div class="library-actions">
+            <details id="collection-menu" class="workspace-menu" hidden>
+              <summary aria-label="Actions de la collection" title="Actions de la collection"><span data-ui-icon="Settings2"></span></summary>
+              <div id="collection-actions" class="workspace-menu-items"></div>
+            </details>
             <button id="refresh-library" class="refresh-button" type="button" aria-label="Actualiser la bibliothèque">↻</button>
           </div>
         </div>
         <div id="playlist-imports" class="playlist-imports" hidden></div>
         <div class="library-layout">
-          <aside class="library-sidebar" aria-label="Navigation bibliothèque">
-            <h3>Sections</h3>
-            <button class="playlist-filter" data-playlist-id="" data-selected="true" type="button">Mes sons</button>
-            <button id="unassigned-tracks" class="playlist-filter" type="button">Sons sans playlist</button>
-            <div class="sidebar-heading">
-              <h3 id="playlist-title">Mes playlists</h3>
-              <button id="create-playlist" class="sidebar-create" type="button">+</button>
-              <button id="create-folder" class="collection-rename" type="button" title="Créer un dossier" aria-label="Créer un dossier"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9l-.81-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="M12 10v6m-3-3h6"/></svg></button>
-            </div>
-            <div id="playlist-list" class="playlist-list"></div>
-            <div class="tag-panel-heading">
-              <h3>Mes tags</h3>
-              <button id="create-tag" class="sidebar-create" type="button">+</button>
-            </div>
-            <div id="tag-list" class="tag-list"></div>
-          </aside>
           <div class="library-main">
             <div id="library-content">
             <div class="library-table-head" aria-hidden="true">
               <span></span>
-              <span></span>
               <span>Titre / Artiste</span>
+              <span class="track-bpm">BPM</span>
+              <span class="track-key">Clé</span>
+              <span class="track-duration">Durée</span>
               <span></span>
             </div>
             <div id="library-tracks" class="library-tracks">
@@ -260,6 +275,7 @@
           </div>
         </div>
       </section>
+      </div>
     </main>
       <section id="playback-dock" aria-label="Lecture et mix">
         <div class="dock-mode"><button id="mixer-nav" type="button" aria-controls="mix-performance" aria-expanded="false" aria-pressed="false">Mixer</button></div>

@@ -86,11 +86,26 @@ let adminChartMode = "tracks";
 let adminDailyStats = [];
 let selectedPlaylistId = "";
 let selectedTagId = "";
+let selectedFolderId = "";
 let onlyUnassigned = false;
 let draggedPlaylist = false;
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
 const deletedJobIds = new Set();
+const uiIcons = import('/vendor/mixer-icons.js');
+function appendUIIcon(element, name) {
+  uiIcons.then(icons => { element.append(icons.createElement(icons[name], { 'aria-hidden': 'true' })); });
+}
+document.querySelectorAll('[data-ui-icon]').forEach(element => appendUIIcon(element, element.dataset.uiIcon));
+document.addEventListener('click', event => {
+  document.querySelectorAll('.workspace-menu[open]').forEach(menu => {
+    if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
+  });
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  document.querySelectorAll('.workspace-menu[open]').forEach(menu => { menu.open = false; menu.querySelector('summary').focus(); });
+});
 let renderedTracks = [];
 let currentTrackId = "";
 let draggedTrackTag = null;
@@ -127,7 +142,7 @@ const siteDialogs = window.TuneSaverDialogs = (() => {
   const input = document.querySelector("#action-dialog-input");
   const cancelButton = document.querySelector("#action-dialog-cancel");
   const submitButton = document.querySelector("#action-dialog-submit");
-  let resolve = null, result = null, cancelled = null;
+  let resolve = null, result = null, cancelled = null, returnFocus = null;
   const cancel = () => {
     if (!resolve) return;
     result = cancelled;
@@ -145,10 +160,12 @@ const siteDialogs = window.TuneSaverDialogs = (() => {
     const complete = resolve;
     resolve = null;
     input.value = "";
+    returnFocus?.focus();
     complete?.(result);
   });
   function show(title, value, options, prompt) {
     if (resolve) return Promise.resolve(prompt ? null : false);
+    returnFocus = document.activeElement?.closest('.workspace-menu')?.querySelector('summary') || document.activeElement;
     document.querySelector("#action-dialog-title").textContent = title;
     input.hidden = !prompt;
     input.disabled = !prompt;
@@ -670,6 +687,7 @@ function makeResultCard(result) {
       await refreshQueue();
       selectedPlaylistId = "";
       selectedTagId = "";
+      selectedFolderId = "";
       renderLibrary();
     } catch (error) {
       download.disabled = false;
@@ -978,6 +996,7 @@ function trackInTag(track, tagId) {
 }
 
 function currentLibraryTitle() {
+  if (selectedFolderId) return libraryState.folders?.find(folder => folder.id === selectedFolderId)?.name || 'Dossier';
   if (onlyUnassigned) return "Sons sans playlist";
   if (selectedPlaylistId) {
     const playlist = libraryState.playlists.find((item) => item.id === selectedPlaylistId);
@@ -1034,6 +1053,7 @@ function liveTracksForLibrary() {
   return liveQueueTracks
     .filter((job) => !existing.has(job.id) && ["pending", "running", "failed"].includes(job.state))
     .filter((job) => !selectedPlaylistId || trackInPlaylist({ job_id: job.id }, selectedPlaylistId))
+    .filter(job => trackInFolder({ job_id: job.id }))
     .map((job) => ({
       job_id: job.id,
       provider: job.provider,
@@ -1171,7 +1191,62 @@ function folderDropTarget(element, folderId) {
   });
 }
 
+function trackInFolder(track) {
+  return !selectedFolderId || libraryState.playlists.some(playlist => playlist.folder_id === selectedFolderId && playlist.track_ids.includes(track.job_id));
+}
+
+function collectionRowLabel(button, name, count) {
+  button.replaceChildren();
+  button.title = name;
+  const label = document.createElement('span'); label.className = 'collection-name'; label.textContent = name;
+  const total = document.createElement('span'); total.className = 'collection-count'; total.textContent = count;
+  button.append(label, total);
+}
+
+function renderCollectionActions() {
+  const collection = selectedFolderId ? 'playlist-folders' : selectedPlaylistId ? 'playlists' : selectedTagId ? 'tags' : '';
+  const item = selectedFolderId ? libraryState.folders?.find(f => f.id === selectedFolderId)
+    : selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
+    : libraryState.tags.find(t => t.id === selectedTagId);
+  const menu = document.querySelector('#collection-menu');
+  menu.hidden = !item;
+  if (!item || menu.open) return;
+  const actions = document.querySelector('#collection-actions');
+  actions.replaceChildren();
+  const rename = makeRenameButton(item, collection);
+  rename.append(document.createTextNode('Renommer'));
+  actions.append(rename);
+  if (collection !== 'playlist-folders') {
+    const download = makeCollectionExportButton(item, collection);
+    download.append(document.createTextNode('Exporter les liens'));
+    actions.append(download);
+  }
+  if (collection === 'playlists') {
+    const label = document.createElement('label'); label.textContent = 'Dossier';
+    const select = document.createElement('select'); select.setAttribute('aria-label', 'Déplacer la playlist dans un dossier');
+    select.append(new Option('À la racine', ''));
+    (libraryState.folders || []).forEach(folder => select.append(new Option(folder.name, folder.id)));
+    select.value = item.folder_id || '';
+    select.addEventListener('change', () => movePlaylist(item.id, select.value));
+    label.append(select); actions.append(label);
+  }
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'collection-delete';
+  remove.append(document.getElementById('icon-trash').content.cloneNode(true), document.createTextNode('Supprimer'));
+  remove.addEventListener('click', async () => {
+    if (!await siteDialogs.confirm(`Supprimer « ${item.name} » ? ${collection === 'playlist-folders' ? 'Les playlists et les sons seront conservés.' : 'Les sons seront conservés dans Mes sons.'}`, { confirmText: 'Supprimer' })) return;
+    try {
+      await requestJson(`/api/${collection}/${item.id}`, { method: 'DELETE' });
+      selectedPlaylistId = selectedTagId = selectedFolderId = '';
+      await refreshLibrary();
+    } catch (error) { showToast(error.message, 'error'); }
+  });
+  actions.append(remove);
+}
+
 function renderPlaylists() {
+  const key = JSON.stringify([libraryState.playlists, libraryState.folders, selectedPlaylistId, selectedTagId, selectedFolderId, onlyUnassigned]);
+  if (playlistList.renderKey === key) return;
+  playlistList.renderKey = key;
   playlistList.replaceChildren();
   const containers = new Map();
   for (const folder of libraryState.folders || []) {
@@ -1184,13 +1259,17 @@ function renderPlaylists() {
     toggle.type = "button";
     toggle.setAttribute("aria-expanded", String(!folder.collapsed));
     const count = libraryState.playlists.filter((p) => p.folder_id === folder.id).length;
-    toggle.textContent = `${folder.collapsed ? "▸" : "▾"} ${folder.name} (${count})`;
+    collectionRowLabel(toggle, `${folder.collapsed ? "▸" : "▾"} ${folder.name}`, count);
+    toggle.dataset.selected = String(selectedFolderId === folder.id);
     const children = document.createElement("div");
     children.className = "folder-playlists";
     children.hidden = Boolean(folder.collapsed);
     children.id = `folder-${folder.id}`;
     toggle.setAttribute("aria-controls", children.id);
     toggle.addEventListener("click", async () => {
+      selectedFolderId = folder.id;
+      selectedPlaylistId = selectedTagId = '';
+      onlyUnassigned = false;
       toggle.disabled = true;
       try {
         await requestJson(`/api/playlist-folders/${folder.id}`, { method: "PATCH", body: JSON.stringify({ collapsed: !folder.collapsed }) });
@@ -1199,20 +1278,7 @@ function renderPlaylists() {
       finally { toggle.disabled = false; }
     });
     folderDropTarget(toggle, folder.id);
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "playlist-delete";
-    remove.textContent = "×";
-    remove.title = "Supprimer le dossier";
-    remove.setAttribute("aria-label", `Supprimer le dossier ${folder.name}`);
-    remove.addEventListener("click", async () => {
-      if (!await siteDialogs.confirm(`Supprimer le dossier ${folder.name} ? Les playlists seront conservées.`, { confirmText: "Supprimer" })) return;
-      try {
-        await requestJson(`/api/playlist-folders/${folder.id}`, { method: "DELETE" });
-        await refreshLibrary();
-      } catch (error) { showToast(error.message, "error"); }
-    });
-    header.append(toggle, makeRenameButton(folder, "playlist-folders"), remove);
+    header.append(toggle);
     group.append(header, children);
     playlistList.append(group);
     containers.set(folder.id, children);
@@ -1229,7 +1295,7 @@ function renderPlaylists() {
     button.type = "button";
     button.dataset.playlistId = playlist.id;
     button.dataset.selected = playlist.id === selectedPlaylistId ? "true" : "false";
-    button.textContent = `${playlist.name} (${playlist.track_ids.length})`;
+    collectionRowLabel(button, playlist.name, playlist.track_ids.length);
     button.draggable = true;
     button.addEventListener("dragstart", (event) => {
       draggedPlaylist = true;
@@ -1257,35 +1323,30 @@ function renderPlaylists() {
         });
         selectedPlaylistId = playlist.id;
         selectedTagId = "";
+        selectedFolderId = "";
         await refreshLibrary();
       } catch (error) {
         showToast(error.message, "error");
       }
     });
     button.addEventListener("click", () => {
+      selectedFolderId = "";
       selectedPlaylistId = playlist.id;
       selectedTagId = "";
       renderLibrary();
     });
-    const remove = document.createElement("button");
-    remove.className = "playlist-delete";
-    remove.type = "button";
-    remove.textContent = "×";
-    remove.addEventListener("click", async () => {
-      if (!await siteDialogs.confirm(`Supprimer la playlist ${playlist.name} ?`, { confirmText: "Supprimer" })) return;
-      await requestJson(`/api/playlists/${playlist.id}`, { method: "DELETE" });
-      if (selectedPlaylistId === playlist.id) selectedPlaylistId = "";
-      await refreshLibrary();
-    });
-    row.append(button, makeCollectionExportButton(playlist, "playlists"), makeRenameButton(playlist, "playlists"), remove);
+    row.append(button);
     (containers.get(playlist.folder_id) || root).append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");
-  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId || onlyUnassigned ? "false" : "true";
+  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId || selectedFolderId || onlyUnassigned ? "false" : "true";
   document.querySelector("#unassigned-tracks").dataset.selected = String(onlyUnassigned);
 }
 
 function renderTags() {
+  const key = JSON.stringify([libraryState.tags, selectedTagId]);
+  if (tagList.renderKey === key) return;
+  tagList.renderKey = key;
   tagList.replaceChildren();
   for (const tag of libraryState.tags) {
     const row = document.createElement("div");
@@ -1297,7 +1358,7 @@ function renderTags() {
     applyTagStyle(button, tag);
     button.dataset.tagId = tag.id;
     button.dataset.selected = tag.id === selectedTagId ? "true" : "false";
-    button.textContent = `${tag.name} (${tag.track_ids.length})`;
+    collectionRowLabel(button, tag.name, tag.track_ids.length);
     button.addEventListener("dragstart", (event) => {
       event.dataTransfer.effectAllowed = "copy";
       event.dataTransfer.setData("application/x-tunesaver-tag", tag.id);
@@ -1323,26 +1384,19 @@ function renderTags() {
         await addTagToTrack(tag.id, jobId);
         selectedTagId = tag.id;
         selectedPlaylistId = "";
+        selectedFolderId = "";
+        renderLibrary();
       } catch (error) {
         showToast(error.message, "error");
       }
     });
     button.addEventListener("click", () => {
+      selectedFolderId = "";
       selectedTagId = tag.id;
       selectedPlaylistId = "";
       renderLibrary();
     });
-    const remove = document.createElement("button");
-    remove.className = "tag-delete";
-    remove.type = "button";
-    remove.textContent = "×";
-    remove.addEventListener("click", async () => {
-      if (!await siteDialogs.confirm(`Supprimer le tag ${tag.name} ?`, { confirmText: "Supprimer" })) return;
-      await requestJson(`/api/tags/${tag.id}`, { method: "DELETE" });
-      if (selectedTagId === tag.id) selectedTagId = "";
-      await refreshLibrary();
-    });
-    row.append(button, makeCollectionExportButton(tag, "tags"), makeRenameButton(tag, "tags"), remove);
+    row.append(button);
     tagList.append(row);
   }
 }
@@ -1359,8 +1413,9 @@ function renderLibrary() {
   renderImports();
   renderPlaylists();
   renderTags();
-  libraryTracks.replaceChildren();
+  renderCollectionActions();
   const storedTracks = libraryState.tracks
+    .filter(trackInFolder)
     .filter((track) => trackInPlaylist(track, selectedPlaylistId))
     .filter((track) => trackInTag(track, selectedTagId));
   const assigned = new Set(libraryState.playlists.flatMap((p) => p.track_ids));
@@ -1369,6 +1424,10 @@ function renderLibrary() {
   renderedTracks = tracks;
   document.querySelector("#library-title").textContent = currentLibraryTitle();
   libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
+  const renderKey = JSON.stringify([tracks, selectedPlaylistId, selectedTagId, selectedFolderId]);
+  if (libraryTracks.renderKey === renderKey) return;
+  libraryTracks.renderKey = renderKey;
+  libraryTracks.replaceChildren();
   if (!tracks.length) {
     const empty = document.createElement("p");
     empty.className = "empty-copy";
@@ -1380,7 +1439,7 @@ function renderLibrary() {
     libraryTracks.append(empty);
     return;
   }
-  tracks.forEach((track, index) => {
+  tracks.forEach((track) => {
     const row = document.createElement("article");
     row.className = "library-track";
     row.draggable = !track.is_live && track.state !== "failed";
@@ -1434,9 +1493,6 @@ function renderLibrary() {
       cover.append(image);
       loadPrivateImage(image, track.cover_url);
     }
-    const rank = document.createElement("span");
-    rank.className = "track-rank";
-    rank.textContent = String(index + 1);
     const body = document.createElement("div");
     body.className = "library-track-body";
     const title = document.createElement("strong");
@@ -1498,7 +1554,9 @@ function renderLibrary() {
       const download = document.createElement("button");
       download.className = "history-download";
       download.type = "button";
-      download.textContent = "Télécharger";
+      download.title = "Télécharger le fichier";
+      download.setAttribute('aria-label', `Télécharger ${track.title || 'ce son'}`);
+      appendUIIcon(download, 'LogOut');
       download.addEventListener("click", async () => {
         download.disabled = true;
         try { await downloadReadyJob(track.job_id); }
@@ -1511,7 +1569,9 @@ function renderLibrary() {
       const remove = document.createElement("button");
       remove.className = "playlist-remove-track";
       remove.type = "button";
-      remove.textContent = "Retirer";
+      remove.title = selectedPlaylistId ? 'Retirer de cette playlist' : 'Retirer ce tag';
+      remove.setAttribute('aria-label', `${remove.title} : ${track.title || 'ce son'}`);
+      appendUIIcon(remove, 'Minus');
       remove.addEventListener("click", async () => {
         const url = selectedPlaylistId
           ? `/api/playlists/${selectedPlaylistId}/tracks/${track.job_id}`
@@ -1521,7 +1581,13 @@ function renderLibrary() {
       });
       actions.append(remove);
     }
-    row.append(rank, cover, body, actions);
+    const analysis = track.mix_analysis || {};
+    const bpm = document.createElement('span'); bpm.className = 'track-bpm';
+    bpm.textContent = analysis.bpm ? Number(analysis.bpm).toFixed(1) : '—';
+    const key = document.createElement('span'); key.className = 'track-key'; key.textContent = analysis.camelot || analysis.key || '—';
+    const duration = document.createElement('span'); duration.className = 'track-duration';
+    duration.textContent = analysis.duration ? `${Math.floor(analysis.duration / 60)}:${String(Math.floor(analysis.duration % 60)).padStart(2, '0')}` : '—';
+    row.append(cover, body, bpm, key, duration, actions);
     libraryTracks.append(row);
   });
 }
@@ -1597,6 +1663,7 @@ async function refreshLibrary() {
   try {
     libraryState = await fetchLibrary();
     libraryState.tracks = libraryState.tracks.filter(track => !deletedJobIds.has(track.job_id));
+    if (selectedFolderId && !libraryState.folders?.some(folder => folder.id === selectedFolderId)) selectedFolderId = '';
     if (selectedPlaylistId && !libraryState.playlists.some((playlist) => playlist.id === selectedPlaylistId)) {
       selectedPlaylistId = "";
     }
@@ -1612,6 +1679,7 @@ async function refreshLibrary() {
 }
 
 document.querySelector(".playlist-filter[data-playlist-id='']").addEventListener("click", () => {
+  selectedFolderId = '';
   onlyUnassigned = false;
   selectedPlaylistId = "";
   selectedTagId = "";
@@ -1619,6 +1687,7 @@ document.querySelector(".playlist-filter[data-playlist-id='']").addEventListener
 });
 
 document.querySelector("#unassigned-tracks").addEventListener("click", () => {
+  selectedFolderId = '';
   selectedPlaylistId = "";
   selectedTagId = "";
   onlyUnassigned = true;
@@ -1646,7 +1715,9 @@ createPlaylistButton.addEventListener("click", async () => {
       body: JSON.stringify({ name }),
     });
     selectedPlaylistId = result.playlist.id;
+    selectedFolderId = selectedTagId = '';
     await refreshLibrary();
+    if (window.Mixer?.active) window.Mixer.selectCollection(`playlists:${result.playlist.id}`);
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -1665,7 +1736,9 @@ createTagButton.addEventListener("click", async () => {
     });
     selectedTagId = result.tag.id;
     selectedPlaylistId = "";
+    selectedFolderId = '';
     await refreshLibrary();
+    if (window.Mixer?.active) window.Mixer.selectCollection(`tags:${result.tag.id}`);
   } catch (error) {
     showToast(error.message, "error");
   } finally {
@@ -2166,6 +2239,16 @@ window.TuneSaverMixerHost = {
   renderLibrary,
   resetPlayer,
   makeTrackDeleteButton,
+  collectionRowLabel,
+  setCollectionContext(value) {
+    const [kind, id] = value.split(':');
+    selectedPlaylistId = kind === 'playlists' ? id : '';
+    selectedTagId = kind === 'tags' ? id : '';
+    selectedFolderId = '';
+    onlyUnassigned = value === 'unassigned';
+    renderCollectionActions();
+    document.querySelector('#library-title').textContent = currentLibraryTitle();
+  },
 };
 
 start();

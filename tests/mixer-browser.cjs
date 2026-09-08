@@ -126,7 +126,7 @@ function audioFixture() {
       await expect(page.locator('#mix-midi-status')).toContainText('connecté');
       await page.evaluate(() => { __sendMIDI([0x96, 0x41, 127]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0x96, 0x41, 127]); });
       await expect(page.locator('#mix-collection')).toHaveValue('playlists:p');
-      await page.locator('.playlist-filter[data-playlist-id=""]').click();
+      await page.locator('#mix-collections [data-collection=""]').click();
       await expect(page.locator('#mix-performance')).toBeVisible();
       await expect(page.locator('#mixer-nav')).toHaveAttribute('aria-pressed', 'true');
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
