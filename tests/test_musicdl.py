@@ -3,6 +3,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import tempfile
+import threading
+import time
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -208,6 +211,42 @@ class MusicDLTests(unittest.TestCase):
         payload = json.loads(done.read_text(encoding="utf-8"))
         self.assertEqual(payload["attempts"], 1)
         self.assertEqual(payload["last_exit_code"], 0)
+
+    def test_deleted_running_job_never_reappears(self) -> None:
+        owner = "11111111-1111-4111-8111-111111111111"
+        job = musicdl.enqueue("tiddl", ["https://tidal.com/track/123"], owner_id=owner, ephemeral=True)
+        pending = musicdl.QUEUE_ROOT / "pending" / "tiddl" / f"{job}.json"
+        running = musicdl.QUEUE_ROOT / "running" / "tiddl" / f"{job}.json"
+
+        def download(_provider, _urls, log, *, output_dir):
+            (output_dir / "partial.flac").write_bytes(b"partial")
+            log.write_text("private log")
+            running.unlink()
+            return 1
+
+        with mock.patch.object(musicdl, "run_provider", side_effect=download):
+            self.assertTrue(musicdl.process_job("tiddl", pending))
+        for state in musicdl.STATES:
+            self.assertFalse((musicdl.QUEUE_ROOT / state / "tiddl" / f"{job}.json").exists())
+        self.assertFalse((musicdl.DELIVERY_ROOT / owner / job).exists())
+        self.assertEqual(list((musicdl.QUEUE_ROOT / "logs" / "tiddl").glob("*.log")), [])
+        self.assertIsNone(musicdl.ACTIVE_JOB_PATH)
+
+    def test_cancel_stops_silent_downloader(self) -> None:
+        marker = Path(self.temporary.name) / "running.json"
+        marker.write_text("{}")
+        timer = threading.Timer(0.5, lambda: marker.unlink(missing_ok=True))
+        timer.start()
+        start = time.monotonic()
+        try:
+            with mock.patch.object(musicdl, "ACTIVE_JOB_PATH", marker):
+                code = musicdl.stream_command([sys.executable, "-c", "import time; time.sleep(30)"],
+                    cwd=None, log_path=musicdl.QUEUE_ROOT / "cancel.log", environment=musicdl.runtime_environment())
+            self.assertNotEqual(code, 0)
+            self.assertLess(time.monotonic() - start, 5)
+            self.assertIsNone(musicdl.ACTIVE_PROCESS)
+        finally:
+            timer.join()
 
     def test_ephemeral_job_is_isolated_and_prepares_browser_delivery(self) -> None:
         owner_id = "11111111-1111-4111-8111-111111111111"

@@ -90,6 +90,7 @@ let onlyUnassigned = false;
 let draggedPlaylist = false;
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
+const deletedJobIds = new Set();
 let renderedTracks = [];
 let currentTrackId = "";
 let draggedTrackTag = null;
@@ -989,6 +990,44 @@ function currentLibraryTitle() {
   return "Mes sons";
 }
 
+function makeTrackDeleteButton(track) {
+  const jobId = track.job_id || track.id;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "track-delete";
+  remove.title = "Supprimer définitivement";
+  remove.setAttribute("aria-label", `${remove.title} : ${track.title || track.file_name || "ce son"}`);
+  remove.append(document.getElementById("icon-trash").content.cloneNode(true));
+  remove.addEventListener("click", async () => {
+    const name = track.title || track.file_name || "ce morceau";
+    if (!await siteDialogs.confirm(`Supprimer définitivement « ${name} » ? Fichier, historique et données de mix seront effacés. Le son sera retiré des playlists et des tags. Tout téléchargement en cours sera annulé.`, { confirmText: "Supprimer" })) return;
+    remove.disabled = true;
+    try {
+      await requestJson(`/api/library/${jobId}`, { method: "DELETE" });
+      deletedJobIds.add(jobId);
+      if (currentTrackId === jobId) resetPlayer();
+      window.Mixer?.removeTrack(jobId);
+      const download = downloadButtonByJob.get(jobId);
+      if (download) {
+        download.disabled = !activeProviders[track.provider];
+        download.textContent = download.dataset.defaultLabel || "Télécharger";
+        delete download.dataset.jobId;
+        downloadButtonByJob.delete(jobId);
+      }
+      const coverUrl = `/api/covers/${jobId}`;
+      if (coverUrlCache.has(coverUrl)) URL.revokeObjectURL(coverUrlCache.get(coverUrl));
+      coverUrlCache.delete(coverUrl);
+      liveQueueTracks = liveQueueTracks.filter(job => job.id !== jobId);
+      libraryState.tracks = libraryState.tracks.filter(item => item.job_id !== jobId);
+      renderLibrary();
+      await refreshQueue();
+      showToast("Morceau supprimé.");
+    } catch (error) { showToast(error.message, "error"); }
+    finally { remove.disabled = false; }
+  });
+  return remove;
+}
+
 function liveTracksForLibrary() {
   if (selectedTagId) return [];
   const existing = new Set(libraryState.tracks.map((track) => track.job_id));
@@ -1466,24 +1505,8 @@ function renderLibrary() {
         catch (error) { showToast(error.message, "error"); download.disabled = false; }
       });
       actions.append(download);
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "track-delete";
-      remove.title = "Supprimer de Mes sons";
-      remove.setAttribute("aria-label", `${remove.title} : ${track.title || track.file_name || "ce son"}`);
-      remove.append(document.getElementById("icon-trash").content.cloneNode(true));
-      remove.addEventListener("click", async () => {
-        if (!await siteDialogs.confirm("Supprimer ce morceau de Mes sons et de ses playlists ?", { confirmText: "Supprimer" })) return;
-        remove.disabled = true;
-        try {
-          await requestJson(`/api/library/${track.job_id}`, { method: "DELETE" });
-          if (currentTrackId === track.job_id) resetPlayer();
-          await refreshLibrary();
-        } catch (error) { showToast(error.message, "error"); }
-        finally { remove.disabled = false; }
-      });
-      actions.append(remove);
     }
+    actions.append(makeTrackDeleteButton(track));
     if (selectedPlaylistId || selectedTagId) {
       const remove = document.createElement("button");
       remove.className = "playlist-remove-track";
@@ -1573,6 +1596,7 @@ async function refreshLibrary() {
   refreshLibraryButton.disabled = true;
   try {
     libraryState = await fetchLibrary();
+    libraryState.tracks = libraryState.tracks.filter(track => !deletedJobIds.has(track.job_id));
     if (selectedPlaylistId && !libraryState.playlists.some((playlist) => playlist.id === selectedPlaylistId)) {
       selectedPlaylistId = "";
     }
@@ -1697,7 +1721,7 @@ function renderHistory(history, localJobs) {
       action.className = `job-state ${job.state}`;
       action.textContent = stateLabels[job.state] || job.state;
     }
-    row.append(provider, label, action);
+    row.append(provider, label, action, makeTrackDeleteButton(job));
     recent.append(row);
   }
 }
@@ -1712,6 +1736,7 @@ async function refreshQueueOnce() {
   refreshStatusButton.disabled = true;
   try {
     const payload = await requestJson("/api/status", { method: "GET" });
+    payload.recent = (payload.recent || []).filter(job => !deletedJobIds.has(job.id));
     const counts = payload.counts || {};
     for (const provider of providers) {
       activeProviders[provider] = payload.active?.[provider] === true;
@@ -1745,7 +1770,7 @@ async function refreshQueueOnce() {
         historyWarningShown = true;
       }
     }
-    renderHistory(history, payload.recent || []);
+    renderHistory(history.filter(job => !deletedJobIds.has(job.job_id)), payload.recent || []);
     await refreshLibrary();
   } catch (error) {
     for (const provider of providers) {
@@ -2140,6 +2165,7 @@ window.TuneSaverMixerHost = {
   loadPrivateImage,
   renderLibrary,
   resetPlayer,
+  makeTrackDeleteButton,
 };
 
 start();

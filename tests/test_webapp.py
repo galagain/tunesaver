@@ -5,6 +5,7 @@ import hashlib
 import json
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import zipfile
@@ -1107,9 +1108,102 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(webapp.local_library_tracks(user_id), [])
             self.assertEqual(webapp.local_playlists(user_id)[0]["track_ids"], [])
             self.assertEqual(webapp.local_tags(user_id)[0]["track_ids"], [])
-            self.assertEqual(len(webapp.local_user_history(user_id, limit=500, offset=0)), 1)
-            self.assertTrue(delivery_path.exists())
+            self.assertEqual(webapp.local_user_history(user_id, limit=500, offset=0), [])
+            self.assertFalse(delivery_path.exists())
+            self.assertFalse(done.exists())
+            expired = await client.get(stream_url)
+            self.assertEqual(expired.status, 404)
             webapp.local_library_remove_track(user_id, job_id)
+
+    async def test_delete_pending_failed_and_stale_history(self) -> None:
+        user = webapp.local_create_user("delete@example.com", "secret123")
+        other = webapp.local_create_user("keep@example.com", "secret123")
+        owner = user["id"]
+        for state in ("pending", "failed", "done"):
+            with self.subTest(state=state):
+                job = musicdl.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=owner, ephemeral=True)
+                pending = musicdl.QUEUE_ROOT / "pending" / "qobuz" / f"{job}.json"
+                path = musicdl.QUEUE_ROOT / state / "qobuz" / pending.name
+                pending.rename(path)
+                content = musicdl.DELIVERY_ROOT / owner / job / "content"
+                content.mkdir(parents=True)
+                (content / "partial.flac").write_bytes(b"audio")
+                log = musicdl.QUEUE_ROOT / "logs" / "qobuz" / f"{job}-attempt-1.log"
+                log.write_text("private")
+                stale = {"job_id": job, "provider": "qobuz", "state": state}
+                if state == "done":
+                    webapp.local_upsert_history(owner, [stale])
+                    webapp.mixer_analysis.init_store(webapp.local_db)
+                    with webapp.local_db() as db:
+                        db.execute("insert into mixer_analysis(job_id,result) values(?,?)", (job, '{"bpm":128}'))
+                        db.execute("insert into mixer_settings(job_id,user_id,settings) values(?,?,?)", (job, owner, '{"cue":12}'))
+                with self.assertRaises(webapp.PublicError):
+                    webapp.local_library_remove_track(other["id"], job)
+                self.assertTrue(content.exists())
+                webapp.local_library_remove_track(owner, job)
+                self.assertFalse(path.exists())
+                self.assertFalse(content.parent.exists())
+                self.assertFalse(log.exists())
+                webapp.local_upsert_history(owner, [stale])
+                self.assertEqual(webapp.local_user_history(owner), [])
+                self.assertEqual(webapp.queue_snapshot(owner)["recent"], [])
+                self.assertFalse(webapp.update_existing_job(path, {"provider": "qobuz"}))
+                self.assertFalse(path.exists())
+                webapp.local_library_remove_track(owner, job)
+                if state == "done":
+                    with webapp.local_db() as db:
+                        self.assertEqual(db.execute("select count(*) from mixer_analysis where job_id=?", (job,)).fetchone()[0], 0)
+                        self.assertEqual(db.execute("select count(*) from mixer_settings where job_id=?", (job,)).fetchone()[0], 0)
+
+    async def test_delete_active_download_cleans_partial_files(self) -> None:
+        user = webapp.local_create_user("active-delete@example.com", "secret123")
+        job = musicdl.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=user["id"], ephemeral=True)
+        pending = musicdl.QUEUE_ROOT / "pending" / "qobuz" / f"{job}.json"
+        ready, resume = threading.Event(), threading.Event()
+        errors = []
+
+        def download(_provider, _urls, log, *, output_dir):
+            (output_dir / "partial.flac").write_bytes(b"partial")
+            log.write_text("partial download")
+            ready.set()
+            if not resume.wait(5):
+                raise TimeoutError("test download not released")
+            return 1
+
+        def worker():
+            try:
+                musicdl.process_job("qobuz", pending)
+            except Exception as exc:
+                errors.append(exc)
+
+        with mock.patch.object(musicdl, "run_provider", side_effect=download):
+            thread = threading.Thread(target=worker)
+            thread.start()
+            try:
+                self.assertTrue(ready.wait(3))
+                webapp.local_library_remove_track(user["id"], job)
+                self.assertEqual(webapp.queue_snapshot(user["id"])["recent"], [])
+            finally:
+                resume.set()
+                thread.join(5)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertFalse((musicdl.DELIVERY_ROOT / user["id"] / job).exists())
+        self.assertEqual(list((musicdl.QUEUE_ROOT / "logs" / "qobuz").glob("*.log")), [])
+
+    async def test_delete_does_not_follow_delivery_symlink(self) -> None:
+        user = webapp.local_create_user("symlink-delete@example.com", "secret123")
+        job = musicdl.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=user["id"], ephemeral=True)
+        outside = Path(self.temporary.name) / "keep"
+        outside.mkdir()
+        audio = outside / "keep.flac"
+        audio.write_bytes(b"keep")
+        owner_dir = musicdl.DELIVERY_ROOT / user["id"]
+        owner_dir.mkdir()
+        (owner_dir / job).symlink_to(outside, target_is_directory=True)
+        webapp.local_library_remove_track(user["id"], job)
+        self.assertEqual(audio.read_bytes(), b"keep")
+        self.assertFalse((owner_dir / job).is_symlink())
 
     async def test_library_can_stream_single_audio_zip_and_read_cover(self) -> None:
         user = webapp.local_create_user("zip-library@example.com", "secret123")

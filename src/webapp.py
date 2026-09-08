@@ -712,9 +712,12 @@ def normalize_history_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
 
 def local_upsert_history(user_id: str, rows: list[dict[str, Any]]) -> None:
     with local_db() as db:
+        db.execute("begin immediate")
         for row in rows:
             job_id = str(row.get("job_id", ""))[:120]
             if not job_id:
+                continue
+            if db.execute("select 1 from library_removed where user_id=? and job_id=?", (user_id, job_id)).fetchone():
                 continue
             db.execute(
                 """
@@ -1005,19 +1008,41 @@ def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
 def local_library_remove_track(user_id: str, job_id: str) -> None:
     if not musicdl.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Morceau introuvable.", status=404)
+    for provider in musicdl.PROVIDERS:
+        with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
+            db.execute("begin immediate")
+            owned = db.execute("select 1 from download_history where user_id=? and job_id=? and provider=?",
+                               (user_id, job_id, provider)).fetchone()
+            paths = []
+            running = False
+            for state in musicdl.STATES:
+                path = musicdl.QUEUE_ROOT / state / provider / f"{job_id}.json"
+                if not path.is_file():
+                    continue
+                payload = musicdl.load_job(path, expected_provider=provider)
+                if payload.get("owner_id") != user_id:
+                    raise PublicError("Morceau introuvable.", status=404)
+                paths.append(path)
+                running |= state == "running"
+            if not owned and not paths:
+                continue
+            for path in paths:
+                path.unlink(missing_ok=True)
+            # An active worker stops its subprocess and cleans up after it exits.
+            if not running or not worker_is_active(provider):
+                musicdl.remove_job_files(provider, user_id, job_id)
+            db.execute("insert or ignore into library_removed (user_id, job_id) values (?, ?)",
+                       (user_id, job_id))
+            db.execute("delete from playlist_items where job_id = ? and playlist_id in "
+                       "(select id from playlists where user_id = ?)", (job_id, user_id))
+            db.execute("delete from tag_items where job_id = ? and tag_id in "
+                       "(select id from tags where user_id = ?)", (job_id, user_id))
+            db.execute("delete from download_history where user_id=? and job_id=?", (user_id, job_id))
+            return
     with local_db() as db:
-        owned = db.execute(
-            "select 1 from download_history where user_id = ? and job_id = ? and state = 'done'",
-            (user_id, job_id),
-        ).fetchone()
-        if not owned:
-            raise PublicError("Morceau introuvable.", status=404)
-        db.execute("insert or ignore into library_removed (user_id, job_id) values (?, ?)",
-                   (user_id, job_id))
-        db.execute("delete from playlist_items where job_id = ? and playlist_id in "
-                   "(select id from playlists where user_id = ?)", (job_id, user_id))
-        db.execute("delete from tag_items where job_id = ? and tag_id in "
-                   "(select id from tags where user_id = ?)", (job_id, user_id))
+        if db.execute("select 1 from library_removed where user_id=? and job_id=?", (user_id, job_id)).fetchone():
+            return
+    raise PublicError("Morceau introuvable.", status=404)
 
 
 def normalize_playlist_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -3130,6 +3155,14 @@ def find_done_job(job_id: str) -> tuple[Path, dict[str, Any]]:
     raise PublicError("Téléchargement introuvable.", status=404)
 
 
+def update_existing_job(path: Path, job: dict[str, Any]) -> bool:
+    with musicdl.provider_lock(job["provider"], "enqueue"):
+        if not path.is_file():
+            return False
+        musicdl.atomic_write_json(path, job)
+        return True
+
+
 async def ticket_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     job_id = payload.get("job_id")
@@ -3144,7 +3177,8 @@ async def ticket_handler(request: web.Request) -> web.Response:
     token = secrets.token_urlsafe(32)
     job["download_ticket_hash"] = hashlib.sha256(token.encode()).hexdigest()
     job["download_ticket_expires"] = int(time.time()) + DOWNLOAD_TICKET_SECONDS
-    musicdl.atomic_write_json(path, job)
+    if not update_existing_job(path, job):
+        raise PublicError("Morceau supprimé.", status=404)
     return web.json_response({"url": f"/api/files/{job_id}?ticket={quote(token)}"})
 
 
@@ -3164,7 +3198,8 @@ async def stream_ticket_handler(request: web.Request) -> web.Response:
     token = secrets.token_urlsafe(32)
     job["stream_ticket_hash"] = hashlib.sha256(token.encode()).hexdigest()
     job["stream_ticket_expires"] = int(time.time()) + DOWNLOAD_TICKET_SECONDS
-    musicdl.atomic_write_json(path, job)
+    if not update_existing_job(path, job):
+        raise PublicError("Morceau supprimé.", status=404)
     return web.json_response({"url": f"/api/stream/{job_id}?ticket={quote(token)}"})
 
 
@@ -3200,7 +3235,8 @@ async def file_handler(request: web.Request) -> web.StreamResponse:
     )
     job.pop("download_ticket_hash", None)
     job.pop("download_ticket_expires", None)
-    musicdl.atomic_write_json(path, job)
+    if not update_existing_job(path, job):
+        raise PublicError("Morceau supprimé.", status=404)
 
     content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
     response = web.StreamResponse(
@@ -3217,7 +3253,7 @@ async def file_handler(request: web.Request) -> web.StreamResponse:
     await response.write_eof()
     job["delivered_at"] = musicdl.utc_now()
     job["delivery_deleted"] = False
-    musicdl.atomic_write_json(path, job)
+    update_existing_job(path, job)
     return response
 
 

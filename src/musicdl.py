@@ -12,6 +12,7 @@ import math
 import os
 import re
 import secrets
+import selectors
 import shlex
 import shutil
 import signal
@@ -58,6 +59,7 @@ JOB_ID_RE = re.compile(
 
 STOP_EVENT = threading.Event()
 ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
+ACTIVE_JOB_PATH: Path | None = None
 SIGNAL_COUNT = 0
 
 
@@ -579,6 +581,9 @@ def stream_command(
 ) -> int:
     global ACTIVE_PROCESS
 
+    if ACTIVE_JOB_PATH is not None and not ACTIVE_JOB_PATH.exists():
+        return 1
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
     printable_command = shlex.join(command)
     print(f"[musicdl] commande: {printable_command}", flush=True)
@@ -592,18 +597,37 @@ def stream_command(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
         ACTIVE_PROCESS = process
         try:
             assert process.stdout is not None
-            while True:
-                chunk = process.stdout.read1(65536)
-                if not chunk:
-                    break
-                _write_output(chunk, log_handle)
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    if ACTIVE_JOB_PATH is not None and not ACTIVE_JOB_PATH.exists():
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        break
+                    if not selector.select(timeout=0.25):
+                        continue
+                    chunk = process.stdout.read1(65536)
+                    if not chunk:
+                        break
+                    _write_output(chunk, log_handle)
             return process.wait()
         finally:
             ACTIVE_PROCESS = None
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 def runtime_environment(provider: str | None = None) -> dict[str, str]:
@@ -753,6 +777,11 @@ def prepare_delivery(payload: dict[str, Any], content_dir: Path) -> None:
 
 
 def recover_running_jobs(provider: str) -> int:
+    with provider_lock(provider, "enqueue"):
+        return _recover_running_jobs(provider)
+
+
+def _recover_running_jobs(provider: str) -> int:
     recovered = 0
     running_dir = QUEUE_ROOT / "running" / provider
     pending_dir = QUEUE_ROOT / "pending" / provider
@@ -772,25 +801,43 @@ def recover_running_jobs(provider: str) -> int:
     return recovered
 
 
+def remove_job_files(provider: str, owner_id: str, job_id: str) -> None:
+    validate_provider(provider)
+    owner_id = str(uuid.UUID(owner_id))
+    if not JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("identifiant de tâche invalide")
+    root = DELIVERY_ROOT.resolve()
+    owner_root = DELIVERY_ROOT / owner_id
+    job_root = owner_root / job_id
+    if owner_root.is_symlink() or not owner_root.resolve().is_relative_to(root):
+        raise ValueError("dossier utilisateur invalide")
+    if job_root.is_symlink():
+        job_root.unlink()
+    elif job_root.exists():
+        shutil.rmtree(job_root)
+    for log in (QUEUE_ROOT / "logs" / provider).glob(f"{job_id}-attempt-*.log"):
+        log.unlink(missing_ok=True)
+
+
 def process_job(provider: str, pending_path: Path) -> bool:
+    global ACTIVE_JOB_PATH
     running_path = QUEUE_ROOT / "running" / provider / pending_path.name
-    try:
-        os.replace(pending_path, running_path)
-    except FileNotFoundError:
-        return False
-
-    try:
-        payload = load_job(running_path, expected_provider=provider)
-    except Exception as exc:
-        failed_path = QUEUE_ROOT / "failed" / provider / running_path.name
-        print(f"[musicdl] tâche illisible {running_path.name}: {exc}", file=sys.stderr)
-        os.replace(running_path, failed_path)
-        return True
-
-    payload["attempts"] = int(payload.get("attempts", 0)) + 1
-    payload["last_started_at"] = utc_now()
-    payload.pop("last_error", None)
-    atomic_write_json(running_path, payload)
+    with provider_lock(provider, "enqueue"):
+        try:
+            os.replace(pending_path, running_path)
+        except FileNotFoundError:
+            return False
+        try:
+            payload = load_job(running_path, expected_provider=provider)
+        except Exception as exc:
+            failed_path = QUEUE_ROOT / "failed" / provider / running_path.name
+            print(f"[musicdl] tâche illisible {running_path.name}: {exc}", file=sys.stderr)
+            os.replace(running_path, failed_path)
+            return True
+        payload["attempts"] = int(payload.get("attempts", 0)) + 1
+        payload["last_started_at"] = utc_now()
+        payload.pop("last_error", None)
+        atomic_write_json(running_path, payload)
 
     attempt = payload["attempts"]
     log_path = QUEUE_ROOT / "logs" / provider / f"{payload['id']}-attempt-{attempt}.log"
@@ -813,6 +860,7 @@ def process_job(provider: str, pending_path: Path) -> bool:
     try:
         if payload.get("ephemeral") is True and output_dir is None:
             raise RuntimeError("dossier temporaire utilisateur invalide")
+        ACTIVE_JOB_PATH = running_path
         return_code = run_provider(
             provider, payload["urls"], log_path, output_dir=output_dir
         )
@@ -825,17 +873,24 @@ def process_job(provider: str, pending_path: Path) -> bool:
         print(f"[musicdl] {error}", file=sys.stderr, flush=True)
         with log_path.open("a", encoding="utf-8") as log_handle:
             log_handle.write(f"\n[musicdl] {error}\n")
+    finally:
+        ACTIVE_JOB_PATH = None
 
     payload["last_finished_at"] = utc_now()
     payload["last_exit_code"] = return_code
     payload["last_log"] = str(log_path.relative_to(QUEUE_ROOT))
     if error:
         payload["last_error"] = error
-    atomic_write_json(running_path, payload)
-
     state = "done" if return_code == 0 else "failed"
     destination = QUEUE_ROOT / state / provider / running_path.name
-    os.replace(running_path, destination)
+    with provider_lock(provider, "enqueue"):
+        # A deleted running file cancels the job, including any partial output.
+        if not running_path.exists():
+            if payload.get("ephemeral") is True:
+                remove_job_files(provider, payload["owner_id"], payload["id"])
+            return True
+        atomic_write_json(running_path, payload)
+        os.replace(running_path, destination)
     print(f"[musicdl] {payload['id']} -> {state} (code {return_code})", flush=True)
     return True
 

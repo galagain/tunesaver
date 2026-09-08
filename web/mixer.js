@@ -746,6 +746,7 @@ function renderTracks() {
       load.addEventListener('click', () => run(() => deck.load(track)));
       row.append(load);
     });
+    row.append(host().makeTrackDeleteButton(track));
     list.append(row);
   }
 }
@@ -1153,7 +1154,9 @@ window.addEventListener('beforeunload', event => {
 navigator.mediaDevices?.addEventListener('devicechange', () => {
   if (active && bus && !$('#mix-settings').hidden) run(refreshOutputs);
 });
-window.Mixer = { get active() { return active; }, sync, reset, pause, async playTrack(track) {
+window.Mixer = { get active() { return active; }, sync, reset, pause, removeTrack(jobId) {
+  decks.filter(deck => deck.track?.job_id === jobId).forEach(deck => run(() => deck.eject(true)));
+}, async playTrack(track) {
   if (!active) open();
   const target = decks[0];
   const loaded = await target.load(track);
