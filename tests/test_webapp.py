@@ -795,6 +795,53 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(delivered["delivery_deleted"])
         self.assertIn("delivered_at", delivered)
 
+    async def test_library_orders_are_persistent_scoped_private_and_exported(self) -> None:
+        user = webapp.local_create_user("order@example.com", "secret123")
+        other = webapp.local_create_user("otherorder@example.com", "secret123")
+        playlist = webapp.local_create_playlist(user["id"], "Ordered")
+        foreign = webapp.local_create_playlist(other["id"], "Private")
+        tag = webapp.local_create_tag(user["id"], "Ordered")
+        jobs = [f"20260909T100000Z-{i:08x}" for i in range(4)]
+        with webapp.local_db() as db:
+            for i, job in enumerate(jobs):
+                db.execute("insert into download_history(job_id,user_id,provider,source_url,state,created_at) values(?,?,?,?,?,?)",
+                           (job, user["id"] if i < 3 else other["id"], "tiddl", f"https://tidal.com/track/{i+1}", "done", "2026-09-09"))
+            for job in [jobs[2], jobs[0], jobs[1]]:
+                db.execute("insert into playlist_items values(?,?,?)", (playlist["id"], job, "2026-09-09"))
+                db.execute("insert into tag_items values(?,?,?)", (tag["id"], job, "2026-09-09"))
+        self.assertEqual(webapp.local_playlists(user["id"])[0]["track_ids"], [jobs[2], jobs[0], jobs[1]])
+        self.assertEqual(webapp.local_tags(user["id"])[0]["track_ids"], [jobs[2], jobs[0], jobs[1]])
+        app = webapp.create_app()
+        app.cleanup_ctx.clear()
+        app[webapp.AUTH_CACHE_KEY][hashlib.sha256(TEST_TOKEN.encode()).hexdigest()] = (
+            time.monotonic() + 3600, {"id": user["id"], "email": user["email"]})
+        headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
+        async with TestClient(TestServer(app)) as client:
+            payload = {"scope": "library:", "track_ids": jobs[:3]}
+            self.assertEqual((await client.put("/api/library/order", json=payload)).status, 401)
+            orders = {"library:": jobs[:3], f"playlist:{playlist['id']}": list(reversed(jobs[:3])), f"tag:{tag['id']}": [jobs[1], jobs[2], jobs[0]]}
+            for scope, ids in orders.items():
+                response = await client.put("/api/library/order", json={"scope": scope, "track_ids": ids}, headers=headers)
+                self.assertEqual(response.status, 200, await response.text())
+            with mock.patch.object(webapp, "local_library_tracks", return_value=[]):
+                response = await client.get("/api/library", headers=headers)
+                self.assertEqual((await response.json())["orders"], orders)
+            self.assertEqual(webapp.local_collection_export(user["id"], playlist["id"])["links"],
+                             ["https://tidal.com/track/3", "https://tidal.com/track/2", "https://tidal.com/track/1"])
+            for scope, ids, status in [("library:", [jobs[3]], 409), ("library:", [jobs[0], jobs[0]], 400),
+                                       ("library:", ["../bad"], 400), ("library:x", [], 400),
+                                       (f"playlist:{foreign['id']}", [], 404), ("folder:missing", [], 404)]:
+                response = await client.put("/api/library/order", json={"scope": scope, "track_ids": ids}, headers=headers)
+                self.assertEqual(response.status, status, await response.text())
+            with webapp.local_db() as db:
+                db.execute("insert into library_removed values(?,?)", (user["id"], jobs[0]))
+            response = await client.put("/api/library/order", json=payload, headers=headers)
+            self.assertEqual(response.status, 409)
+        webapp.init_local_store()
+        with webapp.local_db() as db:
+            self.assertEqual(db.execute("select count(*) from library_orders where user_id=?", (user["id"],)).fetchone()[0], 3)
+            self.assertEqual(db.execute("select count(*) from library_orders where user_id=?", (other["id"],)).fetchone()[0], 0)
+
     async def test_collection_exports_are_complete_ordered_and_private(self) -> None:
         user = webapp.local_create_user("export@example.com", "secret123")
         other = webapp.local_create_user("otherexport@example.com", "secret123")

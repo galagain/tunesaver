@@ -83,6 +83,11 @@ let selectedTagId = "";
 let selectedFolderId = "";
 let selectedLibraryTrackId = '';
 let draggedPlaylist = false;
+let trackMove = null;
+let draggedLibraryTrack = false;
+let savingTrackOrder = false;
+const librarySorts = new Map();
+const trackCollator = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
 const deletedJobIds = new Set();
@@ -369,6 +374,8 @@ function clearCoverCache() {
 }
 
 function showAuth(message = "") {
+  cancelTrackMove();
+  librarySorts.clear();
   siteDialogs.cancel();
   window.Mixer?.reset();
   window.clearInterval(queueTimer);
@@ -1364,25 +1371,162 @@ function renderTags() {
   }
 }
 
+function libraryScope() {
+  if (selectedPlaylistId) return `playlist:${selectedPlaylistId}`;
+  if (selectedTagId) return `tag:${selectedTagId}`;
+  if (selectedFolderId) return `folder:${selectedFolderId}`;
+  return 'library:';
+}
+
+function currentLibrarySort() {
+  return librarySorts.get(libraryScope()) || { by: 'number', direction: 1 };
+}
+
+function manualLibraryTracks() {
+  const stored = libraryState.tracks.filter(trackInFolder)
+    .filter(track => trackInPlaylist(track, selectedPlaylistId) && trackInTag(track, selectedTagId));
+  const tracks = [...liveTracksForLibrary(), ...stored];
+  const collection = selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
+    : selectedTagId ? libraryState.tags.find(t => t.id === selectedTagId) : null;
+  const ranks = new Map((libraryState.orders?.[libraryScope()] || collection?.track_ids || []).map((id, index) => [id, index]));
+  return tracks.sort((a, b) => (ranks.get(a.job_id) ?? ranks.size) - (ranks.get(b.job_id) ?? ranks.size));
+}
+
+function sortedLibraryTracks(tracks) {
+  const { by, direction } = currentLibrarySort();
+  if (by === 'number') return direction === 1 ? [...tracks] : [...tracks].reverse();
+  const value = track => {
+    if (by === 'bpm') return Number(track.mix_analysis?.bpm) > 0 ? Number(track.mix_analysis.bpm) : null;
+    if (by === 'key') return track.mix_analysis?.camelot || track.mix_analysis?.key || null;
+    return (by === 'title' ? track.title || track.file_name : track.artist)?.trim() || null;
+  };
+  return [...tracks].sort((a, b) => {
+    const av = value(a), bv = value(b);
+    if (av === null || bv === null) return av === bv ? 0 : av === null ? 1 : -1;
+    return direction * (by === 'bpm' ? av - bv : trackCollator.compare(av, bv));
+  });
+}
+
+function changeLibrarySort(by, toggle = false) {
+  const previous = currentLibrarySort();
+  librarySorts.set(libraryScope(), { by, direction: toggle && previous.by === by ? -previous.direction : 1 });
+  renderLibrary();
+}
+document.querySelector('#library-sort').addEventListener('change', event => changeLibrarySort(event.target.value));
+document.querySelector('#library-sort-direction').addEventListener('click', () => changeLibrarySort(currentLibrarySort().by, true));
+document.querySelectorAll('[data-track-sort]').forEach(button => button.addEventListener('click', () => changeLibrarySort(button.dataset.trackSort, true)));
+
+async function moveLibraryTrack(id, targetId, after) {
+  if (savingTrackOrder || id === targetId) return;
+  const scope = libraryScope(), account = session;
+  const ids = sortedLibraryTracks(manualLibraryTracks()).map(track => track.job_id);
+  if (!ids.includes(id) || !ids.includes(targetId)) return;
+  ids.splice(ids.indexOf(id), 1);
+  ids.splice(ids.indexOf(targetId) + Number(after), 0, id);
+  savingTrackOrder = true;
+  libraryTracks.setAttribute('aria-busy', 'true');
+  try {
+    await requestJson('/api/library/order', { method: 'PUT', body: JSON.stringify({ scope, track_ids: ids }) });
+    if (session !== account) return;
+    libraryState.orders = { ...libraryState.orders, [scope]: ids };
+    librarySorts.set(scope, { by: 'number', direction: 1 });
+  } catch (error) { if (session === account) showToast(error.message, 'error'); }
+  finally {
+    savingTrackOrder = false;
+    libraryTracks.removeAttribute('aria-busy');
+    if (session === account) {
+      renderLibrary();
+      if (libraryScope() === scope) libraryTracks.querySelector(`[data-job-id="${CSS.escape(id)}"] .track-number`)?.focus({ preventScroll: true });
+    }
+  }
+}
+
+function cancelTrackMove() {
+  if (trackMove) cancelAnimationFrame(trackMove.frame);
+  trackMove = null;
+  libraryTracks.querySelectorAll('[data-reorder], [data-moving]').forEach(row => {
+    delete row.dataset.reorder; delete row.dataset.moving;
+  });
+}
+
+function updateTrackMove() {
+  const move = trackMove;
+  if (!move?.active) return;
+  libraryTracks.querySelectorAll('[data-reorder]').forEach(row => delete row.dataset.reorder);
+  const row = document.elementFromPoint(move.x, move.y)?.closest('.library-track');
+  move.target = row?.dataset.jobId;
+  if (row && move.target !== move.id) {
+    const box = row.getBoundingClientRect();
+    move.after = move.y > box.y + box.height / 2;
+    row.dataset.reorder = move.after ? 'after' : 'before';
+  }
+}
+
+function beginTrackMove(event, id) {
+  if (event.button !== 0 || savingTrackOrder || trackMove) return;
+  event.preventDefault(); event.stopPropagation();
+  selectLibraryTrack(id);
+  event.currentTarget.setPointerCapture(event.pointerId);
+  trackMove = { id, pointer: event.pointerId, scope: libraryScope(), startX: event.clientX, startY: event.clientY, x: event.clientX, y: event.clientY, active: false };
+  const scroll = () => {
+    if (!trackMove) return;
+    if (trackMove.active) {
+      const bottom = document.querySelector('#playback-dock').getBoundingClientRect().top;
+      const delta = trackMove.y < 70 ? -12 : trackMove.y > bottom - 45 ? 12 : 0;
+      if (delta) window.scrollBy(0, delta);
+      updateTrackMove();
+    }
+    trackMove.frame = requestAnimationFrame(scroll);
+  };
+  trackMove.frame = requestAnimationFrame(scroll);
+}
+document.addEventListener('pointermove', event => {
+  if (trackMove?.pointer !== event.pointerId) return;
+  trackMove.x = event.clientX; trackMove.y = event.clientY;
+  if (Math.hypot(trackMove.x - trackMove.startX, trackMove.y - trackMove.startY) > 5) {
+    trackMove.active = true;
+    libraryTracks.querySelector(`[data-job-id="${CSS.escape(trackMove.id)}"]`).dataset.moving = 'true';
+  }
+  updateTrackMove();
+});
+document.addEventListener('pointerup', event => {
+  if (trackMove?.pointer !== event.pointerId) return;
+  const move = trackMove;
+  cancelTrackMove();
+  if (move.active && move.target && move.scope === libraryScope()) moveLibraryTrack(move.id, move.target, move.after);
+  else renderLibrary();
+});
+document.addEventListener('pointercancel', event => { if (trackMove?.pointer === event.pointerId) { cancelTrackMove(); renderLibrary(); } });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && trackMove) { cancelTrackMove(); renderLibrary(); } });
+window.addEventListener('blur', cancelTrackMove);
+
 function renderLibrary() {
-  if (draggedTrackTag || draggedPlaylist) return;
+  if (draggedTrackTag || draggedPlaylist || draggedLibraryTrack || trackMove || savingTrackOrder) return;
   renderImports();
   renderPlaylists();
   renderTags();
   renderCollectionActions();
-  const storedTracks = libraryState.tracks
-    .filter(trackInFolder)
-    .filter((track) => trackInPlaylist(track, selectedPlaylistId))
-    .filter((track) => trackInTag(track, selectedTagId));
+  const manualTracks = manualLibraryTracks();
+  const numbers = new Map(manualTracks.map((track, index) => [track.job_id, index + 1]));
   const query = document.querySelector('#library-search').value.trim().toLocaleLowerCase();
-  const tracks = [...liveTracksForLibrary(), ...storedTracks]
+  const tracks = sortedLibraryTracks(manualTracks)
     .filter(track => `${track.title || track.file_name || ''} ${track.artist || ''}`.toLocaleLowerCase().includes(query));
+  const sort = currentLibrarySort();
+  document.querySelector('#library-sort').value = sort.by;
+  const direction = document.querySelector('#library-sort-direction');
+  direction.textContent = sort.direction === 1 ? '↑' : '↓';
+  direction.title = sort.direction === 1 ? 'Ordre décroissant' : 'Ordre croissant';
+  direction.setAttribute('aria-label', direction.title);
+  document.querySelectorAll('[data-track-sort]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.trackSort === sort.by));
+    button.dataset.direction = button.dataset.trackSort === sort.by ? String(sort.direction) : '';
+  });
   renderedTracks = tracks;
   if (!tracks.some(track => track.job_id === selectedLibraryTrackId)) selectedLibraryTrackId = tracks[0]?.job_id || '';
   window.Mixer?.sync();
   document.querySelector("#library-title").textContent = currentLibraryTitle();
   libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
-  const renderKey = JSON.stringify([tracks, selectedPlaylistId, selectedTagId, selectedFolderId]);
+  const renderKey = JSON.stringify([tracks, [...numbers], sort, selectedPlaylistId, selectedTagId, selectedFolderId]);
   if (libraryTracks.renderKey === renderKey) return;
   libraryTracks.renderKey = renderKey;
   libraryTracks.replaceChildren();
@@ -1418,9 +1562,12 @@ function renderLibrary() {
       event.dataTransfer.setData("application/x-tunesaver-job", track.job_id);
       event.dataTransfer.setData("text/plain", track.job_id);
       row.dataset.dragging = "true";
+      draggedLibraryTrack = true;
     });
     row.addEventListener("dragend", () => {
       row.dataset.dragging = "false";
+      draggedLibraryTrack = false;
+      renderLibrary();
     });
     row.addEventListener("dragover", (event) => {
       if (track.is_live || track.state === "failed") return;
@@ -1566,7 +1713,21 @@ function renderLibrary() {
     const duration = document.createElement('span'); duration.className = 'track-duration';
     duration.textContent = analysis.duration ? `${Math.floor(analysis.duration / 60)}:${String(Math.floor(analysis.duration % 60)).padStart(2, '0')}` : '—';
     if (extraActions.childElementCount) actions.insertBefore(menu, actions.querySelector('.track-delete'));
-    row.append(cover, body, bpm, key, duration, actions);
+    const number = document.createElement('button');
+    number.type = 'button'; number.className = 'track-number';
+    number.textContent = numbers.get(track.job_id);
+    number.title = `Déplacer ${track.title || track.file_name || 'ce son'}`;
+    number.setAttribute('aria-label', `${number.title}, position ${number.textContent}`);
+    number.addEventListener('pointerdown', event => beginTrackMove(event, track.job_id));
+    number.addEventListener('dragstart', event => { event.preventDefault(); event.stopPropagation(); });
+    number.addEventListener('keydown', event => {
+      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const index = renderedTracks.findIndex(item => item.job_id === track.job_id);
+      const target = renderedTracks[index + (event.key === 'ArrowDown' ? 1 : -1)];
+      if (target) moveLibraryTrack(track.job_id, target.job_id, event.key === 'ArrowDown');
+    });
+    row.append(number, cover, body, bpm, key, duration, actions);
     libraryTracks.append(row);
   });
 }

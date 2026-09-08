@@ -279,6 +279,13 @@ def init_local_store() -> None:
               primary key (user_id, job_id)
             );
 
+            create table if not exists library_orders (
+              user_id text not null references users(id) on delete cascade,
+              scope text not null,
+              track_ids text not null,
+              primary key (user_id, scope)
+            );
+
             create table if not exists playlists (
               id text primary key,
               user_id text not null references users(id) on delete cascade,
@@ -1066,9 +1073,10 @@ def local_playlists(user_id: str) -> list[dict[str, Any]]:
               playlists.name,
               playlists.created_at,
               playlist_folder_items.folder_id,
-              group_concat(playlist_items.job_id, char(10)) as track_ids
+              (select group_concat(job_id, char(10)) from
+                (select job_id from playlist_items where playlist_id=playlists.id
+                 order by created_at, rowid)) as track_ids
             from playlists
-            left join playlist_items on playlist_items.playlist_id = playlists.id
             left join playlist_folder_items on playlist_folder_items.playlist_id = playlists.id
             where playlists.user_id = ?
             group by playlists.id
@@ -1100,9 +1108,10 @@ def local_tags(user_id: str) -> list[dict[str, Any]]:
               tags.name,
               tags.color,
               tags.created_at,
-              group_concat(tag_items.job_id, char(10)) as track_ids
+              (select group_concat(job_id, char(10)) from
+                (select job_id from tag_items where tag_id=tags.id
+                 order by created_at, rowid)) as track_ids
             from tags
-            left join tag_items on tag_items.tag_id = tags.id
             where tags.user_id = ?
             group by tags.id
             order by tags.created_at desc
@@ -2788,7 +2797,48 @@ async def library_handler(request: web.Request) -> web.Response:
     with local_db() as db:
         folders = [dict(row) for row in db.execute(
             "select id, name, collapsed from playlist_folders where user_id = ? order by name, id", (user_id,))]
-    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports, "folders": folders})
+        orders = {row["scope"]: json.loads(row["track_ids"]) for row in db.execute(
+            "select scope, track_ids from library_orders where user_id=?", (user_id,))}
+    return web.json_response({"tracks": tracks, "playlists": playlists, "tags": tags, "imports": imports, "folders": folders, "orders": orders})
+
+
+def local_save_library_order(user_id: str, scope: Any, track_ids: Any) -> None:
+    if not isinstance(scope, str) or len(scope) > 80:
+        raise PublicError("Collection invalide.")
+    kind, _, collection_id = scope.partition(":")
+    tables = {"playlist": "playlists", "tag": "tags", "folder": "playlist_folders"}
+    if scope != "library:" and (kind not in tables or not collection_id):
+        raise PublicError("Collection invalide.")
+    if (not isinstance(track_ids, list) or len(track_ids) > 5000
+            or any(not isinstance(job, str) or not musicdl.JOB_ID_RE.fullmatch(job) for job in track_ids)
+            or len(set(track_ids)) != len(track_ids)):
+        raise PublicError("Ordre des morceaux invalide.")
+    queued = {job["id"] for job in queue_snapshot(user_id)["recent"]}
+    with local_db() as db:
+        db.execute("begin immediate")
+        if kind in tables and not db.execute(
+                f"select 1 from {tables[kind]} where id=? and user_id=?", (collection_id, user_id)).fetchone():
+            raise PublicError("Collection introuvable.", status=404)
+        owned = {row["job_id"] for row in db.execute("select job_id from download_history where user_id=?", (user_id,))} | queued
+        removed = {row["job_id"] for row in db.execute("select job_id from library_removed where user_id=?", (user_id,))}
+        if kind in {"playlist", "tag"}:
+            items, key = ("playlist_items", "playlist_id") if kind == "playlist" else ("tag_items", "tag_id")
+            owned &= {row["job_id"] for row in db.execute(f"select job_id from {items} where {key}=?", (collection_id,))}
+        elif kind == "folder":
+            owned &= {row["job_id"] for row in db.execute(
+                "select i.job_id from playlist_items i join playlist_folder_items f on f.playlist_id=i.playlist_id "
+                "join playlists p on p.id=i.playlist_id where f.folder_id=? and p.user_id=?", (collection_id, user_id))}
+        if not set(track_ids) <= owned - removed:
+            raise PublicError("La liste a changé. Actualisez-la avant de déplacer ce morceau.", status=409)
+        db.execute("insert into library_orders(user_id,scope,track_ids) values (?,?,?) "
+                   "on conflict(user_id,scope) do update set track_ids=excluded.track_ids",
+                   (user_id, scope, json.dumps(track_ids)))
+
+
+async def library_order_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    await asyncio.to_thread(local_save_library_order, request["user"]["id"], payload.get("scope"), payload.get("track_ids"))
+    return web.json_response({"saved": True})
 
 
 def local_collection_export(user_id: str, collection_id: str, *, tag: bool = False) -> dict[str, Any]:
@@ -2798,10 +2848,15 @@ def local_collection_export(user_id: str, collection_id: str, *, tag: bool = Fal
                                 (collection_id, user_id)).fetchone()
         if not collection:
             raise PublicError(f"{label} introuvable.", status=404)
-        rows = db.execute(f"""select h.source_url, h.state from {items} p
+        rows = db.execute(f"""select p.job_id, h.source_url, h.state from {items} p
           left join download_history h on h.job_id=p.job_id and h.user_id=?
           where p.{key}=? order by p.created_at, p.rowid""",
                           (user_id, collection_id)).fetchall()
+        order = db.execute("select track_ids from library_orders where user_id=? and scope=?",
+                           (user_id, f"{'tag' if tag else 'playlist'}:{collection_id}")).fetchone()
+        if order:
+            ranks = {job: i for i, job in enumerate(json.loads(order["track_ids"]))}
+            rows.sort(key=lambda row: ranks.get(row["job_id"], len(ranks)))
     links = []
     for row in rows:
         url = str(row["source_url"] or "").strip()
@@ -3407,6 +3462,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/history", history_sync_handler)
     app.router.add_get("/api/history", history_handler)
     app.router.add_get("/api/library", library_handler)
+    app.router.add_put("/api/library/order", library_order_handler)
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)

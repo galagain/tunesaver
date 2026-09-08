@@ -6,9 +6,9 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260908-19">
+    <link rel="stylesheet" href="/style.css?v=20260909-27">
     <link rel="stylesheet" href="/mixer.css?v=20260909-24">
-    <script src="/app.js?v=20260909-21" defer></script>
+    <script src="/app.js?v=20260909-27" defer></script>
     <script src="/mixer.js?v=20260909-26" type="module"></script>
   </head>
   <body>
@@ -224,12 +224,19 @@
         <div class="library-layout">
           <div class="library-main">
             <div id="library-content">
-            <div class="library-toolbar"><input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons"></div>
-            <div class="library-table-head" aria-hidden="true">
+            <div class="library-toolbar">
+              <input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons">
+              <select id="library-sort" aria-label="Trier les morceaux">
+                <option value="number">Numéro</option><option value="title">Titre</option><option value="artist">Artiste</option><option value="bpm">BPM</option><option value="key">Clé</option>
+              </select>
+              <button id="library-sort-direction" type="button" title="Ordre décroissant" aria-label="Ordre décroissant">↑</button>
+            </div>
+            <div class="library-table-head">
+              <button type="button" data-track-sort="number" aria-label="Trier par numéro">#</button>
               <span></span>
-              <span>Titre / Artiste</span>
-              <span class="track-bpm">BPM</span>
-              <span class="track-key">Clé</span>
+              <span class="track-title-head"><button type="button" data-track-sort="title">Titre</button><button type="button" data-track-sort="artist">Artiste</button></span>
+              <button type="button" data-track-sort="bpm" class="track-bpm">BPM</button>
+              <button type="button" data-track-sort="key" class="track-key">Clé</button>
               <span class="track-duration">Durée</span>
               <span></span>
             </div>
