@@ -1,29 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
-import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewEnvelope } from '../web/mix-waveforms.js';
+import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer } from '../web/mix-waveforms.js';
 
-test('overview pools fine detail but preserves silence and broad dynamic changes', () => {
-  const frames = 4096, bytes = new Uint8Array(frames * 5);
-  for (let i = 1024; i < frames; i++) {
-    const amplitude = i < 2048 ? 40 : i % 2 ? 220 : 180;
-    bytes[i * 5 + 3] = amplitude; bytes[i * 5 + 4] = amplitude;
-  }
-  const levels = overviewEnvelope({ waveform: { encoding: 'u8-lmhpn', frames, data: Buffer.from(bytes).toString('base64') } });
-  assert.equal(levels.length, 256);
-  assert.equal(levels[20], 0);
-  assert.ok(levels[90] > 0 && levels[90] < levels[180] / 2);
-  assert.ok(levels.every(n => Number.isFinite(n) && n >= 0 && n <= 1));
-  assert.ok(Math.max(...levels.slice(150, 220)) - Math.min(...levels.slice(150, 220)) < .001);
+function overviewPath(analysis, channels = []) {
+  const ctx = { canvas: { width: 1024, height: 40 }, points: [],
+    beginPath() {}, closePath() {}, fill() {},
+    moveTo(x, y) { this.points.push([x, y]); }, lineTo(x, y) { this.points.push([x, y]); } };
+  overviewRenderer(analysis)(channels, ctx);
+  return ctx;
+}
+
+test('overview retains single-frame signed transients at the displayed resolution', () => {
+  const frames = 2048, bytes = new Uint8Array(frames * 5);
+  bytes[1000 * 5 + 3] = 255; bytes[1004 * 5 + 4] = 128;
+  const ctx = overviewPath({ duration: 2, waveform: { encoding: 'u8-lmhpn', rate: 1024, frames, data: Buffer.from(bytes).toString('base64') } });
+  assert.equal(ctx.points.length, 2050);
+  assert.deepEqual(ctx.points[500], [500, 0]);
+  assert.deepEqual(ctx.points[502], [502, 20]);
+  assert.ok(ctx.points.some(([x, y]) => x === 502 && Math.abs(y - (20 + 128 / 255 * 20)) < .001));
+  assert.equal(ctx.fillStyle, '#68e5bc');
 });
 
 test('overview has a decoded-audio fallback and does not invent energy in silence', () => {
-  assert.deepEqual(overviewEnvelope(null), []);
-  assert.deepEqual(overviewEnvelope(null, [new Float32Array(64)]), Array(64).fill(0));
-  const samples = Float32Array.from({ length: 4096 }, (_, i) => i < 2048 ? 0 : Math.sin(i) * .5);
-  const levels = overviewEnvelope(null, [samples]);
-  assert.equal(levels[30], 0);
-  assert.ok(levels[180] > .9);
+  assert.deepEqual(overviewPath(null).points, []);
+  assert.ok(overviewPath(null, [new Float32Array(64)]).points.every(([, y]) => y === 20));
+  const samples = new Float32Array(2048); samples[1000] = 1; samples[1004] = -.5;
+  const ctx = overviewPath(null, [samples]);
+  assert.deepEqual(ctx.points[500], [500, 0]);
+  assert.ok(ctx.points.some(([x, y]) => x === 502 && y === 30));
 });
 
 test('variable grids use adjacent detected beats, not the average track tempo', () => {

@@ -24,7 +24,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
     await page.keyboard.down('Shift');
     const scroll = await page.evaluate(() => scrollY);
     await page.mouse.wheel(0, -100);
-    await expect(zoom).toHaveValue('3');
+    await expect(zoom).toHaveValue('5');
     await page.mouse.wheel(0, 100);
     await expect(zoom).toHaveValue('4');
     await page.keyboard.up('Shift');
@@ -35,22 +35,22 @@ const { chromium, firefox, expect } = require('@playwright/test');
     expect(await wheel({ deltaY: -100, shiftKey: true }, '#library-search')).toBe(false);
     await expect(zoom).toHaveValue('4');
     expect(await wheel({ deltaX: -100, shiftKey: true })).toBe(true);
-    await expect(zoom).toHaveValue('3');
+    await expect(zoom).toHaveValue('5');
     await wheel({ deltaY: 3, deltaMode: 1, shiftKey: true });
     await expect(zoom).toHaveValue('4');
     await wheel({ deltaY: -1, deltaMode: 2, shiftKey: true });
-    await expect(zoom).toHaveValue('3');
+    await expect(zoom).toHaveValue('5');
     await page.evaluate(() => {
       for (let i = 0; i < 5; i++) document.querySelector('#mix-timelines canvas').dispatchEvent(
         new WheelEvent('wheel', { bubbles: true, cancelable: true, shiftKey: true, deltaY: 20 }));
     });
     await expect(zoom).toHaveValue('4');
     await wheel({ deltaY: -100000, shiftKey: true });
-    await expect(zoom).toHaveValue('1');
-    await wheel({ deltaY: 100000, shiftKey: true });
     await expect(zoom).toHaveValue('24');
+    await wheel({ deltaY: 100000, shiftKey: true });
+    await expect(zoom).toHaveValue('1');
     await wheel({ deltaY: -100, shiftKey: true });
-    await expect(zoom).toHaveValue('23');
+    await expect(zoom).toHaveValue('2');
     expect(errors).toEqual([]);
     console.log(`${engine.name()}: Shift+wheel zoom, native scroll, modifiers, delta units, touchpad and bounds OK`);
   } finally { await browser.close(); }

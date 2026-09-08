@@ -1,6 +1,6 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260909-24';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260909-25';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
@@ -1197,7 +1197,7 @@ $('#mix-timelines').addEventListener('wheel', event => {
   if (!steps) return;
   waveWheelDelta -= steps * 100;
   const zoom = $('#mix-wave-zoom');
-  zoom.value = clamp((Number(zoom.value) || 4) + steps, 1, 24);
+  zoom.value = clamp((Number(zoom.value) || 4) - steps, 1, 24);
   if (zoom.value === '1' || zoom.value === '24') waveWheelDelta = 0;
   zoom.dispatchEvent(new Event('input', { bubbles: true }));
 }, { passive: false });
