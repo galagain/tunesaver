@@ -88,7 +88,7 @@ function audioFixture() {
           previews: [...document.querySelectorAll('#mix-overviews > .mix-overview')].sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left).map(el => el.dataset.deck),
           keyboard: [...document.querySelectorAll('#mix-overviews > .mix-overview')].map(el => el.dataset.deck),
         }));
-        expect(order.tracks).toEqual(['1', '0']);
+        expect(order.tracks).toEqual(['0', '1']);
         expect(order.previews).toEqual(order.tracks);
         expect(order.keyboard).toEqual(order.tracks);
       };
@@ -159,8 +159,8 @@ function audioFixture() {
       const b = await deck(1);
       await expect(b.locator('.mix-deck-status')).toHaveText('Prêt');
       await assertOverviewOrder();
-      await expect(page.locator('#mix-overviews > .mix-overview').first().locator('.mix-overview-label span')).toContainText('Another very long track title');
-      await expect(page.locator('#mix-overviews > .mix-overview').last().locator('.mix-overview-label span')).toHaveText('First light');
+      await expect(page.locator('#mix-overviews > .mix-overview').first().locator('.mix-overview-label span')).toHaveText('First light');
+      await expect(page.locator('#mix-overviews > .mix-overview').last().locator('.mix-overview-label span')).toContainText('Another very long track title');
       await (await deck(0)).locator('[data-action="play"]').click();
       await (await deck(1)).locator('[data-action="play"]').click();
       await page.waitForFunction(() => __contexts[0].sources.every(s => !s.media.paused && s.media.currentTime > .4));
@@ -212,6 +212,15 @@ function audioFixture() {
       await expect(page.locator('#mix-midi-status')).toContainText('Aucune entrée MIDI');
       await page.evaluate(() => { __midi.inputs.set('flx4', __port); __midi.onstatechange({ port: __port }); });
       await expect(page.locator('#mix-midi-status')).toContainText('connecté');
+      await page.evaluate(() => __sendMIDI([0x90, 0x0b, 127]));
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
+      await expect(b.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
+      await page.evaluate(() => { __sendMIDI([0x90, 0x0b, 127]); __sendMIDI([0x91, 0x0b, 127]); });
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
+      await expect(b.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
+      await page.evaluate(() => __sendMIDI([0x91, 0x0b, 127]));
+      await expect(b.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
+      await assertOverviewOrder();
       await page.evaluate(() => { __sendMIDI([0x96, 0x41, 127]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0xb6, 0x40, 1]); __sendMIDI([0x96, 0x41, 127]); });
       await expect(page.locator('[data-collection="playlists:p"]')).toHaveAttribute('data-selected', 'true');
       await page.keyboard.press('Escape');
