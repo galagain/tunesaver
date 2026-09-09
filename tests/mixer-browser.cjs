@@ -288,7 +288,7 @@ function audioFixture() {
         await route.fulfill({ body: audioFixture(), contentType: 'audio/wav' }).catch(() => {});
       });
       await page.locator('.library-track .play-button').click();
-      await expect(a.locator('.mix-deck-status')).toHaveText('Chargement…');
+      await expect(a.locator('.mix-deck-status')).toHaveText(/Chargement…|Préparation audio…/);
       await page.evaluate(() => showAuth());
       await expect(page.locator('#playback-dock')).toBeHidden();
       await page.waitForFunction(() => __contexts[0].state === 'closed');

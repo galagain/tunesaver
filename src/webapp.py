@@ -64,6 +64,7 @@ STATUS_CACHE_SECONDS = 3
 PROVIDER_STATUS_SECONDS = 60
 AUTH_CACHE_SECONDS = 60
 DOWNLOAD_TICKET_SECONDS = 120
+STREAM_TICKET_SECONDS = 12 * 60 * 60
 MAX_BATCH_LINKS = 50
 PASSWORD_ITERATIONS = 260_000
 ACCESS_TOKEN_SECONDS = 12 * 60 * 60
@@ -238,6 +239,15 @@ def init_local_store() -> None:
 
             create index if not exists sessions_user_kind_idx
               on sessions (user_id, kind);
+
+            create table if not exists stream_tickets (
+              token_hash text primary key,
+              user_id text not null references users(id) on delete cascade,
+              job_id text not null,
+              expires_at real not null
+            );
+            create index if not exists stream_tickets_expiry_idx on stream_tickets (expires_at);
+            create index if not exists stream_tickets_job_idx on stream_tickets (job_id, user_id);
 
             create table if not exists email_codes (
               code_hash text primary key,
@@ -1045,6 +1055,7 @@ def local_library_remove_track(user_id: str, job_id: str) -> None:
             db.execute("delete from tag_items where job_id = ? and tag_id in "
                        "(select id from tags where user_id = ?)", (job_id, user_id))
             db.execute("delete from download_history where user_id=? and job_id=?", (user_id, job_id))
+            db.execute("delete from stream_tickets where user_id=? and job_id=?", (user_id, job_id))
             return
     with local_db() as db:
         if db.execute("select 1 from library_removed where user_id=? and job_id=?", (user_id, job_id)).fetchone():
@@ -3243,7 +3254,7 @@ async def stream_ticket_handler(request: web.Request) -> web.Response:
     job_id = payload.get("job_id")
     if not isinstance(job_id, str):
         raise PublicError("Morceau invalide.")
-    path, job = find_done_job(job_id)
+    _path, job = find_done_job(job_id)
     if job.get("owner_id") != request["user"]["id"]:
         raise PublicError("Morceau introuvable.", status=404)
     delivery = delivery_for_job(job_id, request["user"]["id"])
@@ -3252,10 +3263,12 @@ async def stream_ticket_handler(request: web.Request) -> web.Response:
     if not delivery["mime_type"]:
         raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
     token = secrets.token_urlsafe(32)
-    job["stream_ticket_hash"] = hashlib.sha256(token.encode()).hexdigest()
-    job["stream_ticket_expires"] = int(time.time()) + DOWNLOAD_TICKET_SECONDS
-    if not update_existing_job(path, job):
-        raise PublicError("Morceau supprimé.", status=404)
+    # Each deck needs its own URL, valid for later range requests during a set.
+    with local_db() as db:
+        db.execute("delete from stream_tickets where expires_at <= ?", (time.time(),))
+        db.execute("insert into stream_tickets (token_hash, user_id, job_id, expires_at) values (?, ?, ?, ?)",
+                   (hashlib.sha256(token.encode()).hexdigest(), request["user"]["id"], job_id,
+                    time.time() + STREAM_TICKET_SECONDS))
     return web.json_response({"url": f"/api/stream/{job_id}?ticket={quote(token)}"})
 
 
@@ -3367,11 +3380,12 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
     expected = str(job.get("stream_ticket_hash", ""))
     expires = int(job.get("stream_ticket_expires", 0))
     actual = hashlib.sha256(ticket.encode()).hexdigest() if ticket else ""
-    if (
-        not expected
-        or expires < int(time.time())
-        or not secrets.compare_digest(expected, actual)
-    ):
+    with local_db() as db:
+        valid = db.execute("select 1 from stream_tickets where token_hash=? and job_id=? and user_id=? and expires_at>?",
+                           (actual, job_id, job.get("owner_id"), time.time())).fetchone()
+    # Accept short-lived URLs issued before the streaming upgrade.
+    legacy_valid = expected and expires > time.time() and secrets.compare_digest(expected, actual)
+    if not valid and not legacy_valid:
         raise PublicError("Lien de lecture invalide ou expiré.", status=403)
     delivery = job.get("delivery")
     if not isinstance(delivery, dict) or not isinstance(delivery.get("path"), str):

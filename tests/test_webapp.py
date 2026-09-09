@@ -1141,6 +1141,27 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(streamed.status, 200)
             self.assertEqual(await streamed.read(), b"test-audio")
 
+            second_ticket = await client.post(
+                "/api/stream-ticket", json={"job_id": job_id},
+                headers={"Authorization": f"Bearer {TEST_TOKEN}"},
+            )
+            second_url = (await second_ticket.json())["url"]
+            self.assertNotEqual(stream_url, second_url)
+            for url in (stream_url, second_url):
+                ranged = await client.get(url, headers={"Range": "bytes=5-9"})
+                self.assertEqual(ranged.status, 206)
+                self.assertEqual(await ranged.read(), b"audio")
+            with mock.patch.object(webapp.time, "time", return_value=time.time() + 300):
+                later = await client.get(stream_url, headers={"Range": "bytes=0-3"})
+                self.assertEqual(later.status, 206)
+                self.assertEqual(await later.read(), b"test")
+            invalid = await client.get(f"/api/stream/{job_id}?ticket=wrong")
+            self.assertEqual(invalid.status, 403)
+            with webapp.local_db() as db:
+                db.execute("update stream_tickets set expires_at=?", (time.time() - 1,))
+            expired_ticket = await client.get(stream_url)
+            self.assertEqual(expired_ticket.status, 403)
+
             other = webapp.local_create_user("other-library@example.com", "secret123")
             with self.assertRaises(webapp.PublicError):
                 webapp.local_library_remove_track(other["id"], job_id)
@@ -1158,6 +1179,8 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(webapp.local_user_history(user_id, limit=500, offset=0), [])
             self.assertFalse(delivery_path.exists())
             self.assertFalse(done.exists())
+            with webapp.local_db() as db:
+                self.assertEqual(db.execute("select count(*) from stream_tickets where job_id=?", (job_id,)).fetchone()[0], 0)
             expired = await client.get(stream_url)
             self.assertEqual(expired.status, 404)
             webapp.local_library_remove_track(user_id, job_id)

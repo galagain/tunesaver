@@ -40,7 +40,6 @@ let midiClosing = Promise.resolve();
 let midiTimer = null;
 let midiPermission = null;
 let decoder = new FLX4Decoder();
-let ticketQueue = Promise.resolve();
 const cueMemory = new Map();
 const saves = new Map();
 let mixerEpoch = 0;
@@ -162,40 +161,26 @@ async function ensureAudio() {
   } finally { clearTimeout(timer); }
 }
 
-// Serialize ticket creation through response headers: issuing another ticket for
-// the same song invalidates the previous one on the existing streaming endpoint.
-async function audioBlob(track, signal) {
-  const request = ticketQueue.then(async () => {
-    signal.throwIfAborted();
-    const { url } = await host().requestJson('/api/stream-ticket', {
-      method: 'POST', body: JSON.stringify({ job_id: track.job_id }), signal,
-    });
-    signal.throwIfAborted();
-    const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`Chargement audio impossible (${response.status}).`);
-    return response;
+function waitForAudio(media, signal) {
+  return new Promise((resolve, reject) => {
+    const finish = error => {
+      clearTimeout(timer);
+      media.removeEventListener('canplay', playable);
+      media.removeEventListener('error', failed);
+      signal.removeEventListener('abort', aborted);
+      error ? reject(error) : resolve();
+    };
+    const playable = () => finish();
+    const failed = () => finish(new Error('Fichier audio illisible ou lien de lecture indisponible.'));
+    const aborted = () => finish(new DOMException('Chargement annulé', 'AbortError'));
+    const timer = setTimeout(() => finish(new Error('Le serveur audio ne répond pas. Réessaie le chargement.')), 30000);
+    media.addEventListener('canplay', playable);
+    media.addEventListener('error', failed);
+    signal.addEventListener('abort', aborted, { once: true });
+    if (signal.aborted) aborted();
+    else if (media.error) failed();
+    else if (media.readyState >= 3) playable();
   });
-  ticketQueue = request.then(() => undefined, () => undefined);
-  const response = await request;
-  const limit = 128 * 1024 * 1024;
-  if (Number(response.headers.get('Content-Length')) > limit) {
-    await response.body.cancel();
-    throw new Error('Ce fichier dépasse la limite de 128 Mo par platine.');
-  }
-  const reader = response.body.getReader();
-  const chunks = [];
-  let size = 0;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > limit) {
-      await reader.cancel();
-      throw new Error('Ce fichier dépasse la limite de 128 Mo par platine.');
-    }
-    chunks.push(value);
-  }
-  return new Blob(chunks, { type: response.headers.get('Content-Type') || 'audio/mpeg' });
 }
 
 class Deck {
@@ -358,6 +343,12 @@ class Deck {
     const letter = document.createElement('strong'); letter.textContent = this.letter;
     this.overviewTitle = document.createElement('span'); this.overviewTitle.textContent = 'Aucun morceau';
     label.append(letter, this.overviewTitle); overview.prepend(label);
+    this.loadProgress = document.createElement('progress');
+    this.loadProgress.className = 'mix-load-progress'; this.loadProgress.max = 1;
+    this.loadProgress.setAttribute('aria-label', `Audio chargé (${this.letter})`);
+    this.loadLabel = document.createElement('span'); this.loadLabel.className = 'mix-load-label';
+    this.loadProgress.hidden = this.loadLabel.hidden = true;
+    overview.append(this.loadProgress, this.loadLabel);
     const transport = document.createElement('div'); transport.className = 'deck-playback';
     if (!this.index) transport.append(button('previous', 'Morceau précédent', SkipBack, () => host().playPreviousTrack()));
     transport.append(this.buttons.play);
@@ -394,6 +385,7 @@ class Deck {
     this.version++;
     this.abort?.abort();
     clearTimeout(this.bendTimer);
+    clearTimeout(this.analysisDelay);
     const media = this.wave?.getMediaElement();
     this.wave?.pause();
     this.wave?.destroy();
@@ -408,10 +400,13 @@ class Deck {
     this.headphone = false;
     this.analysisData = null;
     this.analysisLoading = false;
+    this.analysisUnavailable = false;
+    this.loadProgress.hidden = this.loadLabel.hidden = true;
   }
 
   async load(track) {
     if (!host().signedIn || !track.streamable) return;
+    if (this.ready && this.track?.job_id === track.job_id) return true;
     const previousVersion = this.version;
     if ((active || this.index) && this.playing() && !await window.TuneSaverDialogs.confirm(`Remplacer le morceau en lecture sur ${this.letter} ?`, { confirmText: 'Remplacer' })) return;
     if (!host().signedIn || previousVersion !== this.version) return;
@@ -423,24 +418,31 @@ class Deck {
     const signal = this.abort.signal;
     this.hotcues = [...(cueMemory.get(track.job_id)?.hotcues || Array(8).fill(null))];
     this.cue = cueMemory.get(track.job_id)?.cue || 0;
-    this.control('bpm').value = Number(track.bpm) > 0 ? track.bpm : '';
-    this.control('tempoMode').value = 'fixed';
     $('.mix-cover', this.el).replaceWith(cover(track));
     $('.mix-track-info strong', this.el).textContent = track.title || track.file_name || 'Sans titre';
     this.overviewTitle.textContent = track.title || track.file_name || 'Sans titre';
     this.overviewTitle.title = [this.overviewTitle.textContent, track.artist].filter(Boolean).join(' · ');
     $('.mix-track-info span', this.el).textContent = track.artist || '';
     $('.mix-deck-status', this.el).textContent = 'Chargement…';
-    this.update();
-    run(() => this.fetchAnalysis());
+    const summary = { bpm: track.bpm, ...track.mix_analysis };
+    this.applyAnalysis({ status: 'pending', analysis: summary, settings: {
+      tempo_mode: summary.tempo_mode || 'fixed', cue: this.cue, hotcues: this.hotcues,
+    } });
     try {
       await ensureAudio();
       if (version !== this.version) return;
-      const blob = await audioBlob(track, signal);
+      const { url } = await host().requestJson('/api/stream-ticket', {
+        method: 'POST', body: JSON.stringify({ job_id: track.job_id }), signal,
+      });
       if (version !== this.version) return;
       $('.mix-deck-status', this.el).textContent = 'Préparation audio…';
       const media = new Audio();
       media.preload = 'auto';
+      for (const event of ['progress', 'waiting', 'playing', 'loadedmetadata', 'canplay']) {
+        media.addEventListener(event, () => {
+          if (version === this.version) this.updateLoading();
+        }, { signal });
+      }
       this.wave = WaveSurfer.create({
         container: $('.mix-wave', this.overview), media, height: 32,
         waveColor: '#626262', progressColor: this.index ? '#ef8eb3' : '#00d79d', cursorColor: '#ffffff',
@@ -478,9 +480,17 @@ class Deck {
         this.ready = false;
         this.wave.pause();
         $('.mix-deck-status', this.el).textContent = 'Fichier audio illisible.';
+        this.loadProgress.hidden = this.loadLabel.hidden = true;
         this.update();
       });
-      await this.wave.loadBlob(blob);
+      this.applySound();
+      // Blank peaks bypass WaveSurfer's whole-file fetch/decode. Real waveform
+      // data arrives separately; the media element streams and seeks by range.
+      const duration = Number(summary.duration);
+      await Promise.all([
+        this.wave.load(url, [new Float32Array(2)], duration > 0 && Number.isFinite(duration) ? duration : undefined),
+        waitForAudio(media, signal),
+      ]);
       if (version !== this.version) return;
       this.ready = true;
       this.applySound();
@@ -488,6 +498,10 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = 'Prêt';
       $('[data-duration]', this.overview).textContent = time(this.wave.getDuration());
       this.update();
+      this.updateLoading();
+      this.analysisDelay = setTimeout(() => {
+        if (version === this.version) run(() => this.fetchAnalysis());
+      }, 0);
       return true;
     } catch (e) {
       if (version !== this.version) return;
@@ -495,6 +509,27 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = e.name === 'AbortError' ? 'Chargement annulé' : e.message || 'Chargement impossible.';
       this.update();
     }
+  }
+
+  updateLoading() {
+    if (!this.track) return;
+    const media = this.wave?.getMediaElement();
+    const duration = media?.duration;
+    let buffered = 0;
+    if (duration > 0 && Number.isFinite(duration)) {
+      for (let i = 0; i < media.buffered.length; i++) buffered += media.buffered.end(i) - media.buffered.start(i);
+    }
+    const fraction = duration > 0 ? clamp(buffered / duration, 0, 1) : 0;
+    this.loadProgress.value = fraction;
+    this.loadProgress.hidden = !media || fraction >= .999;
+    const info = this.analysisUnavailable || this.analysisData?.status === 'failed' ? 'Analyse indisponible'
+      : ['running', 'queued'].includes(this.analysisData?.status) ? 'Analyse…'
+      : this.analysisData?.status !== 'done' ? 'Infos…' : '';
+    const audio = !this.ready ? 'Audio…' : media?.readyState < 3 ? 'Mise en mémoire…'
+      : fraction < .999 ? `Audio ${Math.round(fraction * 100)} %` : '';
+    this.loadLabel.textContent = [audio, info].filter(Boolean).join(' · ');
+    this.loadLabel.hidden = !this.loadLabel.textContent;
+    if (this.ready) $('[data-duration]', this.overview).textContent = time(this.wave.getDuration());
   }
 
   grid(position = this.position()) {
@@ -513,12 +548,16 @@ class Deck {
     if (!this.track || this.analysisLoading || saves.has(this.track.job_id)) return;
     const version = this.version;
     this.analysisLoading = true;
+    this.analysisUnavailable = false;
     try {
       const data = await host().requestJson(`/api/mixer/tracks/${encodeURIComponent(this.track.job_id)}`, { method: 'GET', signal: this.abort?.signal });
       if (version === this.version && !saves.has(this.track.job_id)) this.applyAnalysis(data);
     } catch (error) {
-      if (version === this.version && error.name !== 'AbortError') $('.mix-analysis-info', this.el).textContent = 'Analyse indisponible. Réessaie depuis les réglages.';
-    } finally { if (version === this.version) this.analysisLoading = false; }
+      if (version === this.version && error.name !== 'AbortError') {
+        this.analysisUnavailable = true;
+        $('.mix-analysis-info', this.el).textContent = 'Analyse indisponible. Réessaie depuis les réglages.';
+      }
+    } finally { if (version === this.version) { this.analysisLoading = false; this.updateLoading(); } }
   }
 
   applyAnalysis(data) {
@@ -540,6 +579,7 @@ class Deck {
       : data.status === 'failed' ? data.error || 'Analyse échouée' : data.status === 'running' ? 'Analyse en cours…' : 'Analyse en attente';
     if (a.waveform?.data && a.waveform.data !== previousWaveform?.data && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a) });
     this.update();
+    this.updateLoading();
   }
 
   async reanalyze() {
@@ -841,7 +881,7 @@ function initialize() {
   cancelAnimationFrame(animation);
   animate();
   clearInterval(analysisTimer);
-  analysisTimer = setInterval(() => decks.filter(d => d.track && !['done', 'failed'].includes(d.analysisData?.status)).forEach(d => run(() => d.fetchAnalysis())), 4000);
+  analysisTimer = setInterval(() => decks.filter(d => d.ready && d.track && !['done', 'failed'].includes(d.analysisData?.status)).forEach(d => run(() => d.fetchAnalysis())), 4000);
 }
 
 function layoutOverviews() {
