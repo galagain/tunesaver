@@ -975,9 +975,18 @@ function bindMIDI() {
 
 function midiReady(port) { return port?.state === 'connected' && port.connection === 'open'; }
 
+function midiAction(label, shape) {
+  const button = $('#mix-connect');
+  button.replaceChildren(icon(shape));
+  button.setAttribute('aria-label', label);
+  button.title = [label, $('#mix-midi-status').textContent].filter(Boolean).join(' · ');
+}
+
 function midiStatus(text, connected = false) {
   $('#mix-midi-status').textContent = text;
   $('#mix-midi-status').dataset.connected = String(connected);
+  $('#mix-connect').dataset.connected = String(connected);
+  $('#mix-connect').title = [$('#mix-connect').getAttribute('aria-label'), text].filter(Boolean).join(' · ');
 }
 
 function closeMIDIPort(port) {
@@ -1077,7 +1086,7 @@ async function disconnectMIDI() {
   const ports = new Set([midiInput, midiOutput, midiOpening]);
   if (midiInput) midiInput.onmidimessage = null;
   midiInput = midiOutput = midiOpening = midiFailedInput = midi = null;
-  $('#mix-connect').replaceChildren(icon(Usb), document.createTextNode('Connecter le FLX4'));
+  midiAction('Connecter le FLX4', Usb);
   $('#mix-connect').disabled = false;
   midiStatus('Non connecté');
   $('#mix-midi-help').hidden = true;
@@ -1122,7 +1131,7 @@ async function connectMIDI(closing = midiClosing) {
   midiWanted = true;
   $('#mix-midi-help').hidden = true;
   message();
-  $('#mix-connect').replaceChildren(icon(Unplug), document.createTextNode('Annuler la connexion'));
+  midiAction('Annuler la connexion', Unplug);
   midiStatus('Autorisation MIDI en attente…');
   try {
     const access = await navigator.requestMIDIAccess({ sysex: false });
@@ -1130,7 +1139,7 @@ async function connectMIDI(closing = midiClosing) {
     if (epoch !== midiEpoch || !host()?.signedIn) return;
     midi = access; midiWanted = true;
     void watchMIDIPermission(epoch);
-    $('#mix-connect').replaceChildren(icon(Unplug), document.createTextNode('Déconnecter le MIDI'));
+    midiAction('Déconnecter le MIDI', Unplug);
     const hardwareStates = new Map(Array.from(midi.inputs.values(), port => [port.id, port.state]));
     midi.onstatechange = event => {
       if (epoch !== midiEpoch || !midiWanted || event.port.type !== 'input') return;
@@ -1236,7 +1245,7 @@ $('#library-tracks').addEventListener('keydown', e => {
     e.preventDefault(); browse(e.key === 'ArrowDown' ? 1 : -1, true);
   }
 });
-$('#mix-connect').prepend(icon(Usb));
+midiAction('Connecter le FLX4', Usb);
 $('#mix-connect').addEventListener('click', () => run(connectMIDI));
 $('#mix-midi-input').addEventListener('change', () => { midiSelection = $('#mix-midi-input').value; run(bindMIDI); });
 $('#mix-midi-refresh').append(icon(RefreshCw));

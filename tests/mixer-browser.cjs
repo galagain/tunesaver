@@ -82,6 +82,7 @@ function audioFixture() {
       };
       await page.evaluate(() => streamTrack(libraryState.tracks[0]));
       await page.waitForFunction(() => Mixer.currentPlayback.playing && Mixer.currentPlayback.position > .2);
+      await expect(page.locator('#mix-connect')).toBeHidden();
       const assertOverviewOrder = async () => {
         const order = await page.evaluate(() => ({
           tracks: [...document.querySelectorAll('.mix-deck')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map(el => el.dataset.deck),
@@ -91,6 +92,13 @@ function audioFixture() {
         expect(order.tracks).toEqual(['0', '1']);
         expect(order.previews).toEqual(order.tracks);
         expect(order.keyboard).toEqual(order.tracks);
+        const connect = await page.locator('#mix-connect').boundingBox();
+        const settings = await page.locator('#mix-controls-toggle').boundingBox();
+        const overviews = await page.locator('#mix-overviews').boundingBox();
+        expect(connect.x + connect.width).toBeLessThanOrEqual(overviews.x);
+        expect(Math.abs(connect.y + connect.height / 2 - overviews.y - overviews.height / 2)).toBeLessThan(2);
+        expect(connect.y + connect.height).toBeLessThan(settings.y);
+        expect(Math.abs(connect.x + connect.width / 2 - settings.x - settings.width / 2)).toBeLessThan(1);
       };
       await page.evaluate(() => {
         window.__handoffEvents = [];
@@ -207,11 +215,14 @@ function audioFixture() {
       await page.evaluate(() => { const media = __contexts[0].sources[0].media; media.currentTime = 2.1; media.dispatchEvent(new Event('timeupdate')); });
       await page.waitForFunction(() => __contexts[0].sources[0].media.currentTime < 1.1);
       await a.locator('[data-action="loop"]').click();
-      await globalControls();
+      await page.evaluate(() => document.querySelector('#mix-controls').hidePopover());
+      await expect(page.locator('#mix-connect')).toHaveAccessibleName('Connecter le FLX4');
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-midi-status')).toContainText('Aucune entrée MIDI');
       await page.evaluate(() => { __midi.inputs.set('flx4', __port); __midi.onstatechange({ port: __port }); });
       await expect(page.locator('#mix-midi-status')).toContainText('connecté');
+      await expect(page.locator('#mix-connect')).toHaveAttribute('data-connected', 'true');
+      await expect(page.locator('#mix-connect')).toHaveAccessibleName('Déconnecter le MIDI');
       await page.evaluate(() => __sendMIDI([0x90, 0x0b, 127]));
       await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await expect(b.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
@@ -277,6 +288,7 @@ function audioFixture() {
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw Error('Horizontal overflow');
       await page.screenshot({ path: `/work/mixer-${isFirefox ? 'firefox-' : ''}${width}.png`, fullPage: true });
       await page.locator('#mixer-nav').click();
+      await expect(page.locator('#mix-connect')).toBeHidden();
       await expect(b).toBeHidden(); await expect(a).toBeVisible();
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
       await page.locator('#mixer-nav').click(); await expect(a.locator('.mix-deck-status')).toHaveText('Prêt');

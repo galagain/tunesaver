@@ -2,13 +2,13 @@
 #playback-dock { position: fixed; inset: auto 0 0; z-index: 80; display: flex; align-items: end; min-height: var(--deck-height); background: #1b1b1b; border-top: 1px solid #454545; color: #eee; padding-bottom: env(safe-area-inset-bottom); }
 /* Reserve the full dock so collapsing B cannot clamp the page's scroll position. */
 .dock-mode { flex: 0 0 52px; height: var(--deck-height); border-right: 1px solid #393939; display: grid; grid-template-columns: 1fr; grid-template-rows: var(--deck-height); place-items: center; }
-body[data-mixer="true"] .dock-mode { height: calc(var(--deck-height) + var(--deck-height)); grid-template-rows: repeat(2, var(--deck-height)); }
+body[data-mixer="true"] .dock-mode { height: calc(var(--overview-height) + var(--deck-height) + var(--deck-height)); grid-template-rows: var(--overview-height) repeat(2, var(--deck-height)); }
 #mixer-nav { grid-column: 1; grid-row: 1; }
-body[data-mixer="true"] #mixer-nav { grid-row: 2; }
+body[data-mixer="true"] #mixer-nav { grid-row: 3; }
 #mixer-nav { width: 40px; height: 36px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; background: transparent; color: #bbb; border: 0; border-radius: 3px; font-size: 9px; padding: 0; }
 #mixer-nav svg { width: 18px; height: 18px; }
 #mixer-nav[aria-pressed="true"] { color: #00d79d; border-color: #00d79d; }
-#mix-controls-toggle { display: none; grid-column: 1; grid-row: 1; width: 32px; height: 32px; background: transparent; border: 0; }
+#mix-controls-toggle { display: none; grid-column: 1; grid-row: 2; width: 32px; height: 32px; background: transparent; border: 0; }
 body[data-mixer="true"] #mix-controls-toggle { display: grid; }
 #mix-performance { flex: 1; min-width: 0; }
 #mix-controls, .deck-controls { color: #eee; background: #242424; border: 1px solid #555; border-radius: 4px; padding: 12px; margin: 0; inset: auto 12px calc(var(--playback-height, 73px) + 8px) auto; width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - var(--playback-height, 73px) - 24px); overflow-y: auto; }
@@ -26,8 +26,10 @@ body[data-mixer="true"] #mix-controls-toggle { display: grid; }
 #playback-dock label { font-size: 10px; color: #aaa; }
 #playback-dock input[type="checkbox"] { accent-color: var(--deck-color, #00d79d); width: 12px; height: 12px; margin: 0; }
 .mix-toolbar { display: flex; align-items: center; gap: 8px; min-height: 30px; padding-bottom: 4px; }
-#mix-connect { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 6px; min-height: 28px; }
-#mix-connect svg { width: 16px; height: 16px; }
+#mix-connect { display: none; grid-column: 1; grid-row: 1; width: 32px; height: 32px; padding: 0; background: transparent; border: 0; color: #bbb; }
+body[data-mixer="true"] #mix-connect { display: grid; }
+#mix-connect svg { width: 18px; height: 18px; }
+#mix-connect[data-connected="true"] { color: #00d79d; }
 #mix-midi-status { flex: 1; font-size: 11px; color: #aaa; min-width: 0; overflow-wrap: anywhere; }
 #mix-midi-status[data-connected="true"] { color: #00d79d; }
 #mix-midi-input { width: 170px; }
@@ -150,7 +152,6 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
   #mixer-nav { width: 36px; }
   .mix-toolbar { flex-wrap: wrap; gap: 4px; }
   #mix-midi-status { flex-basis: calc(100% - 140px); font-size: 10px; }
-  #mix-connect { font-size: 10px; }
   .mix-deck { grid-template-columns: minmax(0, 1fr) 24px; grid-template-rows: 42px 40px; gap: 4px 8px; padding: 4px 8px 6px; }
   .mix-deck-heading { grid-column: 1; grid-row: 1; gap: 4px; }
   .mix-deck-letter { font-size: 10px; }
