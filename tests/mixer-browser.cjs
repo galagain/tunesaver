@@ -62,7 +62,7 @@ function audioFixture() {
           data.set([peak, Math.round(peak * .25), Math.round(peak * .15), peak, peak], i * 5);
         }
         const waveform = { encoding: 'u8-lmhpn', rate: 441, frames, data: btoa(Array.from(data, n => String.fromCharCode(n)).join('')) };
-        const analysis = bpm => ({ version: 2, engine: 'Queen Mary DSP', bpm, duration: 12, grid_offset: 0, key: 'Am', camelot: '8A', grid_quality: 'stable', codec: 'pcm_s16le', sample_rate: 44100, bit_rate: 1411200, waveform });
+        const analysis = bpm => ({ version: 2, engine: 'Queen Mary DSP', bpm, duration: 12, grid_offset: 0, key: 'Am', camelot: '8A', grid_quality: 'variable', beats: Array.from({ length: 22 }, (_, i) => Math.floor(i / 2) * 1.1 + (i % 2 ? .5 : 0)), codec: 'pcm_s16le', sample_rate: 44100, bit_rate: 1411200, waveform });
         libraryState.tracks.forEach((t, i) => { t.mix_analysis = { status: 'done', bpm: i ? 128 : 120, duration: 12, key: 'Am', camelot: '8A' }; });
         window.__mixSettings = {};
         TuneSaverMixerHost.requestJson = async (path, options) => {
@@ -100,6 +100,37 @@ function audioFixture() {
       const stop = async () => { await globalControls(); await page.locator('#mix-stop').click(); await page.evaluate(() => document.querySelector('#mix-controls').hidePopover()); };
       await stop();
       await expect(page.locator('#mix-performance')).toBeVisible();
+      await deckControls(0);
+      await a.locator('.mix-grid-editor summary').click();
+      const tempoMode = a.locator('[data-control="tempoMode"]');
+      await expect(tempoMode).toHaveValue('fixed');
+      for (const position of [.2, .8, 2.4]) {
+        await page.evaluate(position => { __contexts[0].sources[0].media.currentTime = position; }, position);
+        await page.waitForFunction(() => !__contexts[0].sources[0].media.seeking);
+        await expect(a.locator('.mix-current-bpm')).toHaveText('120.00');
+      }
+      await a.locator('[data-control="bpm"]').fill('125'); await a.locator('[data-control="bpm"]').press('Tab');
+      await expect(a.locator('.mix-current-bpm')).toHaveText('125.00');
+      await page.evaluate(() => {
+        window.__tempoEvents = [];
+        for (const event of ['play', 'pause', 'seeking', 'emptied', 'loadstart']) __contexts[0].sources[0].media.addEventListener(event, () => __tempoEvents.push(event));
+      });
+      await tempoMode.selectOption('variable');
+      await page.waitForFunction(() => __mixSettings.one.tempo_mode === 'variable');
+      await expect(a.locator('[data-control="bpm"]')).toBeDisabled();
+      expect(await page.evaluate(() => __tempoEvents)).toEqual([]);
+      for (const [position, bpm] of [[.2, '120.00'], [.8, '100.00']]) {
+        await page.evaluate(position => { __contexts[0].sources[0].media.currentTime = position; }, position);
+        await expect(a.locator('.mix-current-bpm')).toHaveText(bpm);
+      }
+      await tempoMode.selectOption('fixed');
+      await expect(a.locator('.mix-current-bpm')).toHaveText('125.00');
+      await expect(a.locator('[data-control="bpm"]')).toBeEnabled();
+      await page.screenshot({ path: `/work/tempo-mode-${engine.name()}-${width}.png` });
+      await a.locator('[data-control="bpm"]').fill('120'); await a.locator('[data-control="bpm"]').press('Tab');
+      await expect(a.locator('.mix-current-bpm')).toHaveText('120.00');
+      await a.locator('.mix-grid-editor summary').click();
+      await page.evaluate(() => document.querySelector('#deck-controls-0').hidePopover());
       await page.locator('.library-track[data-job-id="two"] .track-menu > summary').click();
       await page.locator('.library-track[data-job-id="two"] button[title="Charger sur B"]').click();
       const b = await deck(1);

@@ -12,6 +12,10 @@ export function detectedGrid(beats, time) {
   return step > 0 ? { bpm: 60 / step, offset: beats[i] } : null;
 }
 
+export function usesVariableGrid(analysis, settings = {}) {
+  return settings.tempo_mode === 'variable' && Array.isArray(analysis?.beats) && analysis.beats.length >= 2;
+}
+
 export function phaseAlignedTime(time, own, otherTime, other, duration = Infinity) {
   const source = gridPosition(time, own.bpm, own.offset), target = gridPosition(otherTime, other.bpm, other.offset);
   if (source === null || target === null) return time;
@@ -122,7 +126,7 @@ export class Timeline {
     this.cursor.style.left = '50%';
     this.cursor.hidden = !deck.ready;
     const grid = deck.grid(), analysis = deck.analysisData?.analysis, raw = deck.wave?.getDecodedData();
-    const stamp = JSON.stringify([w, h, dpr, this.start, this.span, grid, deck.hotcues, deck.loopStart, deck.loopEnd, deck.looping]);
+    const stamp = JSON.stringify([w, h, dpr, this.start, this.span, grid, deck.analysisData?.settings?.tempo_mode, deck.hotcues, deck.loopStart, deck.loopEnd, deck.looping]);
     if (stamp === this.stamp && this.analysis === analysis && this.raw === raw) return;
     const tileStamp = JSON.stringify([w, h, dpr, this.span]);
     if (tileStamp !== this.tileStamp || this.analysis !== analysis || this.raw !== raw) this.tiles.clear();
@@ -156,7 +160,7 @@ export class Timeline {
       if (bar) { ctx.fillStyle = '#ddd'; ctx.font = '9px sans-serif'; ctx.fillText(label, x + 2, h - 3); }
     };
     const settings = deck.analysisData?.settings || {};
-    if (analysis?.grid_quality === 'variable' && !('bpm' in settings || 'grid_offset' in settings)) {
+    if (usesVariableGrid(analysis, settings)) {
       (analysis.beats || []).forEach((at, i) => { if (at >= this.start && at <= this.start + this.span) line(at, i % 4 === 0, String(Math.floor(i / 4) + 1)); });
     } else if (grid.bpm) {
       const step = 60 / grid.bpm;

@@ -49,9 +49,10 @@ def summaries(db_factory, owner):
     for row in rows:
         analysis = json.loads(row["result"] or "{}")
         settings = json.loads(row["settings"] or "{}")
-        bpm = settings.get("bpm", analysis.get("bpm"))
+        bpm = analysis.get("bpm") if settings.get("tempo_mode") == "variable" else settings.get("bpm", analysis.get("bpm"))
         key = settings.get("key", analysis.get("key"))
         result[row["job_id"]] = {"status": row["status"] or "pending", "bpm": bpm,
+                                 "tempo_mode": settings.get("tempo_mode", "fixed"),
                                  "key": key, "camelot": KEYS.get(key), "duration": analysis.get("duration"),
                                  "grid_quality": analysis.get("grid_quality"), "error": row["error"] or ""}
     return result
@@ -84,8 +85,10 @@ class MixerAnalysis:
     def patch(self, owner, job, payload):
         data = self.read(owner, job)
         maximum = (data["analysis"] or {}).get("duration", MAX_DURATION)
-        if not isinstance(payload, dict) or not payload or set(payload) - {"bpm", "key", "grid_offset", "cue", "hotcue"}:
+        if not isinstance(payload, dict) or not payload or set(payload) - {"bpm", "key", "grid_offset", "cue", "hotcue", "tempo_mode"}:
             raise self.error("Réglages de mix invalides.")
+        if "tempo_mode" in payload and payload["tempo_mode"] not in (None, "fixed", "variable"):
+            raise self.error("Type d'analyse de tempo invalide.")
 
         def number(value, minimum, maximum):
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not minimum <= value <= maximum:

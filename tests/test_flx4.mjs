@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
-import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer } from '../web/mix-waveforms.js';
+import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer, usesVariableGrid } from '../web/mix-waveforms.js';
+
+test('tempo is fixed by default even when beat detection reports variation', () => {
+  const analysis = { grid_quality: 'variable', beats: [0, .5, .98, 1.51] };
+  assert.equal(usesVariableGrid(analysis), false);
+  assert.equal(usesVariableGrid(analysis, { tempo_mode: 'fixed' }), false);
+  assert.equal(usesVariableGrid(analysis, { tempo_mode: 'variable' }), true);
+  assert.equal(usesVariableGrid(analysis, { tempo_mode: 'variable', bpm: 128, grid_offset: .2 }), true);
+  assert.equal(usesVariableGrid({ beats: [] }, { tempo_mode: 'variable' }), false);
+});
 
 function overviewPath(analysis, channels = []) {
   const ctx = { canvas: { width: 1024, height: 40 }, points: [],

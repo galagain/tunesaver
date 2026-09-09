@@ -1,6 +1,6 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid } from './mix-waveforms.js?v=20260909-26';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260909-28';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
@@ -279,12 +279,27 @@ class Deck {
     this.control('key').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { key: this.control('key').value || null })));
     const tools = $('.mix-grid-tools', this.el);
     tools.prepend(this.control('bpm').parentElement);
+    const modeLabel = document.createElement('label'); modeLabel.textContent = 'Type d’analyse';
+    const mode = document.createElement('select'); mode.dataset.control = 'tempoMode';
+    mode.setAttribute('aria-label', `Type d’analyse ${this.letter}`);
+    mode.append(new Option('Tempo fixe', 'fixed'), new Option('Tempo variable', 'variable'));
+    mode.addEventListener('change', () => run(async () => {
+      const job = this.track?.job_id;
+      if (!job) return;
+      try { await saveSettings(job, { tempo_mode: mode.value }); }
+      catch (error) {
+        if (this.track?.job_id === job) mode.value = this.analysisData?.settings?.tempo_mode || 'fixed';
+        throw error;
+      }
+    }));
+    modeLabel.append(mode); tools.prepend(modeLabel);
     tools.append(button('anchor', 'Premier temps à la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
       button('gridBack', 'Reculer la grille de 10 ms', Minus, () => this.shiftGrid(-.01)),
       button('gridForward', 'Avancer la grille de 10 ms', Plus, () => this.shiftGrid(.01)),
       button('analyze', 'Relancer l’analyse du morceau', RefreshCw, () => this.reanalyze()));
     for (const [label, factor] of [['BPM / 2', .5], ['BPM × 2', 2]]) {
       const el = document.createElement('button'); el.type = 'button'; el.className = 'secondary-button'; el.textContent = label;
+      el.dataset.fixedTempo = 'true';
       el.addEventListener('click', () => run(() => saveSettings(this.track.job_id, { bpm: this.grid().bpm * factor })));
       tools.append(el);
     }
@@ -409,6 +424,7 @@ class Deck {
     this.hotcues = [...(cueMemory.get(track.job_id)?.hotcues || Array(8).fill(null))];
     this.cue = cueMemory.get(track.job_id)?.cue || 0;
     this.control('bpm').value = Number(track.bpm) > 0 ? track.bpm : '';
+    this.control('tempoMode').value = 'fixed';
     $('.mix-cover', this.el).replaceWith(cover(track));
     $('.mix-track-info strong', this.el).textContent = track.title || track.file_name || 'Sans titre';
     this.overviewTitle.textContent = track.title || track.file_name || 'Sans titre';
@@ -484,7 +500,7 @@ class Deck {
   grid(position = this.position()) {
     const analysis = this.analysisData?.analysis || {};
     const settings = this.analysisData?.settings || {};
-    if (analysis.grid_quality === 'variable' && !('bpm' in settings || 'grid_offset' in settings)) {
+    if (usesVariableGrid(analysis, settings)) {
       const detected = detectedGrid(analysis.beats, position);
       if (detected) return detected;
     }
@@ -510,13 +526,15 @@ class Deck {
     this.analysisData = data;
     const a = data.analysis || {}, s = data.settings || {};
     this.control('bpm').value = s.bpm ?? a.bpm ?? '';
+    this.control('tempoMode').value = s.tempo_mode || 'fixed';
     this.control('grid').value = (s.grid_offset ?? a.grid_offset ?? 0).toFixed(3);
     this.control('key').value = s.key || '';
     this.cue = s.cue ?? 0;
     this.hotcues = [...(s.hotcues || Array(8).fill(null))];
     const key = s.key || a.key;
     $('.mix-key', this.el).textContent = key ? `${key}${!s.key && a.camelot ? ` · ${a.camelot}` : ''}` : 'Clé —';
-    const quality = { stable: 'Grille estimée · 4/4', variable: 'Tempo variable · grille à vérifier', uncertain: 'Rythme incertain · grille à renseigner' }[a.grid_quality] || '';
+    const mode = s.tempo_mode === 'variable' ? 'Tempo variable' : 'Tempo fixe';
+    const quality = `${mode} · ${a.grid_quality === 'uncertain' || !a.bpm ? 'rythme incertain' : a.grid_quality === 'variable' ? 'grille à vérifier' : 'grille estimée'}`;
     $('.mix-analysis-info', this.el).textContent = data.status === 'done'
       ? [a.engine, quality, a.grid_error_ms != null ? `Écart de grille P90 : ${a.grid_error_ms} ms` : '', key ? s.key ? 'Clé corrigée' : 'Clé estimée' : 'Clé indéterminée', a.codec?.toUpperCase(), a.sample_rate ? `${(a.sample_rate / 1000).toFixed(1)} kHz` : '', a.bit_rate ? `${Math.round(a.bit_rate / 1000)} kb/s` : ''].filter(Boolean).join(' · ')
       : data.status === 'failed' ? data.error || 'Analyse échouée' : data.status === 'running' ? 'Analyse en cours…' : 'Analyse en attente';
@@ -662,7 +680,7 @@ class Deck {
     overview.setAttribute('aria-valuetext', `${time(this.position())} sur ${time(this.wave?.getDuration() || 0)}`);
     overview.setAttribute('aria-disabled', String(!this.ready));
     this.updateNavigation();
-    if (this.analysisData?.analysis?.grid_quality === 'variable') this.updateTempoLabel();
+    if (usesVariableGrid(this.analysisData?.analysis, this.analysisData?.settings)) this.updateTempoLabel();
   }
 
   update() {
@@ -686,6 +704,9 @@ class Deck {
     this.renderMarkers();
     this.control('bpm').disabled = !this.track;
     $$('.mix-grid-editor input, .mix-grid-editor select, .mix-grid-editor button', this.el).forEach(el => { el.disabled = !this.track; });
+    if (this.analysisData?.settings?.tempo_mode === 'variable') {
+      $$('[data-control="bpm"], [data-control="grid"], [data-action="anchor"], [data-action="gridBack"], [data-action="gridForward"], [data-fixed-tempo]', this.el).forEach(el => { el.disabled = true; });
+    }
     if (this.ready) $('.mix-deck-status', this.el).textContent = this.looping ? 'Boucle active' : this.playing() ? 'En lecture' : 'Prêt';
     this.tick();
     sendLEDs(this);
@@ -731,6 +752,7 @@ class Deck {
     this.track = null;
     if (!this.index) host()?.setCurrentTrack(null);
     this.control('bpm').value = '';
+    this.control('tempoMode').value = 'fixed';
     this.hotcues = Array(8).fill(null);
     this.cue = 0;
     $('.mix-cover', this.el).replaceWith(cover(null));

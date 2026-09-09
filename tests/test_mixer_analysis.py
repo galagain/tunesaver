@@ -84,12 +84,37 @@ class MixerStoreTests(unittest.TestCase):
         self.service.patch('a', 'one', {'bpm': 120})
         for payload in ({'bpm': float('nan')}, {'bpm': True}, {'bpm': 999}, {'key': []}, {'grid_offset': -1},
                         {'hotcue': {'index': 8, 'time': 1}}, {'hotcue': {'index': True, 'time': 1}},
-                        {'hotcue': {'index': 0, 'time': float('inf')}}, {'hotcues': []}, [], {}):
+                        {'hotcue': {'index': 0, 'time': float('inf')}}, {'hotcues': []},
+                        {'tempo_mode': 'auto'}, {'tempo_mode': True}, {'tempo_mode': []}, [], {}):
             with self.assertRaises(Error):
                 self.service.patch('a', 'one', payload)
         self.assertEqual(self.service.read('a', 'one')['settings']['bpm'], 120)
         self.service.patch('a', 'one', {'bpm': None})
         self.assertNotIn('bpm', self.service.read('a', 'one')['settings'])
+
+    def test_tempo_mode_persists_without_discarding_analysis_or_manual_edits(self):
+        self.service.next_job()
+        analysis = {'version': 2, 'bpm': 127.5, 'grid_quality': 'variable', 'beats': [0, .47, .95], 'duration': 10}
+        self.service.finish('one', 'done', analysis)
+        self.assertEqual(mixer_analysis.summaries(self.db, 'a')['one']['tempo_mode'], 'fixed')
+        self.service.patch('a', 'one', {'bpm': 128, 'grid_offset': .1, 'hotcue': {'index': 0, 'time': 2}})
+        self.service.patch('a', 'one', {'tempo_mode': 'variable'})
+        mixer_analysis.init_store(self.db)
+        reopened = mixer_analysis.MixerAnalysis(self.db, self.service.delivery, Error)
+        data = reopened.read('a', 'one')
+        self.assertEqual(data['analysis'], analysis)
+        self.assertEqual(data['settings']['tempo_mode'], 'variable')
+        self.assertEqual(data['settings']['bpm'], 128)
+        self.assertEqual(mixer_analysis.summaries(self.db, 'a')['one']['bpm'], 127.5)
+        self.assertEqual(data['settings']['hotcues'][0], 2)
+        self.service.finish('one', 'done', {**analysis, 'bpm': 127.6})
+        self.assertEqual(reopened.read('a', 'one')['settings']['tempo_mode'], 'variable')
+        self.service.patch('a', 'one', {'tempo_mode': 'fixed'})
+        self.assertEqual(mixer_analysis.summaries(self.db, 'a')['one']['tempo_mode'], 'fixed')
+        self.service.patch('a', 'one', {'tempo_mode': None})
+        self.assertNotIn('tempo_mode', reopened.read('a', 'one')['settings'])
+        with self.assertRaises(Error):
+            self.service.patch('b', 'one', {'tempo_mode': 'variable'})
 
     def test_removed_tracks_are_not_automatically_scheduled(self):
         with self.db() as db:
