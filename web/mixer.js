@@ -849,7 +849,8 @@ function layoutOverviews() {
   if (!primary) return;
   const target = active ? $('#mix-overviews') : primary.timeline.lane;
   if (primary.overview.parentElement !== target) {
-    target.prepend(primary.overview);
+    if (active) target.append(primary.overview);
+    else target.prepend(primary.overview);
     // Redraw at the new width immediately, without touching the media element.
     primary.wave?.setOptions({});
   }

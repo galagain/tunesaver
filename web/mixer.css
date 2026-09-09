@@ -77,7 +77,8 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
 .mix-timeline-lane > .mix-overview .mix-cue-markers { inset: 11px 0; }
 .mix-timeline-lane > .mix-overview .mix-time { bottom: -3px; left: 0; right: 0; }
 .mix-overview { --deck-color: #00d79d; position: relative; min-width: 0; height: 100%; padding: 20px 12px 15px; }
-.mix-overview[data-deck="1"] { --deck-color: #ef8eb3; border-left: 1px solid #393939; }
+.mix-overview[data-deck="1"] { --deck-color: #ef8eb3; }
+.mix-overviews > .mix-overview + .mix-overview { border-left: 1px solid #393939; }
 .mix-overview-label { position: absolute; top: 4px; left: 12px; right: 12px; display: flex; align-items: center; gap: 7px; height: 12px; font-size: 10px; line-height: 12px; }
 .mix-overview-label strong { color: var(--deck-color); }
 .mix-overview-label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #aaa; }

@@ -82,7 +82,30 @@ function audioFixture() {
       };
       await page.evaluate(() => streamTrack(libraryState.tracks[0]));
       await page.waitForFunction(() => Mixer.currentPlayback.playing && Mixer.currentPlayback.position > .2);
+      const assertOverviewOrder = async () => {
+        const order = await page.evaluate(() => ({
+          tracks: [...document.querySelectorAll('.mix-deck')].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top).map(el => el.dataset.deck),
+          previews: [...document.querySelectorAll('#mix-overviews > .mix-overview')].sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left).map(el => el.dataset.deck),
+          keyboard: [...document.querySelectorAll('#mix-overviews > .mix-overview')].map(el => el.dataset.deck),
+        }));
+        expect(order.tracks).toEqual(['1', '0']);
+        expect(order.previews).toEqual(order.tracks);
+        expect(order.keyboard).toEqual(order.tracks);
+      };
+      await page.evaluate(() => {
+        window.__handoffEvents = [];
+        for (const event of ['play', 'pause', 'seeking', 'emptied', 'loadstart']) __contexts[0].sources[0].media.addEventListener(event, () => __handoffEvents.push(event));
+      });
       await page.locator('#mixer-nav').click();
+      await assertOverviewOrder();
+      for (let i = 0; i < 2; i++) {
+        await page.locator('#mixer-nav').click();
+        await expect(page.locator('.mix-deck[data-deck="0"] .mix-overview')).toBeVisible();
+        await page.locator('#mixer-nav').click();
+        await assertOverviewOrder();
+      }
+      expect(await page.evaluate(() => __handoffEvents)).toEqual([]);
+      expect(await page.evaluate(() => Mixer.currentPlayback.playing)).toBe(true);
       const a = await deck(0);
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
       await expect(a.locator('.mix-deck-status')).toHaveText('En lecture', { timeout: 15000 });
@@ -135,6 +158,9 @@ function audioFixture() {
       await page.locator('.library-track[data-job-id="two"] button[title="Charger sur B"]').click();
       const b = await deck(1);
       await expect(b.locator('.mix-deck-status')).toHaveText('Prêt');
+      await assertOverviewOrder();
+      await expect(page.locator('#mix-overviews > .mix-overview').first().locator('.mix-overview-label span')).toContainText('Another very long track title');
+      await expect(page.locator('#mix-overviews > .mix-overview').last().locator('.mix-overview-label span')).toHaveText('First light');
       await (await deck(0)).locator('[data-action="play"]').click();
       await (await deck(1)).locator('[data-action="play"]').click();
       await page.waitForFunction(() => __contexts[0].sources.every(s => !s.media.paused && s.media.currentTime > .4));
