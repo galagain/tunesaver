@@ -4,7 +4,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
   const engine = process.env.MIXER_BROWSER === 'firefox' ? firefox : chromium;
   const browser = await engine.launch();
   try {
-    for (const width of [1440, 768, 390, 320]) {
+    for (const width of [2560, 1440, 1360, 1100, 768, 390, 320]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -40,6 +40,25 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('[data-playlist-id=""]').click();
       await expect(page.locator('#search-view')).toBeHidden();
       await expect(page.locator('.library-section')).toBeVisible();
+      const geometry = () => page.evaluate(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        return Object.fromEntries(['.workspace', '.library-sidebar', '.workspace-main', '#library-search', '#library-tracks', '.library-nav-content', '.library-track', '#search-view', '#search-form', '#results-section', '#mixer-nav'].map(selector => {
+          const element = document.querySelector(selector), box = element.getBoundingClientRect();
+          return [selector, { x: box.x, y: box.y, width: box.width, height: box.height, scrollTop: element.scrollTop }];
+        }));
+      });
+      await geometry();
+      await page.evaluate(() => {
+        document.querySelector('#library-tracks').scrollTop = 420;
+        document.querySelector('.library-nav-content').scrollTop = 180;
+      });
+      const normal = await geometry();
+      await page.screenshot({ path: `/work/stable-normal-${engine.name()}-${width}.png` });
+      await page.locator('#mixer-nav').click();
+      expect(await geometry()).toEqual(normal);
+      await page.screenshot({ path: `/work/stable-mix-${engine.name()}-${width}.png` });
+      await page.locator('#mixer-nav').click();
+      expect(await geometry()).toEqual(normal);
       await page.locator('#mixer-nav').click();
       await page.evaluate(() => document.querySelector('#mix-controls').showPopover());
       await page.locator('#mix-connect').click();
@@ -96,12 +115,17 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('#search-nav').click();
       await expect(page.locator('#search-input')).toHaveValue('Test query');
       await expect(page.locator('#results-section')).toBeVisible();
+      const searchGeometry = await geometry();
+      await page.locator('#mixer-nav').click();
+      expect(await geometry()).toEqual(searchGeometry);
+      await page.locator('#mixer-nav').click();
+      expect(await geometry()).toEqual(searchGeometry);
       await turn(-1, 1);
       await expect(page.locator('#search-view')).toBeHidden();
       await visible('.library-track[data-selected="true"]', '#library-tracks');
       await page.screenshot({ path: `/work/navigation-final-${engine.name()}-${width}.png` });
       expect(errors).toEqual([]);
-      console.log(`${engine.name()} ${width}: search navigation and FLX4 scrolling passed`);
+      console.log(`${engine.name()} ${width}: identical normal/mix geometry and scroll, search navigation and FLX4 scrolling passed`);
       await page.close();
     }
   } finally { await browser.close(); }

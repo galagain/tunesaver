@@ -1,6 +1,7 @@
-#app-view { --deck-height: 72px; --overview-height: 68px; }
+#app-view { --deck-height: 72px; --overview-height: 68px; --library-playback-height: calc(2 * var(--deck-height) + var(--overview-height) + 1px + env(safe-area-inset-bottom)); }
+/* Keep library geometry and scroll positions identical in both playback modes. */
+#app-view > .workspace { height: max(0px, calc(100dvh - var(--header-height, 76px) - var(--library-playback-height))); }
 #playback-dock { position: fixed; inset: auto 0 0; z-index: 80; display: flex; align-items: end; min-height: var(--deck-height); background: #1b1b1b; border-top: 1px solid #454545; color: #eee; padding-bottom: env(safe-area-inset-bottom); }
-/* Reserve the full dock so collapsing B cannot clamp the page's scroll position. */
 .dock-mode { flex: 0 0 52px; height: var(--deck-height); border-right: 1px solid #393939; display: grid; grid-template-columns: 1fr; grid-template-rows: var(--deck-height); place-items: center; }
 body[data-mixer="true"] .dock-mode { height: calc(var(--overview-height) + var(--deck-height) + var(--deck-height)); grid-template-rows: var(--overview-height) repeat(2, var(--deck-height)); }
 #mixer-nav { grid-column: 1; grid-row: 1; }
@@ -22,8 +23,10 @@ body[data-mixer="true"] #mix-controls-toggle { display: grid; }
 .deck-controls-heading strong { color: var(--deck-color); font-size: 13px; font-weight: 600; }
 .deck-controls-heading span { color: #999; font-size: 10px; }
 .deck-controls-track { color: #aaa; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-body[data-side-controls] { --mix-rail-width: 220px; --mix-library-width: min(1600px, calc(100vw - 2 * var(--mix-rail-width) - 64px)); }
-body[data-side-controls] #app-view > .workspace { width: var(--mix-library-width); grid-template-columns: 190px minmax(0, 1fr); gap: 16px; }
+@media (min-width: 1360px) {
+  body { --mix-rail-width: 220px; --mix-library-width: min(1600px, calc(100vw - 2 * var(--mix-rail-width) - 64px)); }
+  #app-view > .workspace { width: var(--mix-library-width); grid-template-columns: 190px minmax(0, 1fr); gap: 16px; }
+}
 .deck-controls[data-docked="true"]:popover-open { inset: calc(var(--header-height, 76px) + 16px) auto calc(var(--playback-height, 213px) + 8px) calc((100vw - var(--mix-library-width)) / 2 - var(--mix-rail-width) - 16px); width: var(--mix-rail-width); height: max(0px, calc(100dvh - var(--header-height, 76px) - var(--playback-height, 213px) - 24px)); max-height: none; padding: 12px; border: 0; border-radius: 0; background: #242424; align-content: start; gap: 12px; scrollbar-width: thin; overscroll-behavior: contain; }
 .deck-controls[data-docked="true"] > * { grid-column: 1 / -1; grid-row: auto; }
 .deck-controls[data-docked="true"] .deck-controls-track { height: 34px; line-height: 17px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
