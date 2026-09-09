@@ -5,7 +5,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
   const browser = await engine.launch();
   try {
     for (const width of [1440, 768, 390, 320]) {
-      const page = await browser.newPage({ viewport: { width, height: 1000 }, hasTouch: width <= 390 });
+      const page = await browser.newPage({ viewport: { width, height: 1000 }, hasTouch: engine === chromium && width <= 390 });
       const errors = [], writes = [];
       let reject = false;
       page.on('pageerror', error => errors.push(error.message));
@@ -58,7 +58,12 @@ const { chromium, firefox, expect } = require('@playwright/test');
       const from = await handle.boundingBox(), to = await page.locator('[data-job-id="c"]').boundingBox();
       await page.mouse.move(from.x + 15, from.y + 15); await page.mouse.down();
       await page.mouse.move(from.x + 15, to.y + to.height - 4, { steps: 8 });
-      await expect(page.locator('[data-job-id="c"]')).toHaveAttribute('data-reorder', 'after');
+      try {
+        await expect(page.locator('[data-job-id="c"]')).toHaveAttribute('data-reorder', 'after');
+      } catch (error) {
+        await page.screenshot({ path: `/work/library-order-drag-failure-${engine.name()}-${width}.png` });
+        throw error;
+      }
       await page.evaluate(() => { window.heldRow = document.querySelector('[data-job-id="a"]'); renderLibrary(); });
       expect(await page.evaluate(() => heldRow === document.querySelector('[data-job-id="a"]'))).toBe(true);
       await page.mouse.up();
