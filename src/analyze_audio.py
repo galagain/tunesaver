@@ -25,10 +25,95 @@ def command(args, timeout=120):
     return subprocess.run(args, check=True, capture_output=True, timeout=timeout)
 
 
+def tempo_onsets(peaks, rate):
+    import numpy as np
+    from scipy import signal
+
+    width = max(1, round(rate * .02))
+    envelope = np.convolve(peaks[:, 0] + .25 * peaks[:, 1], np.ones(width) / width, mode='same')
+    attacks = np.maximum(0, envelope - np.roll(envelope, width))
+    attacks[:width] = 0
+    positions, _ = signal.find_peaks(attacks, distance=max(1, int(rate * .18)),
+                                     prominence=float(np.quantile(attacks, .8)))
+    return positions / rate, attacks[positions] ** 2
+
+
+def fixed_tempo_grid(beat_times, onset_times=None, onset_weights=None):
+    import numpy as np
+    from scipy import optimize
+
+    beats = np.unique(np.asarray(beat_times, dtype=float))
+    beats = beats[np.isfinite(beats) & (beats >= 0)]
+    if len(beats) < 8 or beats[-1] - beats[0] < 2:
+        return None
+    intervals = np.diff(beats)
+    intervals = intervals[(intervals >= .2) & (intervals <= 1.5)]
+    if not len(intervals):
+        return None
+    typical = float(60 / np.median(intervals))
+    span = float(beats[-1] - beats[0])
+    times, weights = beats, np.ones(len(beats))
+    if onset_times is not None and onset_weights is not None:
+        times = np.asarray(onset_times, dtype=float)
+        weights = np.asarray(onset_weights, dtype=float)
+        valid = np.isfinite(times) & (times >= 0) & np.isfinite(weights) & (weights > 0)
+        times, weights = times[valid], weights[valid]
+        if len(times) < 8:
+            times, weights = beats, np.ones(len(beats))
+    indices = np.linspace(0, len(times) - 1, min(len(times), 4096), dtype=int)
+    sample, weights = times[indices], weights[indices]
+    weights = weights / weights.sum()
+    sample = sample - sample[0]
+    spacing = min(.1, 15 / span)
+    candidates = np.unique(np.concatenate((np.arange(40, 301),
+        np.arange(max(40, typical * .75), min(300, typical * 1.25), spacing))))
+
+    # Periodic phase fitting tolerates skipped beats and breaks: a missing beat
+    # does not renumber every subsequent beat, unlike regression on array indices.
+    def coherence(bpm):
+        phase = np.exp(2j * np.pi * sample * bpm / 60)
+        # The second harmonic keeps offbeat percussion from cancelling the pulse.
+        return float(((abs(np.sum(phase * weights)) ** 2 + .5 * abs(np.sum(phase ** 2 * weights)) ** 2) / 1.5) ** .5)
+
+    scores = []
+    for start in range(0, len(candidates), 128):
+        group = candidates[start:start + 128]
+        phase = np.exp(2j * np.pi * group[:, None] * sample / 60)
+        strength = (np.abs(np.sum(phase * weights, axis=1)) ** 2
+                    + .5 * np.abs(np.sum(phase ** 2 * weights, axis=1)) ** 2) ** .5
+        scores.extend(strength * np.exp(-.5 * (np.log2(group / typical) / .35) ** 2))
+    seed = float(candidates[int(np.argmax(scores))])
+    optimum = optimize.minimize_scalar(lambda bpm: -coherence(bpm),
+        bounds=(max(40, seed - spacing), min(300, seed + spacing)), method='bounded', options={'xatol': 1e-7})
+    bpm = float(optimum.x)
+    integer = round(bpm)
+    snapped = (40 <= integer <= 300 and abs(bpm - integer) <= .15
+               and span * abs(bpm - integer) / bpm <= .08
+               and coherence(integer) >= coherence(bpm) * .95)
+    bpm = float(integer) if snapped else round(bpm, 5)
+    step = 60 / bpm
+    reference = float(np.angle(np.mean(np.exp(2j * np.pi * beats / step))) / (2 * np.pi) * step) % step
+    half_phase = float(np.angle(np.sum(np.exp(4j * np.pi * times[indices] / step) * weights)) / (4 * np.pi) * step) % (step / 2)
+    phases = [half_phase, half_phase + step / 2]
+    phase = min(phases, key=lambda value: abs((value - reference + step / 2) % step - step / 2))
+    residuals = (times[indices] - phase + step / 2) % step - step / 2
+    inliers = np.abs(residuals) <= min(.08, step * .2)
+    offset = phase
+    if np.any(inliers):
+        order = np.argsort(residuals[inliers])
+        cumulative = np.cumsum(weights[inliers][order])
+        median = residuals[inliers][order][np.searchsorted(cumulative, cumulative[-1] / 2)]
+        offset = (phase + float(median)) % step
+    residuals = (beats - offset + step / 2) % step - step / 2
+    return {'bpm': bpm, 'grid_offset': round(offset, 6),
+            'grid_error_ms': round(float(np.quantile(np.abs(residuals), .9)) * 1000, 1),
+            'bpm_integer': bool(snapped), 'grid_confidence': round(coherence(bpm), 4)}
+
+
 def analyze(path: Path) -> dict:
     import numpy as np
     import soundfile as sf
-    from scipy import signal, optimize
+    from scipy import signal
 
     with tempfile.TemporaryDirectory(prefix="tunesaver-analysis-") as folder:
         root = Path(folder)
@@ -76,10 +161,10 @@ def analyze(path: Path) -> dict:
         beats = np.asarray(rhythm['beats'], dtype=float)
         beats = beats[(beats >= 0) & (beats < duration)]
         bpm, offset, residual_ms = None, None, None
+        fixed = None
         quality = 'uncertain'
         if len(beats) >= 8 and float(peaks[:, 3:].max()) > .005:
-            # Refine QM beat positions against local attacks, then fit with an
-            # outlier-resistant regression so breaks do not drag the entire grid.
+            # Refine QM beat positions against local attacks before fitting.
             attacks = np.maximum(0, np.diff(peaks[:, 0] + peaks[:, 1], prepend=0))
             positions, _ = signal.find_peaks(attacks, distance=int(rate * .08), prominence=float(np.quantile(attacks, .8)))
             for i, beat in enumerate(beats):
@@ -87,21 +172,19 @@ def analyze(path: Path) -> dict:
                 if len(near):
                     best = near[np.argmax(attacks[near])]
                     beats[i] = best / rate
-            indices = np.arange(len(beats))
-            fit = optimize.least_squares(lambda p: p[0] * indices + p[1] - beats,
-                                         np.polyfit(indices, beats, 1), loss='soft_l1', f_scale=.012)
-            slope, intercept = fit.x
-            if slope > 0 and 40 <= 60 / slope <= 300:
-                bpm = round(float(60 / slope), 3)
-                offset = round(float(intercept % slope), 6)
-                residual_ms = round(float(np.quantile(np.abs(fit.fun), .9)) * 1000, 1)
+            beats = np.unique(beats)
+            fixed = fixed_tempo_grid(beats, *tempo_onsets(peaks, rate))
+            if fixed:
+                bpm, offset, residual_ms = fixed['bpm'], fixed['grid_offset'], fixed['grid_error_ms']
                 quality = 'stable' if residual_ms <= 30 else 'variable'
         packed = np.clip(peaks * 255, 0, 255).astype(np.uint8)
         key = command(["keyfinder-cli", "-n", "standard", str(decoded)]).stdout.decode().strip()
         if key not in KEYS:
             key = None
         return {
-            "version": 2, "engine": "Queen Mary DSP", "duration": round(duration, 4), "bpm": bpm, "grid_offset": offset,
+            "version": 3, "engine": "Queen Mary DSP", "duration": round(duration, 4), "bpm": bpm, "grid_offset": offset,
+            "tempo_strategy": "fixed-periodic", "bpm_integer": bool(fixed and fixed['bpm_integer']),
+            "grid_confidence": fixed['grid_confidence'] if fixed else None,
             "beats": np.round(beats, 5).tolist() if bpm else [],
             "grid_quality": quality, "grid_error_ms": residual_ms,
             "key": key, "camelot": KEYS.get(key), "key_estimated": True,

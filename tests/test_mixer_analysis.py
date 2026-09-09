@@ -129,6 +129,56 @@ class MixerStoreTests(unittest.TestCase):
             self.service.patch('a', 'one', {'hotcue': {'index': 0, 'time': 12}})
 
 
+class FixedTempoTests(unittest.TestCase):
+    def test_integer_tempo_survives_missing_beats_and_breaks(self):
+        import numpy as np
+        from analyze_audio import fixed_tempo_grid
+        rng = np.random.default_rng(12)
+        expected = .073 + np.arange(1500) * 60 / 148
+        beats = expected + rng.normal(0, .007, len(expected))
+        beats = beats[(rng.random(len(beats)) > .15) & ((beats < 120) | (beats > 145))]
+        result = fixed_tempo_grid(beats)
+        self.assertEqual(result['bpm'], 148)
+        self.assertTrue(result['bpm_integer'])
+        self.assertAlmostEqual(result['grid_offset'], .073, delta=.003)
+        grid = result['grid_offset'] + np.arange(1500) * 60 / result['bpm']
+        self.assertLess(np.max(np.abs(grid - expected)), .003)
+        self.assertTrue(np.allclose(np.diff(grid), 60 / 148))
+
+    def test_fractional_tempos_are_not_forced_to_integers(self):
+        import numpy as np
+        from analyze_audio import fixed_tempo_grid
+        for bpm, duration in ((127.5, 600), (142.5, 360), (150.02, 3600)):
+            with self.subTest(bpm=bpm):
+                beats = np.arange(.1, duration, 60 / bpm)
+                result = fixed_tempo_grid(beats)
+                self.assertAlmostEqual(result['bpm'], bpm, delta=.0001)
+                self.assertFalse(result['bpm_integer'])
+                drift = duration * abs(result['bpm'] - bpm) / bpm
+                self.assertLess(drift, .003)
+
+    def test_audio_onsets_override_drifting_tracker_and_include_offbeats(self):
+        import numpy as np
+        from analyze_audio import fixed_tempo_grid
+        beats = np.arange(.03, 300, 60 / 150.27)
+        onsets = np.arange(.02, 300, 60 / 150 / 2)
+        result = fixed_tempo_grid(beats, onsets, np.ones(len(onsets)))
+        self.assertEqual(result['bpm'], 150)
+        self.assertTrue(result['bpm_integer'])
+        self.assertGreater(result['grid_confidence'], .5)
+        self.assertLessEqual(result['grid_confidence'], 1)
+
+    def test_empty_and_invalid_beats_are_filtered(self):
+        import numpy as np
+        from analyze_audio import fixed_tempo_grid
+        for beats in ([], [float('nan'), float('inf'), -1], np.arange(7) * .5):
+            self.assertIsNone(fixed_tempo_grid(beats))
+        beats = np.arange(.1, 60, .5)
+        result = fixed_tempo_grid([*beats[::-1], *beats, float('nan'), -1])
+        self.assertEqual(result['bpm'], 120)
+        self.assertAlmostEqual(result['grid_offset'], .1, delta=.00001)
+
+
 class AudioAnalysisTests(unittest.TestCase):
     def test_long_fractional_tempo_with_silent_break(self):
         import numpy as np
@@ -170,6 +220,9 @@ class AudioAnalysisTests(unittest.TestCase):
             result = json.loads(process.stdout)
             self.assertAlmostEqual(result['duration'], 24, delta=.01)
             self.assertAlmostEqual(result['bpm'], 120, delta=.05)
+            self.assertEqual(result['version'], 3)
+            self.assertEqual(result['tempo_strategy'], 'fixed-periodic')
+            self.assertTrue(result['bpm_integer'])
             self.assertAlmostEqual(result['grid_offset'], .25, delta=.025)
             self.assertIn(result['key'], ('C', 'Am'))
             self.assertGreater(len(result['beats']), 30)
