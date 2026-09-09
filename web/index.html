@@ -6,10 +6,10 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260909-27">
-    <link rel="stylesheet" href="/mixer.css?v=20260909-24">
-    <script src="/app.js?v=20260909-27" defer></script>
-    <script src="/mixer.js?v=20260909-28" type="module"></script>
+    <link rel="stylesheet" href="/style.css?v=20260909-29">
+    <link rel="stylesheet" href="/mixer.css?v=20260909-29">
+    <script src="/app.js?v=20260909-29" defer></script>
+    <script src="/mixer.js?v=20260909-29" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -102,6 +102,7 @@
           </details>
         </div>
         <div class="library-nav-content">
+          <button id="search-nav" class="playlist-filter" type="button" aria-controls="search-view" data-selected="false">Rechercher des nouveaux sons</button>
           <button class="playlist-filter" data-playlist-id="" data-collection="" data-selected="true" type="button">Tous mes sons</button>
           <section class="nav-group">
             <h3 id="playlist-title">Playlists</h3>
@@ -114,6 +115,7 @@
         </div>
       </aside>
       <div class="workspace-main">
+      <div id="search-view" hidden>
       <section class="search-section" aria-labelledby="page-title">
         <h1 id="page-title" class="sr-only">Rechercher de la musique</h1>
 
@@ -185,6 +187,7 @@
         </div>
       </section>
 
+      </div>
       <section id="queue-section" class="queue-section" aria-labelledby="queue-title" hidden>
         <div class="section-heading">
           <h2 id="queue-title">Téléchargements</h2>

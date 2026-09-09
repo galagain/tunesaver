@@ -1,7 +1,6 @@
 #app-view { --deck-height: 72px; --overview-height: 68px; }
 #playback-dock { position: fixed; inset: auto 0 0; z-index: 80; display: flex; align-items: end; min-height: var(--deck-height); background: #1b1b1b; border-top: 1px solid #454545; color: #eee; padding-bottom: env(safe-area-inset-bottom); }
 /* Reserve the full dock so collapsing B cannot clamp the page's scroll position. */
-#app-view > .container { padding-bottom: calc(var(--deck-height) + var(--deck-height) + var(--overview-height) + 33px + env(safe-area-inset-bottom)); }
 .dock-mode { flex: 0 0 52px; height: var(--deck-height); border-right: 1px solid #393939; display: grid; grid-template-columns: 1fr; grid-template-rows: var(--deck-height); place-items: center; }
 body[data-mixer="true"] .dock-mode { height: calc(var(--deck-height) + var(--deck-height)); grid-template-rows: repeat(2, var(--deck-height)); }
 #mixer-nav { grid-column: 1; grid-row: 1; }

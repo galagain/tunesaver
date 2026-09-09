@@ -67,6 +67,48 @@ const adminChartTracks = document.querySelector("#admin-chart-tracks");
 const adminChartSavings = document.querySelector("#admin-chart-savings");
 const savingsTotal = document.querySelector("#savings-total");
 const toast = document.querySelector("#toast");
+const searchView = document.querySelector('#search-view');
+const searchNav = document.querySelector('#search-nav');
+
+function ensureLibraryItemVisible(element) {
+  const pane = element?.closest('#library-tracks, .library-nav-content');
+  if (!pane || element.closest('[hidden]')) return;
+  const bounds = pane.getBoundingClientRect(), item = element.getBoundingClientRect();
+  if (item.top < bounds.top + 3) pane.scrollTop += item.top - bounds.top - 3;
+  else if (item.bottom > bounds.bottom - 3) pane.scrollTop += item.bottom - bounds.bottom + 3;
+}
+
+function updateWorkspaceNavigation() {
+  document.querySelectorAll('.library-nav-content button').forEach(button => {
+    const current = button === searchNav ? !searchView.hidden : searchView.hidden && button.dataset.selected === 'true';
+    if (current) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+}
+
+function setWorkspaceView(view) {
+  const search = view === 'search';
+  searchView.hidden = !search;
+  document.querySelector('.library-section').hidden = search;
+  document.querySelector('.workspace').dataset.view = view;
+  searchNav.dataset.selected = String(search);
+  updateWorkspaceNavigation();
+}
+
+searchNav.addEventListener('click', () => { setWorkspaceView('search'); input.focus({ preventScroll: true }); });
+document.querySelector('.library-nav-content').addEventListener('click', event => {
+  if (event.target.closest('[data-collection]')) setWorkspaceView('library');
+}, true);
+const headerObserver = new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--header-height', `${document.querySelector('.site-header').getBoundingClientRect().height}px`);
+});
+headerObserver.observe(document.querySelector('.site-header'));
+const libraryViewportObserver = new ResizeObserver(() => {
+  ensureLibraryItemVisible(libraryTracks.querySelector('[data-selected="true"]'));
+  ensureLibraryItemVisible(document.querySelector('.library-nav-content [data-cursor="true"]'));
+});
+libraryViewportObserver.observe(libraryTracks);
+libraryViewportObserver.observe(document.querySelector('.library-nav-content'));
 
 let publicConfig = null;
 let session = null;
@@ -99,6 +141,23 @@ document.querySelectorAll('[data-ui-icon]').forEach(element => appendUIIcon(elem
 document.addEventListener('click', event => {
   document.querySelectorAll('.workspace-menu[open]').forEach(menu => {
     if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
+  });
+});
+document.addEventListener('toggle', event => {
+  const menu = event.target;
+  if (!menu.matches?.('.workspace-menu[open]')) return;
+  const panel = menu.querySelector('.workspace-menu-items');
+  const anchor = menu.querySelector('summary').getBoundingClientRect();
+  const top = document.querySelector('.site-header').getBoundingClientRect().bottom + 4;
+  const bottom = document.querySelector('#playback-dock').getBoundingClientRect().top - 4;
+  panel.style.maxHeight = `${Math.max(40, bottom - top)}px`;
+  const box = panel.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, Math.min(anchor.right - box.width, innerWidth - box.width - 8))}px`;
+  panel.style.top = `${Math.max(top, Math.min(anchor.bottom + 4, bottom - box.height))}px`;
+}, true);
+document.querySelectorAll('#library-tracks, .library-nav-content').forEach(pane => {
+  pane.addEventListener('scroll', () => {
+    document.querySelectorAll('.workspace-menu[open]').forEach(menu => { menu.open = false; });
   });
 });
 document.addEventListener('keydown', event => {
@@ -407,6 +466,7 @@ function showApp() {
   historyToggle.setAttribute("aria-expanded", "false");
   historyToggle.textContent = "Historique";
   userEmail.textContent = session?.user?.email || "Mon compte";
+  setWorkspaceView('library');
   refreshQueue();
   refreshLibrary();
   window.clearInterval(queueTimer);
@@ -816,7 +876,7 @@ input.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || appView.hidden || resultsSection.hidden) return;
+  if (event.key !== "Escape" || appView.hidden || searchView.hidden || resultsSection.hidden) return;
   resultsSection.hidden = true;
 });
 
@@ -1471,9 +1531,9 @@ function beginTrackMove(event, id) {
   const scroll = () => {
     if (!trackMove) return;
     if (trackMove.active) {
-      const bottom = document.querySelector('#playback-dock').getBoundingClientRect().top;
-      const delta = trackMove.y < 70 ? -12 : trackMove.y > bottom - 45 ? 12 : 0;
-      if (delta) window.scrollBy(0, delta);
+      const bounds = libraryTracks.getBoundingClientRect();
+      const delta = trackMove.y < bounds.top + 35 ? -12 : trackMove.y > bounds.bottom - 35 ? 12 : 0;
+      if (delta) libraryTracks.scrollTop += delta;
       updateTrackMove();
     }
     trackMove.frame = requestAnimationFrame(scroll);
@@ -1505,6 +1565,7 @@ function renderLibrary() {
   renderImports();
   renderPlaylists();
   renderTags();
+  updateWorkspaceNavigation();
   renderCollectionActions();
   const manualTracks = manualLibraryTracks();
   const numbers = new Map(manualTracks.map((track, index) => [track.job_id, index + 1]));
@@ -1781,7 +1842,7 @@ function renderImports() {
         } catch (_) { /* Keep dismissal for this session when storage is unavailable. */ }
         renderImports();
         document.querySelector(".import-dismiss")?.focus();
-        if (area.hidden) importPlaylistButton.focus();
+        if (area.hidden) searchNav.focus({ preventScroll: true });
       });
       summary.append(close);
     }
@@ -1855,6 +1916,7 @@ createPlaylistButton.addEventListener("click", async () => {
     });
     selectedPlaylistId = result.playlist.id;
     selectedFolderId = selectedTagId = '';
+    setWorkspaceView('library');
     await refreshLibrary();
   } catch (error) {
     showToast(error.message, "error");
@@ -1875,6 +1937,7 @@ createTagButton.addEventListener("click", async () => {
     selectedTagId = result.tag.id;
     selectedPlaylistId = "";
     selectedFolderId = '';
+    setWorkspaceView('library');
     await refreshLibrary();
   } catch (error) {
     showToast(error.message, "error");
@@ -2366,6 +2429,8 @@ async function start() {
 }
 
 window.TuneSaverMixerHost = {
+  showLibrary: () => setWorkspaceView('library'),
+  ensureVisible: ensureLibraryItemVisible,
   setCurrentTrack: track => { currentTrackId = track?.job_id || ''; },
   get library() { return libraryState; },
   get visibleTracks() { return renderedTracks; },

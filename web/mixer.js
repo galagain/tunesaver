@@ -788,16 +788,17 @@ function browse(delta, focus = false) {
     const target = buttons[clamp(current + Math.sign(delta), 0, buttons.length - 1)];
     collectionCursor = target.dataset.collection;
     updateBrowserFocus();
-    target.scrollIntoView({ block: 'nearest' });
+    host().ensureVisible(target);
     return;
   }
+  host().showLibrary();
   const tracks = host().visibleTracks.filter(track => track.streamable);
   if (!tracks.length) return;
   const index = tracks.findIndex(t => t.job_id === host().selectedTrackId);
   selectTrack(tracks[clamp(index + Math.sign(delta), 0, tracks.length - 1)].job_id);
   const row = $('.library-track[data-selected="true"]');
-  row?.scrollIntoView({ block: 'nearest' });
-  if (focus) row?.focus();
+  host().ensureVisible(row);
+  if (focus) row?.focus({ preventScroll: true });
 }
 
 function updateBrowserFocus() {
@@ -816,9 +817,11 @@ function browseFocus(back = false) {
   if (back || browserFocus === 'tracks') {
     collectionCursor = host().collectionValue;
     setBrowserFocus('collections');
+    host().ensureVisible(collectionButtons().find(el => el.dataset.collection === collectionCursor));
   } else {
     collectionButtons().find(el => el.dataset.collection === collectionCursor)?.click();
     setBrowserFocus('tracks');
+    host().ensureVisible($('.library-track[data-selected="true"]'));
   }
 }
 

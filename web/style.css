@@ -2069,9 +2069,23 @@ h1 {
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 24px;
 }
-#app-view > .workspace { width: min(1600px, calc(100% - 40px)); padding: 20px 0 40px; }
-.workspace-main { min-width: 0; }
-.workspace .library-sidebar { padding: 0 18px 24px 0; border: 0; border-right: 1px solid #333; border-radius: 0; background: transparent; top: 16px; }
+#app-view > .workspace { width: min(1600px, calc(100% - 40px)); height: max(0px, calc(100dvh - var(--header-height, 76px) - var(--playback-height, 73px))); padding: 16px 0 8px; min-height: 0; overflow: hidden; }
+body:has(#app-view:not([hidden])) { overflow: hidden; }
+.workspace-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.workspace .library-sidebar { position: static; min-height: 0; align-self: stretch; display: flex; flex-direction: column; padding: 0 14px 0 0; border: 0; border-right: 1px solid #333; border-radius: 0; background: transparent; }
+.library-nav-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scroll-behavior: auto; padding-bottom: 4px; }
+.sidebar-top { flex-shrink: 0; }
+#search-nav { text-align: left; }
+.workspace[data-view="search"] [data-collection][data-selected="true"] { background: transparent; color: #bdbdbd; border-left-color: transparent; }
+#search-view { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 6px; }
+.workspace .library-section { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.workspace .library-heading, .workspace .library-toolbar, .workspace .library-table-head { flex-shrink: 0; }
+.workspace .library-layout { flex: 1; min-height: 0; }
+.workspace .library-main, #library-content { height: 100%; min-height: 0; }
+#library-content { display: flex; flex-direction: column; }
+#library-tracks { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scroll-behavior: auto; padding-bottom: 4px; }
+.workspace #playlist-imports { max-height: 25%; overflow-y: auto; flex-shrink: 0; }
+.workspace #queue-section { max-height: 40%; overflow-y: auto; flex-shrink: 0; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; }
 .sidebar-top h2 { margin: 0; font-size: 13px; font-weight: 600; color: #aaa; }
 .workspace .playlist-row, .workspace .tag-row { display: block; }
@@ -2148,6 +2162,7 @@ h1 {
 .workspace-menu[open] > summary { border-color: #555; background: #303030; color: #ddd; }
 .workspace-menu svg { width: 16px; height: 16px; flex-shrink: 0; }
 .workspace-menu-items { position: absolute; z-index: 120; top: 36px; right: 0; width: 220px; padding: 6px; background: #292929; border: 1px solid #555; border-radius: 4px; box-shadow: 0 8px 24px #0005; }
+.workspace-menu[open] > .workspace-menu-items { position: fixed; right: auto; bottom: auto; overflow-y: auto; }
 .workspace-menu-items button { display: flex; justify-content: flex-start; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 36px; padding: 8px; margin: 0; border: 0; border-radius: 2px; color: #ddd; background: transparent; font-size: 12px; text-align: left; }
 .workspace-menu-items button svg { order: -1; }
 .workspace-menu-items button:focus-visible { background: #393939; }
@@ -2162,10 +2177,10 @@ h1 {
   .workspace .track-duration { display: none; }
 }
 @media (max-width: 700px) {
-  #app-view > .workspace { width: calc(100% - 24px); padding-top: 12px; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  #app-view > .workspace { width: calc(100% - 24px); padding-top: 8px; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 28%) minmax(0, 1fr); gap: 10px; }
   .workspace .library-sidebar { position: static; padding: 0 0 10px; border-right: 0; border-bottom: 1px solid #393939; }
   .sidebar-top { margin-bottom: 6px; }
-  .library-nav-content { max-height: 220px; overflow-y: auto; }
+  .library-nav-content { max-height: none; }
   .workspace #library-menu .workspace-menu-items { right: 0; }
   .nav-group { margin-top: 8px; }
   .workspace .search-box { grid-template-columns: 18px minmax(0, 1fr) auto; }
