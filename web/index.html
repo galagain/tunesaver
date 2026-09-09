@@ -6,9 +6,9 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260909-29">
+    <link rel="stylesheet" href="/style.css?v=20260909-30">
     <link rel="stylesheet" href="/mixer.css?v=20260909-29">
-    <script src="/app.js?v=20260909-29" defer></script>
+    <script src="/app.js?v=20260909-30" defer></script>
     <script src="/mixer.js?v=20260909-29" type="module"></script>
   </head>
   <body>
@@ -122,10 +122,6 @@
         <form id="search-form" class="search-form" novalidate>
           <label class="sr-only" for="search-input">Titre, artiste ou lien direct</label>
           <div class="search-box">
-            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="6.5"></circle>
-              <path d="m16 16 4 4"></path>
-            </svg>
             <textarea
               id="search-input"
               name="query"
@@ -136,8 +132,8 @@
               placeholder="Titre, artiste ou liens (un par ligne)…"
               required
             ></textarea>
-            <button id="search-button" class="primary-button" type="submit">Rechercher</button>
-            <button id="import-playlist-button" class="secondary-button import-button" type="button">Importer une playlist</button>
+            <button id="search-button" class="primary-button" type="submit" title="Rechercher" aria-label="Rechercher"><span data-ui-icon="Search" aria-hidden="true"></span></button>
+            <button id="import-playlist-button" class="secondary-button import-button" type="button" title="Importer une playlist" aria-label="Importer une playlist"><span data-ui-icon="ListPlus" aria-hidden="true"></span><span class="import-label">Importer une playlist</span></button>
           </div>
         </form>
         <div id="import-panel" class="import-panel" hidden>
@@ -151,12 +147,7 @@
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
       </section>
 
-      <section id="results-section" class="results-section" aria-labelledby="results-title" hidden>
-        <div class="section-heading">
-          <h2 id="results-title">Résultats</h2>
-          <p id="results-query" class="query-label"></p>
-        </div>
-
+      <section id="results-section" class="results-section" aria-label="Musiques trouvées" hidden>
         <div class="platform-grid">
           <article class="platform-panel" aria-labelledby="tidal-title">
             <header class="platform-header">

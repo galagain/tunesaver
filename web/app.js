@@ -45,7 +45,6 @@ const importCancel = document.querySelector("#import-cancel");
 const importSubmit = document.querySelector("#import-submit");
 const searchMessage = document.querySelector("#search-message");
 const resultsSection = document.querySelector("#results-section");
-const resultsQuery = document.querySelector("#results-query");
 const queueSection = document.querySelector("#queue-section");
 const refreshStatusButton = document.querySelector("#refresh-status");
 const refreshLibraryButton = document.querySelector("#refresh-library");
@@ -133,11 +132,18 @@ const trackCollator = new Intl.Collator('fr', { numeric: true, sensitivity: 'bas
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
 const deletedJobIds = new Set();
-const uiIcons = import('/vendor/mixer-icons.js');
+const uiIcons = Promise.all([import('/vendor/mixer-icons.js'), import('/vendor/player-icons.js?v=20260909-30')])
+  .then(([mixer, player]) => ({ ...mixer, ...player }));
 function appendUIIcon(element, name) {
   uiIcons.then(icons => { element.append(icons.createElement(icons[name], { 'aria-hidden': 'true' })); });
 }
 document.querySelectorAll('[data-ui-icon]').forEach(element => appendUIIcon(element, element.dataset.uiIcon));
+providers.forEach(provider => {
+  const heading = document.querySelector(`#${provider}-results`).closest('.platform-panel').querySelector('h3');
+  const mark = document.createElement('span'); mark.className = 'platform-mark'; mark.setAttribute('aria-hidden', 'true');
+  mark.append(document.querySelector(`#icon-${provider}`).content.cloneNode(true));
+  heading.prepend(mark);
+});
 document.addEventListener('click', event => {
   document.querySelectorAll('.workspace-menu[open]').forEach(menu => {
     if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
@@ -665,8 +671,24 @@ function resultCover(result) {
 function resultInfo(label, value) {
   const item = document.createElement("span");
   item.className = "result-info";
-  item.textContent = value ? `${label}: ${value}` : `${label}: -`;
+  const name = document.createElement('span'); name.textContent = label;
+  const text = document.createElement('strong'); text.textContent = value || '—';
+  item.title = `${label} : ${value || 'Non renseigné'}`;
+  item.append(name, text);
   return item;
+}
+
+function setDownloadLabel(button, label) {
+  let text = button.querySelector('.download-label');
+  if (!text) {
+    const icon = document.createElement('span'); icon.setAttribute('aria-hidden', 'true');
+    text = document.createElement('span'); text.className = 'download-label';
+    button.replaceChildren(icon, text);
+    appendUIIcon(icon, 'Download');
+  }
+  text.textContent = label;
+  button.title = label;
+  button.setAttribute('aria-label', label);
 }
 
 function makeResultCard(result) {
@@ -675,29 +697,26 @@ function makeResultCard(result) {
   card.append(resultCover(result));
   const body = document.createElement("div");
   body.className = "result-body";
-  const meta = document.createElement("div");
-  meta.className = "result-meta";
-  const kind = document.createElement("span");
-  kind.className = "kind-chip";
-  kind.textContent = result.kind === "track" ? "Morceau" : result.kind;
-  meta.append(kind);
   const title = document.createElement("h4");
   title.textContent = result.title || "Sans titre";
+  title.title = title.textContent;
   const artist = document.createElement("p");
   artist.className = "result-artist";
   artist.textContent = result.artist || result.platform;
+  artist.title = artist.textContent;
+  const album = document.createElement('p'); album.className = 'result-album';
+  album.textContent = result.album || 'Album non renseigné'; album.title = album.textContent;
+  const context = document.createElement('p'); context.className = 'result-context';
+  context.textContent = [result.label, result.mix, result.quality].filter(Boolean).join(' · ') || '—';
+  context.title = ['Label', 'Mix', 'Qualité'].map((label, i) => `${label} : ${[result.label, result.mix, result.quality][i] || 'Non renseigné'}`).join(' · ');
   const details = document.createElement("p");
   details.className = "result-details";
   details.append(
-    resultInfo("Album", result.album),
-    resultInfo("Label", result.label),
-    resultInfo("Mix", result.mix),
-    resultInfo("Qualité", result.quality),
     resultInfo("BPM", result.bpm),
     resultInfo("Clé", result.key),
     resultInfo("Durée", result.duration)
   );
-  body.append(meta, title, artist, details);
+  body.append(title, artist, album);
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -706,27 +725,29 @@ function makeResultCard(result) {
   source.href = result.source_url;
   source.target = "_blank";
   source.rel = "noopener noreferrer";
-  source.textContent = "Ouvrir";
+  source.title = `Ouvrir sur ${providerLabels[result.provider] || result.platform}`;
+  source.setAttribute('aria-label', source.title);
+  appendUIIcon(source, 'ExternalLink');
   const download = document.createElement("button");
   download.className = "download-button";
   download.type = "button";
   download.dataset.provider = result.provider;
   const completeLabel = kindLabels[result.kind] || "la ressource complète";
   const isBlockedBatch = ["artist", "label"].includes(result.kind);
-  const defaultLabel = result.requires_confirmation ? `Télécharger ${completeLabel}` : "Télécharger";
+  const defaultLabel = "Télécharger";
   download.dataset.defaultLabel = defaultLabel;
-  download.textContent = defaultLabel;
+  setDownloadLabel(download, defaultLabel);
   if (isBlockedBatch) {
     download.disabled = true;
-    download.textContent = "Non disponible";
+    setDownloadLabel(download, "Non disponible");
   } else if (activeProviders[result.provider] === false) {
     download.disabled = true;
-    download.textContent = "Service arrêté";
+    setDownloadLabel(download, "Service arrêté");
   }
   download.addEventListener("click", async () => {
     if (result.requires_confirmation && !await siteDialogs.confirm(`Confirmer le téléchargement de ${completeLabel} ?`)) return;
     download.disabled = true;
-    download.textContent = "Préparation…";
+    setDownloadLabel(download, "Préparation…");
     try {
       const response = await requestJson("/api/download", {
         method: "POST",
@@ -740,7 +761,7 @@ function makeResultCard(result) {
       });
       download.dataset.jobId = response.job_id;
       downloadButtonByJob.set(response.job_id, download);
-      download.textContent = response.duplicate ? "Déjà en file" : "En attente";
+      setDownloadLabel(download, response.duplicate ? "Déjà en file" : "En attente");
       showToast("Le son est ajouté dans Mes sons.");
       await refreshQueue();
       selectedPlaylistId = "";
@@ -749,12 +770,12 @@ function makeResultCard(result) {
       renderLibrary();
     } catch (error) {
       download.disabled = false;
-      download.textContent = "Réessayer";
+      setDownloadLabel(download, "Réessayer");
       showToast(error.message, "error");
     }
   });
   actions.append(source, download);
-  card.append(body, actions);
+  card.append(body, context, details, actions);
   return card;
 }
 
@@ -891,14 +912,13 @@ form.addEventListener("submit", async (event) => {
   }
   searchMessage.textContent = "";
   searchButton.disabled = true;
-  searchButton.textContent = "Patiente…";
+  searchButton.setAttribute('aria-busy', 'true');
   try {
     if (lines.length > 1 || isImportPlaylist(query)) {
       await enqueueList(lines);
       return;
     }
     resultsSection.hidden = false;
-    resultsQuery.textContent = `“${query.length > 64 ? `${query.slice(0, 61)}…` : query}”`;
     if (looksLikeDirectLink(query)) {
       await searchDirect(query);
     } else {
@@ -909,7 +929,7 @@ form.addEventListener("submit", async (event) => {
     searchMessage.textContent = error.message;
   } finally {
     searchButton.disabled = false;
-    searchButton.textContent = "Rechercher";
+    searchButton.setAttribute('aria-busy', 'false');
   }
 });
 
@@ -949,13 +969,13 @@ function updateDownloadButtons(jobs) {
     activeJobIds.add(job.id);
     const button = downloadButtonByJob.get(job.id);
     if (!button) continue;
-    button.textContent = stateLabels[job.state] || job.state || "En file";
+    setDownloadLabel(button, stateLabels[job.state] || job.state || "En file");
     button.disabled = job.state !== "failed";
-    if (job.state === "failed") button.textContent = "Réessayer";
+    if (job.state === "failed") setDownloadLabel(button, "Réessayer");
   }
   for (const [jobId, button] of downloadButtonByJob.entries()) {
     if (activeJobIds.has(jobId)) continue;
-    if (button.textContent !== "Terminé") button.textContent = "Terminé";
+    if (button.textContent !== "Terminé") setDownloadLabel(button, "Terminé");
     button.disabled = true;
   }
 }
@@ -1058,7 +1078,7 @@ function makeTrackDeleteButton(track) {
       const download = downloadButtonByJob.get(jobId);
       if (download) {
         download.disabled = !activeProviders[track.provider];
-        download.textContent = download.dataset.defaultLabel || "Télécharger";
+        setDownloadLabel(download, download.dataset.defaultLabel || "Télécharger");
         delete download.dataset.jobId;
         downloadButtonByJob.delete(jobId);
       }
@@ -2020,10 +2040,10 @@ async function refreshQueueOnce() {
         if (button.textContent === "Ajouté ✓" || button.textContent === "Déjà en file") continue;
         if (!activeProviders[provider]) {
           button.disabled = true;
-          button.textContent = "Service arrêté";
+          setDownloadLabel(button, "Service arrêté");
         } else if (button.textContent === "Service arrêté") {
           button.disabled = false;
-          button.textContent = button.dataset.defaultLabel || "Télécharger";
+          setDownloadLabel(button, button.dataset.defaultLabel || "Télécharger");
         }
       }
     }
