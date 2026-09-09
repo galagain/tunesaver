@@ -45,6 +45,7 @@ const saves = new Map();
 let mixerEpoch = 0;
 let animation = null;
 let analysisTimer = null;
+const sideControlsQuery = matchMedia('(min-width: 1360px)');
 let browserFocus = 'tracks';
 let collectionCursor = '';
 
@@ -356,7 +357,19 @@ class Deck {
     else transport.append(this.buttons.cue);
     const panel = document.createElement('div'); panel.className = 'deck-controls';
     panel.id = `deck-controls-${this.index}`; panel.setAttribute('popover', 'auto');
-    const settings = button('settings', `Réglages de la platine ${this.letter}`, Settings2, () => {});
+    panel.setAttribute('aria-label', `Réglages de la platine ${this.letter}`);
+    const panelHeading = document.createElement('header'); panelHeading.className = 'deck-controls-heading';
+    const panelTitle = document.createElement('strong'); panelTitle.textContent = `Platine ${this.letter}`;
+    const side = document.createElement('span'); side.textContent = this.index ? 'Droite' : 'Gauche';
+    panelHeading.append(panelTitle, side);
+    this.controlsTitle = document.createElement('div'); this.controlsTitle.className = 'deck-controls-track';
+    panel.append(panelHeading, this.controlsTitle);
+    const settings = button('settings', `Réglages de la platine ${this.letter}`, Settings2, () => {
+      if (panel.dataset.docked === 'true') {
+        panel.scrollTop = 0;
+        this.control('tempo').focus({ preventScroll: true });
+      }
+    });
     settings.setAttribute('popovertarget', panel.id);
     const mute = button('mute', `Couper le son (${this.letter})`, Volume2, () => {
       const media = this.wave?.getMediaElement();
@@ -368,7 +381,7 @@ class Deck {
     const metadata = document.createElement('div'); metadata.className = 'deck-metadata'; metadata.append(bpm, key);
     $('.mix-track-info', this.el).append(metadata);
     const eject = $('[data-action="eject"]', this.el);
-    panel.append(eject);
+    panelHeading.append(eject);
     const status = $('.mix-deck-status', this.el);
     for (const child of Array.from(this.el.children)) if (![heading, overview, status].includes(child)) panel.append(child);
     const lane = this.timeline.lane;
@@ -725,6 +738,9 @@ class Deck {
 
   update() {
     this.el.dataset.ready = String(this.ready);
+    this.controlsTitle.textContent = this.track
+      ? [this.track.title || this.track.file_name, this.track.artist].filter(Boolean).join(' · ') : 'Aucun morceau';
+    this.controlsTitle.title = this.controlsTitle.textContent;
     this.updateTempoLabel();
     for (const el of Object.values(this.buttons)) el.disabled = !this.ready;
     this.buttons.headphone.disabled = !this.ready || !bus?.split;
@@ -901,6 +917,7 @@ function open() {
   active = true;
   document.body.dataset.mixer = 'true';
   layoutOverviews();
+  layoutDeckControls();
   $('#mixer-nav').setAttribute('aria-pressed', 'true');
   $('#mixer-nav').setAttribute('aria-expanded', 'true');
   sync();
@@ -915,7 +932,29 @@ function close() {
   $('#mixer-nav').setAttribute('aria-expanded', 'false');
   updateBrowserFocus();
   $$('.deck-controls').forEach(panel => panel.hidePopover());
+  layoutDeckControls();
 }
+
+function layoutDeckControls() {
+  const docked = active && sideControlsQuery.matches;
+  document.body.toggleAttribute('data-side-controls', docked);
+  decks.forEach(deck => {
+    const panel = $(`#deck-controls-${deck.index}`);
+    const settings = $('[data-action="settings"]', deck.el);
+    const mode = docked ? 'manual' : 'auto';
+    if (panel.getAttribute('popover') !== mode) {
+      panel.hidePopover();
+      panel.setAttribute('popover', mode);
+    }
+    panel.dataset.docked = String(docked);
+    if (docked) {
+      settings.removeAttribute('popovertarget');
+      panel.showPopover();
+    } else settings.setAttribute('popovertarget', panel.id);
+  });
+}
+
+sideControlsQuery.addEventListener('change', layoutDeckControls);
 
 function pause() { decks.forEach(d => d.wave?.pause()); }
 

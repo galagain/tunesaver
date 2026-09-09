@@ -21,7 +21,7 @@ function audioFixture() {
   const executablePath = process.env.CHROMIUM_PATH || `/ms-playwright/${folder}/${isFirefox ? 'firefox/firefox' : 'chrome-linux64/chrome'}`;
   const browser = await engine.launch({ executablePath, ...(isFirefox ? { firefoxUserPrefs: { 'media.autoplay.default': 0 } } : { args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] }) });
   try {
-    for (const width of [1440, 390]) {
+    for (const width of [2560, 1440, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 1000 } });
       page.setDefaultTimeout(15000);
       const errors = [];
@@ -106,6 +106,32 @@ function audioFixture() {
       });
       await page.locator('#mixer-nav').click();
       await assertOverviewOrder();
+      if (width >= 1360) {
+        for (const index of [0, 1]) await expect(page.locator(`#deck-controls-${index}`)).toBeVisible();
+        const panels = await page.evaluate(() => {
+          const bounds = element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+          return { left: bounds(document.querySelector('#deck-controls-0')), right: bounds(document.querySelector('#deck-controls-1')), center: bounds(document.querySelector('.workspace')), dock: bounds(document.querySelector('#playback-dock')) };
+        });
+        expect(panels.left.right).toBeLessThan(panels.center.left);
+        expect(panels.right.left).toBeGreaterThan(panels.center.right);
+        expect(panels.left.bottom).toBeLessThan(panels.dock.top);
+        expect(panels.left.top).toBe(panels.right.top);
+        expect(panels.left.bottom).toBe(panels.right.bottom);
+        await page.locator('#library-search').click();
+        await page.keyboard.press('Escape');
+        for (const index of [0, 1]) await expect(page.locator(`#deck-controls-${index}`)).toBeVisible();
+        await page.setViewportSize({ width: 1100, height: 1000 });
+        await expect(page.locator('#deck-controls-0')).toBeHidden();
+        await page.setViewportSize({ width: 1360, height: 720 });
+        await expect(page.locator('#deck-controls-0')).toBeVisible();
+        await page.locator('#deck-controls-0 .mix-grid-editor summary').click();
+        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollHeight > panel.clientHeight)).toBe(true);
+        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
+        await page.locator('#deck-controls-0 .mix-grid-editor summary').click();
+        await page.evaluate(() => document.querySelector('#deck-controls-0').scrollTop = 0);
+        await page.setViewportSize({ width, height: 1000 });
+        await expect(page.locator('#deck-controls-0')).toBeVisible();
+      }
       for (let i = 0; i < 2; i++) {
         await page.locator('#mixer-nav').click();
         await expect(page.locator('.mix-deck[data-deck="0"] .mix-overview')).toBeVisible();
