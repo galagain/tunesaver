@@ -6,9 +6,9 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260909-30">
+    <link rel="stylesheet" href="/style.css?v=20260910-4">
     <link rel="stylesheet" href="/mixer.css?v=20260910-3">
-    <script src="/app.js?v=20260909-30" defer></script>
+    <script src="/app.js?v=20260910-4" defer></script>
     <script src="/mixer.js?v=20260910-2" type="module"></script>
   </head>
   <body>
@@ -30,38 +30,10 @@
       </a>
 
       <div class="header-actions">
-      <div id="services" class="services" aria-label="État des plateformes" hidden>
-        <div id="tiddl-service" class="service" data-status="loading">
-          <div class="service-logo tidal-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 16">
-              <path d="M4 0 8 4 4 8 0 4Zm8 0 4 4-4 4-4-4Zm8 0 4 4-4 4-4-4Zm-8 8 4 4-4 4-4-4Z"></path>
-            </svg>
-            <span>TIDAL</span>
-          </div>
-          <span id="tiddl-health" class="health-badge" aria-label="Vérification TIDAL">…</span>
-        </div>
-
-        <div id="beatport-service" class="service" data-status="loading">
-          <div class="service-logo beatport-logo" aria-hidden="true">
-            <span class="beatport-symbol">b</span>
-            <span>beatport</span>
-          </div>
-          <span id="beatport-health" class="health-badge" aria-label="Vérification Beatport">…</span>
-        </div>
-
-        <div id="qobuz-service" class="service" data-status="loading">
-          <div class="service-logo qobuz-logo" aria-hidden="true">
-            <span class="qobuz-symbol">Q</span>
-            <span>qobuz</span>
-          </div>
-          <span id="qobuz-health" class="health-badge" aria-label="Vérification Qobuz">…</span>
-        </div>
-      </div>
-        <button id="history-toggle" class="history-toggle" type="button" aria-expanded="false" aria-controls="queue-section" hidden>Historique</button>
-        <button id="logout-button" class="account-button" type="button" hidden>
+        <div id="account-area" class="account-area" hidden>
           <span id="user-email"></span>
-          <span>Déconnexion</span>
-        </button>
+          <button id="logout-button" class="account-button" type="button" title="Se déconnecter" aria-label="Se déconnecter" hidden><span data-ui-icon="LogOut"></span></button>
+        </div>
       </div>
     </header>
 
@@ -90,6 +62,10 @@
     <div id="app-view" hidden>
     <main class="container workspace">
       <aside class="library-sidebar" aria-label="Navigation bibliothèque">
+        <a class="brand sidebar-brand" href="/" aria-label="TuneSaver — bibliothèque">
+          <svg class="brand-icon" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="10"></rect><path d="M16 8v11m-5-4 5 5 5-5M10 24h12"></path></svg>
+          <span>TuneSaver</span>
+        </a>
         <div class="sidebar-top">
           <h2>Bibliothèque</h2>
           <details id="library-menu" class="workspace-menu">
@@ -104,6 +80,7 @@
         <div class="library-nav-content">
           <button id="search-nav" class="playlist-filter" type="button" aria-controls="search-view" data-selected="false">Rechercher des nouveaux sons</button>
           <button class="playlist-filter" data-playlist-id="" data-collection="" data-selected="true" type="button">Tous mes sons</button>
+          <button id="history-toggle" class="playlist-filter" type="button" aria-controls="queue-section" data-selected="false">Historique</button>
           <section class="nav-group">
             <h3 id="playlist-title">Playlists</h3>
             <div id="playlist-list" class="playlist-list"></div>
@@ -113,6 +90,7 @@
             <div id="tag-list" class="tag-list"></div>
           </section>
         </div>
+        <div class="sidebar-footer"></div>
       </aside>
       <div class="workspace-main">
       <div id="search-view" hidden>
@@ -181,10 +159,10 @@
       </div>
       <section id="queue-section" class="queue-section" aria-labelledby="queue-title" hidden>
         <div class="section-heading">
-          <h2 id="queue-title">Téléchargements</h2>
+            <div><h2 id="queue-title">Historique</h2><p id="history-count" class="library-subtitle"></p></div>
           <div class="queue-actions">
             <p class="savings"><span>Économie estimée</span><strong id="savings-total">0,00 €</strong></p>
-            <button id="refresh-status" class="refresh-button" type="button" aria-label="Actualiser">↻</button>
+            <button id="refresh-status" class="refresh-button" type="button" title="Actualiser l’historique" aria-label="Actualiser l’historique"><span data-ui-icon="RefreshCw"></span></button>
           </div>
         </div>
 
@@ -194,7 +172,11 @@
           <div><strong id="done-count">—</strong><span>Terminés</span></div>
           <div><strong id="failed-count">—</strong><span>Échecs</span></div>
         </div>
-
+        <div class="history-toolbar">
+          <input id="history-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans l’historique">
+          <select id="history-state" aria-label="Filtrer l’historique par statut"><option value="">Tous les statuts</option><option value="pending">En attente</option><option value="running">En cours</option><option value="done">Terminés</option><option value="failed">Échecs</option></select>
+        </div>
+        <div class="history-table-head" aria-hidden="true"><span>Source</span><span>Titre / Artiste</span><span>Date</span><span>Statut</span><span></span></div>
         <div id="recent-jobs" class="recent-jobs">
           <p class="empty-copy">Aucune tâche pour le moment.</p>
         </div>

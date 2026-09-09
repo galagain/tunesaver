@@ -88,7 +88,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('#action-dialog-cancel').click();
       await expect(page.locator('#library-menu > summary')).toBeFocused();
       await page.locator('#history-toggle').click();
-      await expect(page.locator('#history-toggle')).toHaveAttribute('aria-expanded', 'true');
+      await expect(page.locator('#history-toggle')).toHaveAttribute('aria-current', 'page');
       await page.evaluate(() => { window.__dialogAnswer = undefined; TuneSaverDialogs.prompt('Mot de passe', '', { type: 'password' }).then(v => { __dialogAnswer = v; }); });
       await expect(input).toHaveAttribute('type', 'password');
       await input.fill('not-stored');

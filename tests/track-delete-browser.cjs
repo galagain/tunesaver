@@ -41,7 +41,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.screenshot({ path: `/work/track-delete-history-${engine.name()}-${width}.png`, fullPage: true });
       await page.locator('#recent-jobs .track-delete').first().click();
       await page.locator('#action-dialog-cancel').click();
-      await page.locator('#history-toggle').click();
+      await page.locator('.library-nav-content [data-collection=""]').click();
       for (const view of ['playlist', 'tag']) {
         await page.evaluate(view => { selectedPlaylistId = view === 'playlist' ? 'playlist' : ''; selectedTagId = view === 'tag' ? 'tag' : ''; renderLibrary(); }, view);
         await expect(page.locator('#library-tracks .track-delete').first()).toBeVisible();

@@ -31,7 +31,7 @@ const authIntro = document.querySelector("#auth-intro");
 const authMessage = document.querySelector("#auth-message");
 const appView = document.querySelector("#app-view");
 const adminView = document.querySelector("#admin-view");
-const services = document.querySelector("#services");
+const accountArea = document.querySelector('#account-area');
 const logoutButton = document.querySelector("#logout-button");
 const historyToggle = document.querySelector("#history-toggle");
 const userEmail = document.querySelector("#user-email");
@@ -79,7 +79,8 @@ function ensureLibraryItemVisible(element) {
 
 function updateWorkspaceNavigation() {
   document.querySelectorAll('.library-nav-content button').forEach(button => {
-    const current = button === searchNav ? !searchView.hidden : searchView.hidden && button.dataset.selected === 'true';
+    const current = button === searchNav ? !searchView.hidden : button === historyToggle ? !queueSection.hidden
+      : searchView.hidden && queueSection.hidden && button.dataset.selected === 'true';
     if (current) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
@@ -88,13 +89,19 @@ function updateWorkspaceNavigation() {
 function setWorkspaceView(view) {
   const search = view === 'search';
   searchView.hidden = !search;
-  document.querySelector('.library-section').hidden = search;
+  queueSection.hidden = view !== 'history';
+  document.querySelector('.library-section').hidden = view !== 'library';
   document.querySelector('.workspace').dataset.view = view;
   searchNav.dataset.selected = String(search);
+  historyToggle.dataset.selected = String(view === 'history');
   updateWorkspaceNavigation();
 }
 
 searchNav.addEventListener('click', () => { setWorkspaceView('search'); input.focus({ preventScroll: true }); });
+document.querySelector('.sidebar-brand').addEventListener('click', event => {
+  event.preventDefault();
+  document.querySelector('.library-nav-content [data-collection=""]').click();
+});
 document.querySelector('.library-nav-content').addEventListener('click', event => {
   if (event.target.closest('[data-collection]')) setWorkspaceView('library');
 }, true);
@@ -260,21 +267,6 @@ function platformElements(provider) {
     state: document.querySelector(`#${provider}-state`),
     results: document.querySelector(`#${provider}-results`),
   };
-}
-
-function setServiceStatus(provider, health) {
-  const service = document.querySelector(`#${provider}-service`);
-  const badge = document.querySelector(`#${provider}-health`);
-  if (!service || !badge) return;
-  const label = providerLabels[provider];
-  const state = ["active", "inactive", "loading", "unknown"].includes(health?.state) ? health.state : "unknown";
-  service.dataset.status = state;
-  service.title = `${label} : ${health?.message || "État non vérifié."}`;
-  service.setAttribute("aria-label", service.title);
-  service.setAttribute("role", "img");
-  service.tabIndex = 0;
-  badge.textContent = { active: "✓", inactive: "×", loading: "…", unknown: "!" }[state];
-  badge.setAttribute("aria-label", service.title);
 }
 
 function showToast(message, kind = "success") {
@@ -450,13 +442,16 @@ function showAuth(message = "") {
   authView.hidden = false;
   appView.hidden = true;
   adminView.hidden = true;
-  services.hidden = true;
+  accountArea.hidden = true;
   logoutButton.hidden = true;
   historyToggle.hidden = true;
   queueSection.hidden = true;
   resetPlayer();
   clearCoverCache();
   authMessage.textContent = message;
+  document.querySelector('#history-search').value = '';
+  document.querySelector('#history-state').value = '';
+  renderHistory([], []);
 }
 
 function showApp() {
@@ -464,14 +459,13 @@ function showApp() {
   authView.hidden = true;
   appView.hidden = false;
   adminView.hidden = true;
-  services.hidden = false;
+  document.querySelector('.sidebar-footer').append(accountArea);
+  accountArea.hidden = false;
   logoutButton.hidden = false;
   historyToggle.hidden = false;
   queueSection.hidden = true;
-  historyToggle.dataset.open = "false";
-  historyToggle.setAttribute("aria-expanded", "false");
-  historyToggle.textContent = "Historique";
   userEmail.textContent = session?.user?.email || "Mon compte";
+  userEmail.title = userEmail.textContent;
   setWorkspaceView('library');
   refreshQueue();
   refreshLibrary();
@@ -487,13 +481,15 @@ function showAdmin() {
   authView.hidden = true;
   appView.hidden = true;
   adminView.hidden = false;
-  services.hidden = true;
+  document.querySelector('.header-actions').append(accountArea);
+  accountArea.hidden = false;
   logoutButton.hidden = false;
   historyToggle.hidden = true;
   queueSection.hidden = true;
   resetPlayer();
   clearCoverCache();
   userEmail.textContent = "Admin";
+  userEmail.title = 'Admin';
   refreshAdmin();
 }
 
@@ -932,10 +928,6 @@ form.addEventListener("submit", async (event) => {
     searchButton.setAttribute('aria-busy', 'false');
   }
 });
-
-function totalForState(counts, state) {
-  return providers.reduce((total, provider) => total + (counts[provider]?.[state] || 0), 0);
-}
 
 async function syncHistory(items) {
   if (!items.length) return;
@@ -1967,10 +1959,15 @@ createTagButton.addEventListener("click", async () => {
 });
 
 
+let historyItems = [], historyLocalJobs = [], historyFingerprint = '';
 function renderHistory(history, localJobs) {
+  historyItems = history;
+  historyLocalJobs = localJobs;
   const localById = new Map(localJobs.map((job) => [job.id, job]));
   const recent = document.querySelector("#recent-jobs");
-  recent.replaceChildren();
+  for (const state of Object.keys(stateLabels)) {
+    document.querySelector(`#${state}-count`).textContent = String(history.filter(job => job.state === state).length);
+  }
   const savings = history
     .filter((job) => job.state === "done")
     .reduce((total, job) => total + Number(job.estimated_savings_cents || 0), 0);
@@ -1978,44 +1975,65 @@ function renderHistory(history, localJobs) {
     style: "currency",
     currency: "EUR",
   }).format(savings / 100);
-  if (!history.length) {
+  const query = document.querySelector('#history-search').value.trim().toLocaleLowerCase('fr');
+  const state = document.querySelector('#history-state').value;
+  const filtered = history.filter(job => (!state || job.state === state)
+    && (!query || `${job.title || ''} ${job.artist || ''} ${job.job_id}`.toLocaleLowerCase('fr').includes(query)));
+  document.querySelector('#history-count').textContent = `${filtered.length} téléchargement${filtered.length > 1 ? 's' : ''}`;
+  const fingerprint = JSON.stringify([history.length, filtered, localJobs.map(job => [job.id, job.download_ready])]);
+  if (fingerprint === historyFingerprint) return;
+  historyFingerprint = fingerprint;
+  const scrollTop = recent.scrollTop;
+  const focused = document.activeElement?.closest('.recent-job');
+  const focusedAction = document.activeElement?.classList.contains('track-delete') ? '.track-delete' : '.history-download';
+  recent.replaceChildren();
+  if (!filtered.length) {
     const empty = document.createElement("p");
     empty.className = "empty-copy";
-    empty.textContent = "Aucun téléchargement dans ton historique.";
+    empty.textContent = history.length ? 'Aucun téléchargement ne correspond.' : "Aucun téléchargement dans ton historique.";
     recent.append(empty);
     return;
   }
-  for (const job of history) {
+  for (const job of filtered) {
     const local = localById.get(job.job_id);
     const row = document.createElement("div");
     row.className = "recent-job";
+    row.dataset.jobId = job.job_id;
     const provider = document.createElement("span");
     provider.className = `mini-provider ${job.provider}`;
     provider.textContent = providerLabels[job.provider] || job.provider;
     const label = document.createElement("span");
     label.className = "job-label";
-    label.textContent = job.title
-      ? `${job.title}${job.artist ? ` — ${job.artist}` : ""}`
-      : job.job_id;
-    let action;
+    const title = document.createElement('strong'); title.textContent = job.title || job.job_id;
+    const artist = document.createElement('span'); artist.textContent = job.artist || '';
+    label.append(title, artist); label.title = [title.textContent, job.artist].filter(Boolean).join(' · ');
+    const date = document.createElement('time'); date.className = 'history-date';
+    const timestamp = job.created_at || job.completed_at;
+    date.textContent = formatAdminDate(timestamp) || '—';
+    if (timestamp && Number.isFinite(Date.parse(timestamp))) date.dateTime = new Date(timestamp).toISOString();
+    const status = document.createElement('span'); status.className = `job-state ${job.state}`;
+    status.textContent = stateLabels[job.state] || job.state;
+    const actions = document.createElement('div'); actions.className = 'history-row-actions';
     if (local?.download_ready) {
-      action = document.createElement("button");
+      const action = document.createElement("button");
       action.className = "history-download";
       action.type = "button";
-      action.textContent = "Récupérer";
+      action.title = 'Récupérer le fichier'; action.setAttribute('aria-label', `Récupérer : ${job.title || job.job_id}`);
+      appendUIIcon(action, 'Download');
       action.addEventListener("click", async () => {
         action.disabled = true;
         try { await downloadReadyJob(job.job_id); }
-        catch (error) { action.disabled = false; showToast(error.message, "error"); }
+        catch (error) { showToast(error.message, "error"); }
+        finally { action.disabled = false; }
       });
-    } else {
-      action = document.createElement("span");
-      action.className = `job-state ${job.state}`;
-      action.textContent = stateLabels[job.state] || job.state;
+      actions.append(action);
     }
-    row.append(provider, label, action, makeTrackDeleteButton(job));
+    actions.append(makeTrackDeleteButton(job));
+    row.append(provider, label, date, status, actions);
     recent.append(row);
   }
+  recent.scrollTop = scrollTop;
+  if (focused) recent.querySelector(`[data-job-id="${CSS.escape(focused.dataset.jobId)}"] ${focusedAction}`)?.focus({ preventScroll: true });
 }
 
 async function refreshQueue() {
@@ -2025,17 +2043,14 @@ async function refreshQueue() {
 }
 
 async function refreshQueueOnce() {
+  const account = session;
   refreshStatusButton.disabled = true;
   try {
     const payload = await requestJson("/api/status", { method: "GET" });
+    if (session !== account) return;
     payload.recent = (payload.recent || []).filter(job => !deletedJobIds.has(job.id));
-    const counts = payload.counts || {};
     for (const provider of providers) {
       activeProviders[provider] = payload.active?.[provider] === true;
-      setServiceStatus(provider, payload.services?.[provider] || {
-        state: payload.active?.[provider] === false ? "inactive" : "unknown",
-        message: payload.active?.[provider] === false ? "Moteur de téléchargement arrêté." : "Connexion non vérifiée.",
-      });
       for (const button of document.querySelectorAll(`.download-button[data-provider="${provider}"]`)) {
         if (button.textContent === "Ajouté ✓" || button.textContent === "Déjà en file") continue;
         if (!activeProviders[provider]) {
@@ -2047,9 +2062,6 @@ async function refreshQueueOnce() {
         }
       }
     }
-    for (const state of ["pending", "running", "done", "failed"]) {
-      document.querySelector(`#${state}-count`).textContent = String(totalForState(counts, state));
-    }
     liveQueueTracks = payload.recent || [];
     updateDownloadButtons(liveQueueTracks);
     let history = (payload.recent || []).map((job) => ({ ...job, job_id: job.id }));
@@ -2057,17 +2069,19 @@ async function refreshQueueOnce() {
       await syncHistory(payload.recent || []);
       history = await fetchHistory();
     } catch (error) {
+      if (session !== account) return;
       if (!historyWarningShown) {
         showToast(`Historique local indisponible : ${error.message}`, "error");
         historyWarningShown = true;
       }
     }
+    if (session !== account) return;
     renderHistory(history.filter(job => !deletedJobIds.has(job.job_id)), payload.recent || []);
     await refreshLibrary();
   } catch (error) {
+    if (session !== account) return;
     for (const provider of providers) {
       activeProviders[provider] = false;
-      setServiceStatus(provider, { state: "unknown", message: "Serveur TuneSaver injoignable : état des plateformes inconnu." });
     }
     showToast(error.message || "Impossible de lire la file.", "error");
   } finally {
@@ -2078,12 +2092,11 @@ async function refreshQueueOnce() {
 refreshStatusButton.addEventListener("click", refreshQueue);
 
 historyToggle.addEventListener("click", async () => {
-  const open = queueSection.hidden;
-  queueSection.hidden = !open;
-  historyToggle.dataset.open = open ? "true" : "false";
-  historyToggle.setAttribute("aria-expanded", String(open));
-  if (open) await refreshQueue();
+  setWorkspaceView('history');
+  await refreshQueue();
 });
+document.querySelector('#history-search').addEventListener('input', () => renderHistory(historyItems, historyLocalJobs));
+document.querySelector('#history-state').addEventListener('change', () => renderHistory(historyItems, historyLocalJobs));
 
 function formatAdminDate(value) {
   if (!value) return "";
