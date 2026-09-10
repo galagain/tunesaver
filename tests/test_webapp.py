@@ -349,7 +349,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mixer_assets_are_public_but_library_stays_private(self) -> None:
         async with TestClient(TestServer(webapp.create_app())) as client:
-            for path in ("/mixer.js", "/flx4.js", "/mixer.css", "/vendor/mixer-icons.js", "/vendor/player-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
+            for path in ("/mixer.js", "/flx4.js", "/mix-sync.js", "/mixer.css", "/vendor/mixer-icons.js", "/vendor/player-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
                 response = await client.get(path)
                 self.assertEqual(response.status, 200, path)
                 self.assertGreater(len(await response.read()), 100)
