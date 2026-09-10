@@ -1,6 +1,6 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260909-28';
+import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260910-13';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-10';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
@@ -285,7 +285,7 @@ class Deck {
       }
     }));
     modeLabel.append(mode); tools.prepend(modeLabel);
-    tools.append(button('anchor', 'Fixer le premier temps à la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
+    tools.append(button('anchor', 'Aligner un début de mesure sur la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
       button('gridBack', 'Reculer la grille de 10 ms', Minus, () => this.shiftGrid(-.01)),
       button('gridForward', 'Avancer la grille de 10 ms', Plus, () => this.shiftGrid(.01)),
       button('analyze', 'Relancer l’analyse du morceau', RefreshCw, () => this.reanalyze()));

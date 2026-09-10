@@ -372,17 +372,31 @@ function audioFixture() {
       await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 10); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2, bounds.y - 30); await page.mouse.up();
       if (Number(await a.locator('[data-control="low"]').inputValue()) <= 0) throw Error('Rotary drag failed');
       await a.locator('[data-control="low"]').focus(); await page.keyboard.press('ArrowDown');
+      await globalControls();
+      await page.locator('#mix-wave-zoom').fill('24');
+      await page.locator('#mix-master-close').click();
       await a.locator('[data-action="settings"]').click();
       await a.locator('[data-control="bpm"]').fill('125'); await a.locator('[data-control="bpm"]').press('Tab');
       await page.waitForFunction(() => __mixSettings.one.bpm === 125);
       await a.locator('[data-action="gridForward"]').click();
       await page.waitForFunction(() => __mixSettings.one.grid_offset === .01);
-      await page.evaluate(() => { __contexts[0].sources[0].media.currentTime = 2.345; });
+      await page.evaluate(() => { __contexts[0].sources[0].media.currentTime = 6.345; });
       await page.waitForFunction(() => !__contexts[0].sources[0].media.seeking);
       await page.evaluate(() => { __tempoEvents.length = 0; });
+      await page.evaluate(() => {
+        const ctx = document.querySelector('.mix-timeline-lane canvas').getContext('2d');
+        const fillText = ctx.fillText.bind(ctx);
+        window.__barLabels = [];
+        ctx.fillText = (label, ...args) => {
+          if (/^-?\d+$/.test(label)) __barLabels.push(Number(label));
+          return fillText(label, ...args);
+        };
+      });
       await a.locator('[data-action="anchor"]').click();
-      await page.waitForFunction(() => Math.abs(__mixSettings.one.grid_offset - 2.345) < .001);
-      await expect(a.locator('[data-control="grid"]')).toHaveValue('2.345');
+      await page.waitForFunction(() => Math.abs(__mixSettings.one.grid_offset - 6.345) < .001);
+      await expect(a.locator('[data-control="grid"]')).toHaveValue('6.345');
+      await page.waitForFunction(() => __barLabels.includes(0) && __barLabels.includes(3));
+      expect(await page.evaluate(() => __barLabels.some(label => label < 0))).toBe(false);
       expect(await page.evaluate(() => __tempoEvents)).toEqual([]);
       await a.locator('[data-action="closeAnalysis"]').click();
       await a.locator('[data-action="play"]').click();

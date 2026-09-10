@@ -1,7 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
-import { gridPosition, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer, usesVariableGrid } from '../web/mix-waveforms.js';
+import { gridPosition, gridBarNumber, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer, usesVariableGrid } from '../web/mix-waveforms.js';
+
+test('fixed grid bars start at zero without moving the selected downbeat', () => {
+  for (const bpm of [120, 125, 128.3, 155]) {
+    const measure = 240 / bpm;
+    for (const offset of [0, .073, measure, measure * 37, 125.345]) {
+      const first = Math.ceil(-offset / measure - 1e-9);
+      for (let i = 0; i < 50; i++) {
+        const beat = (first + i) * 4;
+        assert.equal(gridBarNumber(beat, bpm, offset), i);
+        assert.ok(offset + beat * 60 / bpm >= -1e-9);
+      }
+      assert.equal(gridBarNumber(0, bpm, offset), -first);
+    }
+  }
+  assert.equal(gridBarNumber(-4, 125, 2.345), 0);
+  assert.equal(gridBarNumber(0, 125, 2.345), 1);
+});
 
 test('tempo is fixed by default even when beat detection reports variation', () => {
   const analysis = { grid_quality: 'variable', beats: [0, .5, .98, 1.51] };

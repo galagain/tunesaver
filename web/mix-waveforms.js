@@ -4,6 +4,12 @@ export function gridPosition(time, bpm, offset) {
   return Number.isFinite(bpm) && bpm > 0 && Number.isFinite(offset) ? (time - offset) * bpm / 60 : null;
 }
 
+export function gridBarNumber(beat, bpm, offset) {
+  // Keep the chosen downbeat aligned while numbering from the first bar in the file.
+  const firstBar = Math.ceil(-offset * bpm / 240 - 1e-9);
+  return Math.floor(beat / 4) - firstBar;
+}
+
 export function detectedGrid(beats, time) {
   if (!beats || beats.length < 2) return null;
   let low = 0, high = beats.length;
@@ -154,8 +160,8 @@ export class Timeline {
     for (const key of this.tiles.keys()) if (!used.has(key)) this.tiles.delete(key);
     const xFor = t => (t - this.start) / this.span * w;
     const line = (at, bar, label) => {
-      if (at < 0 || at > duration) return;
-      const x = xFor(at); ctx.strokeStyle = bar ? '#eee' : '#707070'; ctx.lineWidth = bar ? 1 : .5;
+      if (at < -1e-9 || at > duration) return;
+      const x = xFor(Math.max(0, at)); ctx.strokeStyle = bar ? '#eee' : '#707070'; ctx.lineWidth = bar ? 1 : .5;
       ctx.beginPath(); ctx.moveTo(x, 18); ctx.lineTo(x, h); ctx.stroke();
       if (bar) { ctx.fillStyle = '#ddd'; ctx.font = '9px sans-serif'; ctx.fillText(label, x + 2, h - 3); }
     };
@@ -165,7 +171,7 @@ export class Timeline {
     } else if (grid.bpm) {
       const step = 60 / grid.bpm;
       for (let beat = Math.ceil((this.start - grid.offset) / step); grid.offset + beat * step <= this.start + this.span; beat++) {
-        line(grid.offset + beat * step, beat % 4 === 0, String(Math.floor(beat / 4) + 1));
+        line(grid.offset + beat * step, beat % 4 === 0, String(gridBarNumber(beat, grid.bpm, grid.offset)));
       }
     }
     if (deck.loopStart !== null && deck.loopEnd !== null) { ctx.fillStyle = '#ffffff18'; ctx.fillRect(xFor(deck.loopStart), 18, xFor(deck.loopEnd) - xFor(deck.loopStart), h - 18); }
