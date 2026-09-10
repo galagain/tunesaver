@@ -76,7 +76,16 @@ function audioFixture() {
           if (!path.startsWith('/api/mixer/tracks/')) throw Error(`Unexpected request ${path}`);
           const id = path.split('/').pop(), settings = __mixSettings[id] ||= {};
           if (options.method === 'PATCH') for (const [key, value] of Object.entries(JSON.parse(options.body))) {
-            if (key === 'hotcue') (settings.hotcues ||= Array(8).fill(null))[value.index] = value.time;
+            if (key === 'hotcue') {
+              if ('time' in value) {
+                (settings.hotcues ||= Array(8).fill(null))[value.index] = value.time;
+                if (value.time === null && settings.hotcue_details) settings.hotcue_details[value.index] = {};
+              }
+              for (const field of ['color', 'comment']) if (field in value) {
+                const details = settings.hotcue_details ||= Array.from({ length: 8 }, () => ({}));
+                if (value[field]) details[value.index][field] = value[field]; else delete details[value.index][field];
+              }
+            }
             else if (value === null) delete settings[key]; else settings[key] = value;
           }
           return { status: 'done', analysis: analysis(id === 'two' ? 128 : 120), settings: structuredClone(settings) };
@@ -131,9 +140,10 @@ function audioFixture() {
         await expect(page.locator('#deck-controls-0')).toBeVisible();
         await page.locator('.mix-deck[data-deck="0"] [data-action="settings"]').click();
         await expect(page.locator('#deck-analysis-0')).toBeVisible();
-        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollHeight <= panel.clientHeight)).toBe(true);
-        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
         await page.locator('#deck-analysis-0 [data-action="closeAnalysis"]').click();
+        await page.locator('#deck-controls-0 .mix-cue-row').last().scrollIntoViewIfNeeded();
+        await expect(page.locator('#deck-controls-0 .mix-cue-row').last()).toBeInViewport();
+        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
         await page.evaluate(() => document.querySelector('#deck-controls-0').scrollTop = 0);
         await page.setViewportSize({ width, height: 1000 });
         await expect(page.locator('#deck-controls-0')).toBeVisible();
@@ -353,8 +363,52 @@ function audioFixture() {
       await (await deck(0)).locator('[data-pad="0"]').click();
       await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveText('A');
       await page.waitForFunction(() => __mixSettings.one.hotcues?.[0] != null);
+      const comment = a.locator('[data-cue-field="comment"][data-cue-index="0"]');
+      const color = a.locator('[data-cue-field="color"][data-cue-index="0"]');
+      const cueTime = await page.evaluate(() => __mixSettings.one.hotcues[0]);
+      await expect(a.locator('.mix-cue-row')).toHaveCount(8);
+      await page.evaluate(() => {
+        window.__cueEditEvents = [];
+        for (const event of ['play', 'pause', 'seeking', 'emptied', 'loadstart']) __contexts[0].sources[0].media.addEventListener(event, () => __cueEditEvents.push(event));
+      });
+      await comment.fill('Intro <b>douce</b>');
+      await page.evaluate(() => __sendMIDI([0xb0, 0x13, 127]));
+      await expect(comment).toHaveValue('Intro <b>douce</b>');
+      await comment.press('Enter');
+      await page.waitForFunction(() => __mixSettings.one.hotcue_details?.[0]?.comment === 'Intro <b>douce</b>');
+      await color.fill('#123456');
+      await color.dispatchEvent('change');
+      await page.waitForFunction(() => __mixSettings.one.hotcue_details[0].color === '#123456');
+      await expect(a.locator('[data-pad="0"]')).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+      await expect(a.locator('[data-pad="0"]')).toHaveCSS('color', 'rgb(255, 255, 255)');
+      await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveAttribute('title', /Intro <b>douce<\/b>/);
+      const cueCanvas = a.locator('.mix-timeline-lane canvas');
+      await expect.poll(() => cueCanvas.evaluate(c => {
+        const pixels = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let count = 0; for (let i = 0; i < pixels.length; i += 4) if (pixels[i] === 18 && pixels[i + 1] === 52 && pixels[i + 2] === 86) count++;
+        return count;
+      })).toBeGreaterThan(20);
+      await a.locator('[data-cue-field="comment"][data-cue-index="7"]').fill('Sortie');
+      await a.locator('[data-cue-field="comment"][data-cue-index="7"]').press('Tab');
+      await page.waitForFunction(() => __mixSettings.one.hotcue_details[7].comment === 'Sortie');
+      await page.evaluate(() => document.querySelector('#deck-cue-details-0').scrollTop = 0);
+      await page.screenshot({ path: `/work/hotcue-comments-${engine.name()}-${width}.png` });
+      await page.evaluate(() => Mixer.loadTrack(libraryState.tracks[0], 1));
+      await expect(b.locator('[data-cue-field="comment"][data-cue-index="0"]')).toHaveValue('Intro <b>douce</b>');
+      await expect(b.locator('[data-cue-field="color"][data-cue-index="0"]')).toHaveValue('#123456');
+      await expect(b.locator('[data-cue-field="comment"][data-cue-index="7"]')).toHaveValue('Sortie');
+      expect(await page.evaluate(() => __mixSettings.one.hotcues[0])).toBe(cueTime);
+      expect(await page.evaluate(() => __cueEditEvents)).toEqual([]);
+      if (width < 1360) await deckControls(0);
       await a.locator('[data-clear-pad="0"]').click();
       await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveCount(0);
+      await expect(comment).toHaveValue('');
+      await expect(color).toHaveValue('#ff665d');
+      await expect(b.locator('[data-cue-field="comment"][data-cue-index="0"]')).toHaveValue('');
+      await expect(a.locator('[data-cue-field="comment"][data-cue-index="7"]')).toHaveValue('Sortie');
+      await page.evaluate(() => Mixer.loadTrack(libraryState.tracks[1], 1));
+      await expect(b.locator('[data-cue-field="comment"][data-cue-index="7"]')).toHaveValue('');
+      if (width < 1360) await deckControls(0);
       const knob = a.locator('[data-control="low"]').locator('..');
       for (const name of ['low', 'mid', 'high', 'filter', 'tempo']) {
         const angles = await a.locator(`[data-control="${name}"]`).evaluate(input => {

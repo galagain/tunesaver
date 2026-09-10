@@ -85,12 +85,44 @@ class MixerStoreTests(unittest.TestCase):
         for payload in ({'bpm': float('nan')}, {'bpm': True}, {'bpm': 999}, {'key': []}, {'grid_offset': -1},
                         {'hotcue': {'index': 8, 'time': 1}}, {'hotcue': {'index': True, 'time': 1}},
                         {'hotcue': {'index': 0, 'time': float('inf')}}, {'hotcues': []},
+                        {'hotcue': {'index': 0}}, {'hotcue': {'index': 0, 'label': 'Intro'}},
+                        {'hotcue': {'index': 0, 'color': '#fff'}}, {'hotcue': {'index': 0, 'color': 'red'}},
+                        {'hotcue': {'index': 0, 'color': 10}}, {'hotcue': {'index': 0, 'color': '#gggggg'}},
+                        {'hotcue': {'index': 0, 'comment': 'x' * 161}}, {'hotcue': {'index': 0, 'comment': []}},
+                        {'hotcue': {'index': 0, 'comment': 'one\ntwo'}},
                         {'tempo_mode': 'auto'}, {'tempo_mode': True}, {'tempo_mode': []}, [], {}):
             with self.assertRaises(Error):
                 self.service.patch('a', 'one', payload)
         self.assertEqual(self.service.read('a', 'one')['settings']['bpm'], 120)
         self.service.patch('a', 'one', {'bpm': None})
         self.assertNotIn('bpm', self.service.read('a', 'one')['settings'])
+
+    def test_hotcue_details_are_partial_persistent_and_owner_scoped(self):
+        self.service.patch('a', 'one', {'hotcue': {'index': 0, 'time': 2}})
+        self.service.patch('a', 'one', {'hotcue': {'index': 0, 'color': '#12ABef'}})
+        self.service.patch('a', 'one', {'hotcue': {'index': 0, 'comment': 'Intro <b>douce</b>'}})
+        self.service.patch('a', 'one', {'hotcue': {'index': 7, 'comment': 'Sortie'}})
+        reopened = mixer_analysis.MixerAnalysis(self.db, self.service.delivery, Error)
+        settings = reopened.read('a', 'one')['settings']
+        self.assertEqual(settings['hotcues'][0], 2)
+        self.assertIsNone(settings['hotcues'][7])
+        self.assertEqual(settings['hotcue_details'][0], {'color': '#12abef', 'comment': 'Intro <b>douce</b>'})
+        self.assertEqual(settings['hotcue_details'][7], {'comment': 'Sortie'})
+        self.assertEqual(settings['hotcue_details'][1], {})
+        with self.assertRaises(Error) as exc:
+            self.service.patch('b', 'one', {'hotcue': {'index': 0, 'comment': 'Wrong owner'}})
+        self.assertEqual(exc.exception.status, 404)
+        self.service.patch('a', 'one', {'hotcue': {'index': 0, 'time': 3}})
+        self.assertEqual(self.service.read('a', 'one')['settings']['hotcue_details'], settings['hotcue_details'])
+        self.service.patch('a', 'one', {'hotcue': {'index': 0, 'comment': ''}})
+        self.assertEqual(self.service.read('a', 'one')['settings']['hotcue_details'][0], {'color': '#12abef'})
+        self.service.patch('a', 'one', {'hotcue': {'index': 0, 'time': None}})
+        settings = self.service.read('a', 'one')['settings']
+        self.assertEqual(settings['hotcue_details'][0], {})
+        self.assertEqual(settings['hotcue_details'][7], {'comment': 'Sortie'})
+        self.service.patch('a', 'one', {'hotcue': {'index': 7, 'color': '#abcdef'}})
+        self.service.patch('a', 'one', {'hotcue': {'index': 7, 'color': None, 'comment': None}})
+        self.assertEqual(self.service.read('a', 'one')['settings']['hotcue_details'][7], {})
 
     def test_tempo_mode_persists_without_discarding_analysis_or_manual_edits(self):
         self.service.next_job()

@@ -61,11 +61,11 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await expect(page.locator('#mix-connect')).toHaveAttribute('aria-expanded', 'true');
       expect(await page.evaluate(() => midiRequests)).toBe(0);
       if (width >= 1360) {
-        expect(await page.locator('#mix-connection').evaluate(panel => panel.parentElement.id)).toBe('deck-controls-0');
+        expect(await page.locator('#mix-connection').evaluate(panel => panel.parentElement.id)).toBe('deck-cue-details-0');
         const pads = await page.locator('#deck-controls-0 .mix-pads').boundingBox();
         const panel = await page.locator('#mix-connection').boundingBox();
         expect(panel.y).toBeGreaterThan(pads.y + pads.height);
-        expect(await page.locator('#mix-outputs').evaluate(panel => panel.parentElement.id)).toBe('deck-controls-1');
+        expect(await page.locator('#mix-outputs').evaluate(panel => panel.parentElement.id)).toBe('deck-cue-details-1');
         const rightPads = await page.locator('#deck-controls-1 .mix-pads').boundingBox();
         const outputs = await page.locator('#mix-outputs').boundingBox();
         expect(outputs.y).toBeGreaterThan(rightPads.y + rightPads.height);

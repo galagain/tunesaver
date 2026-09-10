@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLX4Decoder, crossfade, isFLX4Port } from '../web/flx4.js';
-import { gridPosition, gridBarNumber, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer, usesVariableGrid } from '../web/mix-waveforms.js';
+import { gridPosition, gridBarNumber, cueTextColor, phaseAlignedTime, peakRange, unpackWaveform, detectedGrid, interpolatedPeak, overviewRenderer, usesVariableGrid } from '../web/mix-waveforms.js';
+
+test('hot cue labels remain legible with dark and light custom colors', () => {
+  assert.equal(cueTextColor('#000000'), '#fff');
+  assert.equal(cueTextColor('#123456'), '#fff');
+  assert.equal(cueTextColor('#ffffff'), '#111');
+  assert.equal(cueTextColor('#ffba55'), '#111');
+});
 
 test('fixed grid bars start at zero without moving the selected downbeat', () => {
   for (const bpm of [120, 125, 128.3, 155]) {

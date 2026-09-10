@@ -1,6 +1,6 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
-import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260910-13';
+import { Timeline, cueColors, cueTextColor, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260910-14';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-10';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
@@ -205,6 +205,7 @@ class Deck {
     this.shift = false;
     this.cue = 0;
     this.hotcues = Array(8).fill(null);
+    this.hotcueDetails = Array.from({ length: 8 }, () => ({}));
     this.loopStart = null;
     this.loopEnd = null;
     this.looping = false;
@@ -225,7 +226,8 @@ class Deck {
       <div class="mix-tempo"><label>Tempo <output class="mix-value">+0.00 %</output><input data-control="tempo" type="range" min="-16" max="16" step="0.01" value="0" aria-label="Tempo ${this.letter}"></label><label>BPM<input data-control="bpm" type="number" min="40" max="300" step="0.001" placeholder="BPM" aria-label="BPM original ${this.letter}"></label></div>
       <div class="mix-options"><label><input data-control="keylock" type="checkbox" checked> Master tempo</label><label><input data-control="quantize" type="checkbox" checked> Quantize</label><span class="mix-key"></span></div>
       <div class="mix-grid-editor" popover="auto" role="dialog" id="deck-analysis-${index}" aria-labelledby="deck-analysis-title-${index}"><header class="mix-grid-heading"><span class="mix-deck-letter">${this.letter}</span><strong id="deck-analysis-title-${index}">Grille et analyse</strong></header><div class="mix-grid-track"></div><div class="mix-grid-tools"><label>Premier temps (s)<input data-control="grid" type="number" min="0" step="0.001" value="0"></label><label>Clé<select data-control="key"><option value="">Automatique</option></select></label></div><div class="mix-analysis-info" role="status"></div></div>
-      <div class="mix-pads" aria-label="Hot cues ${this.letter}"></div>`;
+      <div class="mix-pads" aria-label="Hot cues ${this.letter}"></div>
+      <div class="mix-cue-details" id="deck-cue-details-${index}"><div class="mix-cue-comments" aria-label="Commentaires des hot cues ${this.letter}"></div></div>`;
     $('#mix-decks').append(this.el);
     this.buttons = {};
     const controls = [
@@ -321,6 +323,40 @@ class Deck {
       remove.className = 'mix-pad-remove'; remove.dataset.clearPad = i;
       cell.append(pad, remove);
       $('.mix-pads', this.el).append(cell);
+      const row = document.createElement('div'); row.className = 'mix-cue-row';
+      const label = document.createElement('span'); label.textContent = 'ABCDEFGH'[i];
+      row.append(label);
+      for (const field of ['comment', 'color']) {
+        const input = document.createElement('input');
+        input.type = field === 'color' ? 'color' : 'text';
+        input.dataset.cueField = field; input.dataset.cueIndex = i;
+        input.setAttribute('aria-label', `${field === 'color' ? 'Couleur' : 'Commentaire'} du hot cue ${label.textContent}, platine ${this.letter}`);
+        if (field === 'comment') { input.maxLength = 160; input.placeholder = 'Commentaire'; input.autocomplete = 'off'; }
+        else { input.value = cueColors[i]; input.title = `Changer la couleur du hot cue ${label.textContent}`; }
+        let saving;
+        input.addEventListener('input', () => { input.dataset.dirty = 'true'; });
+        input.addEventListener('change', () => {
+          const job = input.dataset.job, value = input.value;
+          if (!job || (saving?.job === job && saving.value === value)) return;
+          const edit = { job, value }; saving = edit;
+          run(async () => {
+            try {
+              await saveSettings(job, { hotcue: { index: i, [field]: value } });
+              if (input.dataset.job === job && input.value === value) {
+                delete input.dataset.dirty; input.removeAttribute('aria-invalid');
+              }
+            } catch (error) {
+              if (input.dataset.job === job) input.setAttribute('aria-invalid', 'true');
+              throw error;
+            } finally { if (saving === edit) saving = null; }
+          });
+        });
+        if (field === 'comment') input.addEventListener('keydown', event => {
+          if (event.key === 'Enter') { event.preventDefault(); input.dispatchEvent(new Event('change')); input.blur(); }
+        });
+        row.append(input);
+      }
+      $('.mix-cue-comments', this.el).append(row);
     }
     this.el.addEventListener('dragover', e => {
       if (!Array.from(e.dataTransfer.types).includes('application/x-tunesaver-job')) return;
@@ -442,6 +478,7 @@ class Deck {
     this.abort = new AbortController();
     const signal = this.abort.signal;
     this.hotcues = [...(cueMemory.get(track.job_id)?.hotcues || Array(8).fill(null))];
+    this.hotcueDetails = structuredClone(cueMemory.get(track.job_id)?.hotcue_details || Array.from({ length: 8 }, () => ({})));
     this.cue = cueMemory.get(track.job_id)?.cue || 0;
     $('.mix-cover', this.el).replaceWith(cover(track));
     $('.mix-track-info strong', this.el).textContent = track.title || track.file_name || 'Sans titre';
@@ -451,7 +488,7 @@ class Deck {
     $('.mix-deck-status', this.el).textContent = 'Chargement…';
     const summary = { bpm: track.bpm, ...track.mix_analysis };
     this.applyAnalysis({ status: 'pending', analysis: summary, settings: {
-      tempo_mode: summary.tempo_mode || 'fixed', cue: this.cue, hotcues: this.hotcues,
+      tempo_mode: summary.tempo_mode || 'fixed', cue: this.cue, hotcues: this.hotcues, hotcue_details: this.hotcueDetails,
     } });
     try {
       await ensureAudio();
@@ -568,6 +605,8 @@ class Deck {
     this.control('key').value = s.key || '';
     this.cue = s.cue ?? 0;
     this.hotcues = [...(s.hotcues || Array(8).fill(null))];
+    this.hotcueDetails = structuredClone(s.hotcue_details || Array.from({ length: 8 }, () => ({})));
+    if (this.track) cueMemory.set(this.track.job_id, { cue: this.cue, hotcues: [...this.hotcues], hotcue_details: structuredClone(this.hotcueDetails) });
     const key = s.key || a.key;
     $('.mix-key', this.el).textContent = key ? `${key}${!s.key && a.camelot ? ` · ${a.camelot}` : ''}` : 'Clé —';
     const mode = s.tempo_mode === 'variable' ? 'Tempo variable' : 'Tempo fixe';
@@ -653,14 +692,14 @@ class Deck {
 
   remember(patch) {
     if (!this.track) return;
-    cueMemory.set(this.track.job_id, { cue: this.cue, hotcues: [...this.hotcues] });
+    cueMemory.set(this.track.job_id, { cue: this.cue, hotcues: [...this.hotcues], hotcue_details: structuredClone(this.hotcueDetails) });
     const job = this.track.job_id;
     run(() => saveSettings(job, patch));
   }
 
   async hotcue(pad, clear = false) {
     if (!this.ready) return;
-    if (clear) this.hotcues[pad] = null;
+    if (clear) { this.hotcues[pad] = null; this.hotcueDetails[pad] = {}; }
     else if (this.hotcues[pad] === null) this.hotcues[pad] = this.quantize(this.position());
     else this.seek(this.hotcues[pad]);
     this.remember({ hotcue: { index: pad, time: this.hotcues[pad] } });
@@ -742,7 +781,19 @@ class Deck {
     $$('.mix-pad', this.el).forEach((pad, i) => {
       pad.disabled = !this.ready; pad.dataset.set = String(this.hotcues[i] !== null);
       pad.textContent = 'ABCDEFGH'[i] + (this.hotcues[i] !== null ? ` ${time(this.hotcues[i])}` : '');
+      pad.parentElement.style.setProperty('--cue-color', this.cueColor(i));
+      pad.parentElement.style.setProperty('--cue-text', cueTextColor(this.cueColor(i)));
+      pad.title = [`Hot cue ${'ABCDEFGH'[i]}`, this.hotcueDetails[i]?.comment].filter(Boolean).join(' · ');
       $(`[data-clear-pad="${i}"]`, this.el).disabled = !this.ready || this.hotcues[i] === null;
+    });
+    $$('[data-cue-field]', this.el).forEach(input => {
+      const job = this.track?.job_id || '', index = Number(input.dataset.cueIndex);
+      if (input.dataset.job !== job || (!input.dataset.dirty && document.activeElement !== input)) {
+        input.value = input.dataset.cueField === 'color' ? this.cueColor(index) : this.hotcueDetails[index]?.comment || '';
+        delete input.dataset.dirty; input.removeAttribute('aria-invalid');
+      }
+      input.dataset.job = job; input.disabled = !this.ready;
+      if (input.dataset.cueField === 'comment') input.title = input.value;
     });
     this.renderMarkers();
     this.control('bpm').disabled = !this.track;
@@ -755,6 +806,8 @@ class Deck {
     this.tick();
     sendLEDs(this);
   }
+
+  cueColor(index) { return this.hotcueDetails[index]?.color || cueColors[index]; }
 
   renderMarkers() {
     const container = $('.mix-cue-markers', this.overview);
@@ -773,8 +826,9 @@ class Deck {
     for (const group of groups) {
       const marker = document.createElement('button'); marker.type = 'button'; marker.className = 'mix-cue-marker';
       marker.textContent = group.indices.map(i => 'ABCDEFGH'[i]).join('');
-      marker.style.left = `${group.left}%`; marker.style.setProperty('--cue-color', cueColors[group.indices[0]]);
-      marker.title = `Hot cue ${marker.textContent} · ${time(group.t)}`;
+      marker.style.left = `${group.left}%`; marker.style.setProperty('--cue-color', this.cueColor(group.indices[0]));
+      marker.style.setProperty('--cue-text', cueTextColor(this.cueColor(group.indices[0])));
+      marker.title = group.indices.map(i => [`Hot cue ${'ABCDEFGH'[i]}`, time(this.hotcues[i]), this.hotcueDetails[i]?.comment].filter(Boolean).join(' · ')).join('\n');
       marker.setAttribute('aria-label', marker.title);
       marker.addEventListener('click', () => this.seek(group.t));
       container.append(marker);
@@ -798,6 +852,7 @@ class Deck {
     this.control('bpm').value = '';
     this.control('tempoMode').value = 'fixed';
     this.hotcues = Array(8).fill(null);
+    this.hotcueDetails = Array.from({ length: 8 }, () => ({}));
     this.cue = 0;
     $('.mix-cover', this.el).replaceWith(cover(null));
     $('.mix-track-info strong', this.el).textContent = 'Aucun morceau';
@@ -943,12 +998,12 @@ function layoutConnection() {
   const panel = $('#mix-connection');
   const outputs = $('#mix-outputs');
   const docked = active && sideControlsQuery.matches;
-  const parent = docked ? $('#deck-controls-0') : $('#mix-performance');
+  const parent = docked ? $('#deck-cue-details-0') : $('#mix-performance');
   if (panel.parentElement !== parent) {
     if (panel.hasAttribute('popover')) panel.hidePopover();
     parent.append(panel);
   }
-  const outputParent = docked ? $('#deck-controls-1') : panel;
+  const outputParent = docked ? $('#deck-cue-details-1') : panel;
   if (outputs.parentElement !== outputParent) outputParent.append(outputs);
   outputs.dataset.docked = String(docked);
   outputs.hidden = docked && !connectionOpen;
@@ -972,6 +1027,12 @@ function setConnectionOpen(open) {
   connectionOpen = open;
   if (!open) $('#mix-controls').hidePopover();
   layoutConnection();
+  if (changed && sideControlsQuery.matches) {
+    for (const id of ['mix-connection', 'mix-outputs']) {
+      const panel = $(`#${id}`), parent = panel.closest('.mix-cue-details');
+      if (parent) parent.scrollTop = open ? parent.scrollHeight - parent.clientHeight : 0;
+    }
+  }
   if (open && changed) void refreshOutputs().catch(error => connectionMessage(error.message));
 }
 

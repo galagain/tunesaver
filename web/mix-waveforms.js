@@ -1,5 +1,10 @@
 export const cueColors = ['#ff665d', '#ffba55', '#efe36a', '#74da8e', '#54d2db', '#77a7ff', '#c692f1', '#ef8eb3'];
 
+export function cueTextColor(color) {
+  const rgb = [1, 3, 5].map(start => parseInt(color.slice(start, start + 2), 16));
+  return (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000 < 140 ? '#fff' : '#111';
+}
+
 export function gridPosition(time, bpm, offset) {
   return Number.isFinite(bpm) && bpm > 0 && Number.isFinite(offset) ? (time - offset) * bpm / 60 : null;
 }
@@ -132,7 +137,7 @@ export class Timeline {
     this.cursor.style.left = '50%';
     this.cursor.hidden = !deck.ready;
     const grid = deck.grid(), analysis = deck.analysisData?.analysis, raw = deck.wave?.getDecodedData();
-    const stamp = JSON.stringify([w, h, dpr, this.start, this.span, grid, deck.analysisData?.settings?.tempo_mode, deck.hotcues, deck.loopStart, deck.loopEnd, deck.looping]);
+    const stamp = JSON.stringify([w, h, dpr, this.start, this.span, grid, deck.analysisData?.settings?.tempo_mode, deck.hotcues, deck.hotcueDetails, deck.loopStart, deck.loopEnd, deck.looping]);
     if (stamp === this.stamp && this.analysis === analysis && this.raw === raw) return;
     const tileStamp = JSON.stringify([w, h, dpr, this.span]);
     if (tileStamp !== this.tileStamp || this.analysis !== analysis || this.raw !== raw) this.tiles.clear();
@@ -179,8 +184,9 @@ export class Timeline {
     let right = 18;
     flags.forEach((flag, i) => {
       const x = xFor(flag.at), label = Math.min(w - (flags.length - i) * 16, Math.max(x, right));
-      ctx.fillStyle = cueColors[flag.i]; ctx.fillRect(x, 16, 1, h - 16); ctx.fillRect(label, 0, 15, 15);
-      ctx.fillStyle = '#111'; ctx.font = 'bold 10px sans-serif'; ctx.fillText('ABCDEFGH'[flag.i], label + 3, 11); right = label + 16;
+      const color = deck.cueColor(flag.i);
+      ctx.fillStyle = color; ctx.fillRect(x, 16, 1, h - 16); ctx.fillRect(label, 0, 15, 15);
+      ctx.fillStyle = cueTextColor(color); ctx.font = 'bold 10px sans-serif'; ctx.fillText('ABCDEFGH'[flag.i], label + 3, 11); right = label + 16;
     });
     ctx.fillStyle = deck.index ? '#ef8eb3' : '#00d79d'; ctx.font = 'bold 11px sans-serif'; ctx.fillText(deck.letter, 3, 12);
   }

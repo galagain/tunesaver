@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 from pathlib import Path
 import signal
 import sys
@@ -102,18 +103,35 @@ class MixerAnalysis:
             raise self.error("Tonalité invalide.")
         hotcue = payload.get("hotcue")
         if "hotcue" in payload:
-            if not isinstance(hotcue, dict) or set(hotcue) != {"index", "time"} or type(hotcue["index"]) is not int or not 0 <= hotcue["index"] < 8:
+            if (not isinstance(hotcue, dict) or "index" not in hotcue or len(hotcue) < 2
+                    or set(hotcue) - {"index", "time", "color", "comment"}
+                    or type(hotcue["index"]) is not int or not 0 <= hotcue["index"] < 8):
                 raise self.error("Hot cue invalide.")
-            if hotcue["time"] is not None:
+            if hotcue.get("time") is not None:
                 number(hotcue["time"], 0, maximum)
+            if hotcue.get("color") is not None and (not isinstance(hotcue["color"], str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", hotcue["color"])):
+                raise self.error("Couleur de hot cue invalide.")
+            if hotcue.get("comment") is not None and (not isinstance(hotcue["comment"], str) or len(hotcue["comment"]) > 160 or any(ord(c) < 32 for c in hotcue["comment"])):
+                raise self.error("Commentaire de hot cue invalide (160 caractères maximum).")
         with self.db() as db:
             db.execute("begin immediate")
             row = db.execute("select settings from mixer_settings where job_id=? and user_id=?", (job, owner)).fetchone()
             settings = json.loads(row[0]) if row else {}
             for name, value in payload.items():
                 if name == "hotcue":
-                    cues = settings.setdefault("hotcues", [None] * 8)
-                    cues[value["index"]] = value["time"]
+                    index = value["index"]
+                    if "time" in value:
+                        cues = settings.setdefault("hotcues", [None] * 8)
+                        cues[index] = value["time"]
+                        if value["time"] is None and "hotcue_details" in settings:
+                            settings["hotcue_details"][index] = {}
+                    for field in ("color", "comment"):
+                        if field in value:
+                            details = settings.setdefault("hotcue_details", [{} for _ in range(8)])
+                            if value[field] is None or value[field] == "":
+                                details[index].pop(field, None)
+                            else:
+                                details[index][field] = value[field].lower() if field == "color" else value[field]
                 elif value is None:
                     settings.pop(name, None)
                 else:
