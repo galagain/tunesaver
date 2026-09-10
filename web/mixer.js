@@ -721,9 +721,22 @@ class Deck {
 
   async hotcue(pad, clear = false) {
     if (!this.ready) return;
+    if (!clear && this.hotcues[pad] !== null) {
+      const position = this.hotcues[pad], version = this.version;
+      if (this.looping && (position < this.loopStart || position >= this.loopEnd)) this.looping = false;
+      this.seek(position);
+      try {
+        const playback = this.wave.play();
+        this.update();
+        if (bus.context.state !== 'running') await Promise.all([playback, ensureAudio()]);
+        else await playback;
+      } catch (error) {
+        if (version === this.version && error.name !== 'AbortError') throw error;
+      }
+      return;
+    }
     if (clear) { this.hotcues[pad] = null; this.hotcueDetails[pad] = {}; }
-    else if (this.hotcues[pad] === null) this.hotcues[pad] = this.quantize(this.position());
-    else this.seek(this.hotcues[pad]);
+    else this.hotcues[pad] = this.quantize(this.position());
     this.remember({ hotcue: { index: pad, time: this.hotcues[pad] } });
     this.update();
   }
@@ -907,7 +920,7 @@ class Deck {
       marker.style.setProperty('--cue-text', cueTextColor(this.cueColor(group.indices[0])));
       marker.title = group.indices.map(i => [`Hot cue ${'ABCDEFGH'[i]}`, time(this.hotcues[i]), this.hotcueDetails[i]?.comment].filter(Boolean).join(' · ')).join('\n');
       marker.setAttribute('aria-label', marker.title);
-      marker.addEventListener('click', () => this.seek(group.t));
+      marker.addEventListener('click', () => run(() => this.hotcue(group.indices[0])));
       container.append(marker);
     }
   }

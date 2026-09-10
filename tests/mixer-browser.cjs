@@ -363,6 +363,42 @@ function audioFixture() {
       await (await deck(0)).locator('[data-pad="0"]').click();
       await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveText('A');
       await page.waitForFunction(() => __mixSettings.one.hotcues?.[0] != null);
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
+      await page.evaluate(() => {
+        window.__cueRequest = TuneSaverMixerHost.requestJson;
+        window.__cueWrites = 0;
+        TuneSaverMixerHost.requestJson = async (path, options) => {
+          if (options.method === 'PATCH') __cueWrites++;
+          return __cueRequest(path, options);
+        };
+        const media = __contexts[0].sources[0].media, play = media.play.bind(media);
+        window.__cueStarts = [];
+        media.play = () => { __cueStarts.push(media.currentTime); return play(); };
+      });
+      const assertCueStarted = async trigger => {
+        await page.evaluate(() => { __contexts[0].sources[0].media.currentTime = 6; __cueStarts.length = 0; });
+        await page.waitForFunction(() => !__contexts[0].sources[0].media.seeking);
+        await trigger();
+        await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
+        await page.waitForFunction(() => __cueStarts.length > 0);
+        const startedAt = await page.evaluate(() => __cueStarts[0]);
+        expect(Math.abs(startedAt - await page.evaluate(() => __mixSettings.one.hotcues[0]))).toBeLessThan(.015);
+        await page.waitForFunction(() => !__contexts[0].sources[0].media.seeking && !__contexts[0].sources[0].media.paused);
+      };
+      await assertCueStarted(() => a.locator('[data-pad="0"]').click());
+      await assertCueStarted(() => page.evaluate(() => __sendMIDI([0x97, 0, 127])));
+      await page.evaluate(() => __sendMIDI([0x97, 0, 0]));
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
+      await page.evaluate(() => Mixer.pause());
+      await page.evaluate(() => __contexts[0].suspend());
+      await assertCueStarted(() => page.evaluate(() => __sendMIDI([0x97, 0, 127])));
+      await page.waitForFunction(() => __contexts[0].state === 'running');
+      await page.evaluate(() => Mixer.pause());
+      await assertCueStarted(() => page.locator('.mix-overview[data-deck="0"] .mix-cue-marker').click());
+      await page.evaluate(() => Mixer.pause());
+      expect(await page.evaluate(() => __cueWrites)).toBe(0);
+      await page.evaluate(() => { TuneSaverMixerHost.requestJson = __cueRequest; });
+      if (width < 1360) await deckControls(0);
       const comment = a.locator('[data-cue-field="comment"][data-cue-index="0"]');
       const color = a.locator('[data-cue-field="color"][data-cue-index="0"]');
       const cueTime = await page.evaluate(() => __mixSettings.one.hotcues[0]);
@@ -414,6 +450,7 @@ function audioFixture() {
       if (width < 1360) await deckControls(0);
       await a.locator('[data-clear-pad="0"]').click();
       await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveCount(0);
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
       await expect(comment).toHaveValue('');
       await expect(color).toHaveValue('#ff665d');
       await expect(b.locator('[data-cue-field="comment"][data-cue-index="0"]')).toHaveValue('');
