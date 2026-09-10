@@ -102,9 +102,11 @@ for (let i = 0; i < rate * duration; i++) {
       const startup = await page.evaluate(() => performance.now() - __started);
       const a = page.locator('.mix-deck[data-deck="0"]');
       await expect(a.locator('.mix-current-bpm')).toHaveText('120.00');
-      await expect(a.locator('.mix-load-label')).toContainText('Infos');
-      await expect(a.locator('.mix-load-progress')).toBeVisible();
-      expect(await a.locator('.mix-load-progress').evaluate(el => el.value)).toBeLessThan(.5);
+      await expect(page.locator('.mix-load-label, .mix-load-progress')).toHaveCount(0);
+      expect(await page.evaluate(() => {
+        const media = __contexts[0].sources[0].media;
+        return media.buffered.end(0) / media.duration;
+      })).toBeLessThan(.5);
       await page.waitForFunction(() => {
         const samples = new Float32Array(2048); __contexts[0].analyser.getFloatTimeDomainData(samples);
         return samples.some(n => Math.abs(n) > .01);
@@ -142,7 +144,8 @@ for (let i = 0; i < rate * duration; i++) {
       await expect(page.locator('.mix-overview[data-deck="0"] [data-duration]')).toHaveText('1:00');
       await page.waitForFunction(() => __rejectAnalysis.length >= 3);
       await page.evaluate(() => __rejectAnalysis.splice(0).forEach(reject => reject()));
-      await expect(page.locator('.mix-overview[data-deck="0"] .mix-load-label')).toContainText('Analyse indisponible');
+      await expect(a.locator('.mix-analysis-info')).toContainText('Analyse indisponible');
+      await expect(page.locator('.mix-load-label, .mix-load-progress')).toHaveCount(0);
       expect(await page.evaluate(() => Mixer.currentPlayback.playing)).toBe(true);
       await page.evaluate(async () => {
         __contexts[0].sources.at(-1).media.pause();

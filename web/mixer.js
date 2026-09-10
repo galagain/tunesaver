@@ -344,12 +344,6 @@ class Deck {
     const letter = document.createElement('strong'); letter.textContent = this.letter;
     this.overviewTitle = document.createElement('span'); this.overviewTitle.textContent = 'Aucun morceau';
     label.append(letter, this.overviewTitle); overview.prepend(label);
-    this.loadProgress = document.createElement('progress');
-    this.loadProgress.className = 'mix-load-progress'; this.loadProgress.max = 1;
-    this.loadProgress.setAttribute('aria-label', `Audio chargé (${this.letter})`);
-    this.loadLabel = document.createElement('span'); this.loadLabel.className = 'mix-load-label';
-    this.loadProgress.hidden = this.loadLabel.hidden = true;
-    overview.append(this.loadProgress, this.loadLabel);
     const transport = document.createElement('div'); transport.className = 'deck-playback';
     if (!this.index) transport.append(button('previous', 'Morceau précédent', SkipBack, () => host().playPreviousTrack()));
     transport.append(this.buttons.play);
@@ -413,8 +407,6 @@ class Deck {
     this.headphone = false;
     this.analysisData = null;
     this.analysisLoading = false;
-    this.analysisUnavailable = false;
-    this.loadProgress.hidden = this.loadLabel.hidden = true;
   }
 
   async load(track) {
@@ -451,11 +443,9 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = 'Préparation audio…';
       const media = new Audio();
       media.preload = 'auto';
-      for (const event of ['progress', 'waiting', 'playing', 'loadedmetadata', 'canplay']) {
-        media.addEventListener(event, () => {
-          if (version === this.version) this.updateLoading();
-        }, { signal });
-      }
+      media.addEventListener('durationchange', () => {
+        if (version === this.version) $('[data-duration]', this.overview).textContent = time(this.wave?.getDuration() || 0);
+      }, { signal });
       this.wave = WaveSurfer.create({
         container: $('.mix-wave', this.overview), media, height: 32,
         waveColor: '#626262', progressColor: this.index ? '#ef8eb3' : '#00d79d', cursorColor: '#ffffff',
@@ -493,7 +483,6 @@ class Deck {
         this.ready = false;
         this.wave.pause();
         $('.mix-deck-status', this.el).textContent = 'Fichier audio illisible.';
-        this.loadProgress.hidden = this.loadLabel.hidden = true;
         this.update();
       });
       this.applySound();
@@ -511,7 +500,6 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = 'Prêt';
       $('[data-duration]', this.overview).textContent = time(this.wave.getDuration());
       this.update();
-      this.updateLoading();
       this.analysisDelay = setTimeout(() => {
         if (version === this.version) run(() => this.fetchAnalysis());
       }, 0);
@@ -522,27 +510,6 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = e.name === 'AbortError' ? 'Chargement annulé' : e.message || 'Chargement impossible.';
       this.update();
     }
-  }
-
-  updateLoading() {
-    if (!this.track) return;
-    const media = this.wave?.getMediaElement();
-    const duration = media?.duration;
-    let buffered = 0;
-    if (duration > 0 && Number.isFinite(duration)) {
-      for (let i = 0; i < media.buffered.length; i++) buffered += media.buffered.end(i) - media.buffered.start(i);
-    }
-    const fraction = duration > 0 ? clamp(buffered / duration, 0, 1) : 0;
-    this.loadProgress.value = fraction;
-    this.loadProgress.hidden = !media || fraction >= .999;
-    const info = this.analysisUnavailable || this.analysisData?.status === 'failed' ? 'Analyse indisponible'
-      : ['running', 'queued'].includes(this.analysisData?.status) ? 'Analyse…'
-      : this.analysisData?.status !== 'done' ? 'Infos…' : '';
-    const audio = !this.ready ? 'Audio…' : media?.readyState < 3 ? 'Mise en mémoire…'
-      : fraction < .999 ? `Audio ${Math.round(fraction * 100)} %` : '';
-    this.loadLabel.textContent = [audio, info].filter(Boolean).join(' · ');
-    this.loadLabel.hidden = !this.loadLabel.textContent;
-    if (this.ready) $('[data-duration]', this.overview).textContent = time(this.wave.getDuration());
   }
 
   grid(position = this.position()) {
@@ -561,16 +528,14 @@ class Deck {
     if (!this.track || this.analysisLoading || saves.has(this.track.job_id)) return;
     const version = this.version;
     this.analysisLoading = true;
-    this.analysisUnavailable = false;
     try {
       const data = await host().requestJson(`/api/mixer/tracks/${encodeURIComponent(this.track.job_id)}`, { method: 'GET', signal: this.abort?.signal });
       if (version === this.version && !saves.has(this.track.job_id)) this.applyAnalysis(data);
     } catch (error) {
       if (version === this.version && error.name !== 'AbortError') {
-        this.analysisUnavailable = true;
         $('.mix-analysis-info', this.el).textContent = 'Analyse indisponible. Réessaie depuis les réglages.';
       }
-    } finally { if (version === this.version) { this.analysisLoading = false; this.updateLoading(); } }
+    } finally { if (version === this.version) this.analysisLoading = false; }
   }
 
   applyAnalysis(data) {
@@ -592,7 +557,6 @@ class Deck {
       : data.status === 'failed' ? data.error || 'Analyse échouée' : data.status === 'running' ? 'Analyse en cours…' : 'Analyse en attente';
     if (a.waveform?.data && a.waveform.data !== previousWaveform?.data && this.wave) this.wave.setOptions({ renderFunction: overviewRenderer(a) });
     this.update();
-    this.updateLoading();
   }
 
   async reanalyze() {
