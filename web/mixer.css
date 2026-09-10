@@ -57,15 +57,34 @@ body[data-side-controls] [data-action="deckCommands"] { display: none; }
 body[data-mixer="true"] #mix-connect { display: grid; }
 #mix-connect svg { width: 18px; height: 18px; }
 #mix-connect[data-connected="true"] { color: #00d79d; }
+#mix-connect[aria-expanded="true"] { background: #303030; }
+#mix-connection { --deck-color: #00d79d; position: fixed; inset: auto auto calc(var(--playback-height, 213px) + 8px) 12px; margin: 0; width: min(340px, calc(100vw - 24px)); max-height: max(80px, calc(100dvh - var(--playback-height, 213px) - 24px)); padding: 14px; border: 1px solid #484848; border-radius: 4px; background: #242424; color: #ddd; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+#mix-connection:popover-open, #mix-connection[data-docked="true"]:not([hidden]) { display: grid; gap: 12px; }
+#mix-connection[data-docked="true"] { position: static; width: 100%; max-height: none; padding: 14px 0 0; border: 0; border-top: 1px solid #393939; border-radius: 0; overflow: visible; }
+.mix-connection-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.mix-connection-heading h3 { margin: 0; font-size: 12px; font-weight: 600; }
+.mix-connection-heading .mix-icon { background: transparent; border: 0; }
+.mix-connection-actions { display: flex; align-items: center; gap: 6px; }
+#mix-midi-connect { display: flex; flex: 1; width: auto; height: auto; min-height: 32px; gap: 7px; padding: 6px 8px; font-size: 11px; text-align: left; }
+#mix-midi-connect svg { flex-shrink: 0; }
+#mix-connection label { display: grid; gap: 6px; min-width: 0; }
+#mix-connection select { width: 100%; }
+#mix-connection #mix-midi-status { line-height: 1.5; }
+.mix-midi-output { display: grid; gap: 4px; font-size: 10px; color: #aaa; }
+#mix-midi-output { font-size: 11px; color: #ccc; overflow-wrap: anywhere; }
+#mix-midi-help { font-size: 11px; color: #a3dac7; }
+#mix-connection-message { display: flex; align-items: start; gap: 6px; font-size: 11px; line-height: 1.5; color: #ffb4aa; overflow-wrap: anywhere; }
+#mix-connection-message:empty { display: none; }
+#mix-connection-message span { flex: 1; min-width: 0; }
 #mix-midi-status { flex: 1; font-size: 11px; color: #aaa; min-width: 0; overflow-wrap: anywhere; }
 #mix-midi-status[data-connected="true"] { color: #00d79d; }
 #mix-midi-input { width: 170px; }
 #mix-message { display: flex; gap: 8px; align-items: center; color: #ffb4aa; font-size: 12px; }
 #mix-message span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #mix-message:not(:empty) { padding: 6px 0; }
-#mix-settings:not([hidden]) { position: fixed; z-index: 100; bottom: calc(var(--playback-height) + 6px); right: 12px; width: min(520px, calc(100vw - 24px)); max-height: 45dvh; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 14px; background: #242424; border: 1px solid #555; border-radius: 4px; }
-#mix-settings label { display: grid; gap: 5px; flex: 1 1 180px; }
-#mix-audio-status { flex-basis: 100%; font-size: 11px; color: #bbb; }
+#mix-settings { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 10px 6px; align-items: end; padding-top: 12px; border-top: 1px solid #393939; }
+#mix-settings label:last-of-type, #mix-audio-status { grid-column: 1 / -1; }
+#mix-audio-status { font-size: 11px; line-height: 1.5; color: #bbb; }
 .mix-wave-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
 #mix-analysis-status { font-size: 10px; color: #999; }
 .mix-wave-toolbar label { display: flex; align-items: center; gap: 6px; }
@@ -165,9 +184,9 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
 .mix-grid-tools button { height: 32px; min-width: 32px; }
 .mix-grid-tools [data-fixed-tempo] { padding: 0 10px; font-size: 11px; background: #303030; border: 1px solid #484848; color: #ddd; border-radius: 3px; }
 .mix-grid-tools .mix-analyze-button { grid-column: 1 / -1; justify-self: start; display: inline-flex; width: auto; gap: 8px; padding: 0 10px; font-size: 11px; }
+.mix-grid-tools .mix-grid-anchor { grid-column: 1 / -1; display: flex; width: 100%; height: 34px; gap: 8px; padding: 0 10px; font-size: 12px; color: var(--deck-color); border-color: #52625c; }
 .mix-analysis-info { margin-top: 14px; padding-top: 10px; border-top: 1px solid #393939; color: #aaa; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .mix-analysis-info:empty { display: none; }
-#mix-settings:not([hidden]) { max-height: max(80px, calc(100dvh - var(--playback-height) - 20px)); }
 .mix-master { display: flex; align-items: center; justify-content: center; gap: 28px; border-top: 1px solid #444; padding: 4px 0; }
 .mix-master > label { display: grid; align-items: center; justify-items: center; gap: 2px; }
 .mix-master .mix-cross-label { width: min(300px, 40%); }

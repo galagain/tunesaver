@@ -62,7 +62,9 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('#mixer-nav').click();
       await page.evaluate(() => document.querySelector('#mix-controls').showPopover());
       await page.locator('#mix-connect').click();
+      await page.locator('#mix-midi-connect').click();
       await expect(page.locator('#mix-midi-status')).toContainText('connect');
+      await page.locator('#mix-connection-close').click();
       await page.evaluate(() => document.querySelector('#mix-controls').hidePopover());
 
       const visible = async (selector, paneSelector) => {

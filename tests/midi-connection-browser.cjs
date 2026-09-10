@@ -4,8 +4,10 @@ const { chromium, firefox, expect } = require('@playwright/test');
   const engine = process.env.MIXER_BROWSER === 'firefox' ? firefox : chromium;
   const browser = await engine.launch();
   try {
-    for (const mode of ['normal', 'output-hangs', 'input-hangs', 'pending', 'late', 'close-hangs', 'denied', 'permission-change', 'access-hangs']) {
-      const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    const cases = ['normal', 'output-hangs', 'input-hangs', 'pending', 'late', 'close-hangs', 'denied', 'permission-change', 'access-hangs'].map(mode => ({ mode, width: 1440 }));
+    cases.push({ mode: 'normal', width: 390 }, { mode: 'normal', width: 320 });
+    for (const { mode, width } of cases) {
+      const page = await browser.newPage({ viewport: { width, height: 1000 } });
       const errors = [];
       page.on('pageerror', e => errors.push(e.message));
       await page.addInitScript(mode => {
@@ -49,8 +51,23 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.waitForFunction(() => window.Mixer && publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture', user: { email: 'fixture@example.com' } }; showApp(); });
       await page.locator('#mixer-nav').click();
-      await page.locator('#mix-controls-toggle').click();
+      await expect(page.locator('#mix-connection')).toBeHidden();
       await page.locator('#mix-connect').click();
+      await expect(page.locator('#mix-connection')).toBeVisible();
+      await expect(page.locator('#mix-connect')).toHaveAttribute('aria-expanded', 'true');
+      expect(await page.evaluate(() => midiRequests)).toBe(0);
+      if (width >= 1360) {
+        expect(await page.locator('#mix-connection').evaluate(panel => panel.parentElement.id)).toBe('deck-controls-0');
+        const pads = await page.locator('#deck-controls-0 .mix-pads').boundingBox();
+        const panel = await page.locator('#mix-connection').boundingBox();
+        expect(panel.y).toBeGreaterThan(pads.y + pads.height);
+      }
+      await expect(page.locator('#mix-output')).toBeVisible();
+      await expect(page.locator('#mix-routing')).toBeVisible();
+      await page.locator('#mix-connect').click();
+      await expect(page.locator('#mix-connection')).toBeHidden();
+      await page.locator('#mix-connect').click();
+      await page.locator('#mix-midi-connect').click();
       const status = page.locator('#mix-midi-status');
       if (mode === 'access-hangs') {
         await expect(status).toContainText('Autorisation MIDI en attente');
@@ -63,7 +80,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
         expect(await page.evaluate(() => midiIn.opens)).toBe(1);
       } else if (mode === 'denied') {
         await expect(status).toContainText('Accès MIDI refusé');
-        await expect(page.locator('#mix-connect')).toBeEnabled();
+        await expect(page.locator('#mix-midi-connect')).toBeEnabled();
         await expect(page.locator('#mix-midi-help')).toBeVisible();
         await page.locator('#mix-midi-refresh').click();
         await expect(status).toContainText('Accès MIDI refusé');
@@ -83,24 +100,24 @@ const { chromium, firefox, expect } = require('@playwright/test');
         await expect(status).toHaveAttribute('data-connected', 'true');
       } else if (mode === 'late') {
         await expect(status).toContainText('ouverture');
-        await expect(page.locator('#mix-connect')).toBeEnabled();
-        await page.locator('#mix-connect').click();
+        await expect(page.locator('#mix-midi-connect')).toBeEnabled();
+        await page.locator('#mix-midi-connect').click();
         await page.evaluate(() => resolveMIDI());
         await expect(status).toHaveText('Non connecté');
         await expect.poll(() => page.evaluate(() => midiIn.connection)).toBe('closed');
         await page.evaluate(() => { midiMode = 'normal'; });
-        await page.locator('#mix-connect').click();
+        await page.locator('#mix-midi-connect').click();
         await expect(status).toHaveAttribute('data-connected', 'true');
       } else {
         await expect(status).toHaveAttribute('data-connected', 'true', { timeout: 1200 });
-        await expect(page.locator('#mix-connect')).toBeEnabled();
+        await expect(page.locator('#mix-midi-connect')).toBeEnabled();
         await page.evaluate(() => midiIn.onmidimessage({ data: [0xb6, 0x1f, 127] }));
         await expect.poll(async () => Number(await page.locator('#mix-cross').inputValue())).toBeGreaterThan(0.98);
         if (mode === 'output-hangs') await expect(status).toContainText('voyants indisponibles');
         if (mode === 'close-hangs') {
-          await page.locator('#mix-connect').click();
+          await page.locator('#mix-midi-connect').click();
           await expect(status).toHaveText('Non connecté', { timeout: 1000 });
-          await expect(page.locator('#mix-connect')).toBeEnabled();
+          await expect(page.locator('#mix-midi-connect')).toBeEnabled();
         }
         if (mode === 'permission-change') {
           await page.evaluate(() => { midiMode = 'denied'; permission.state = 'denied'; permission.onchange(); });
@@ -114,9 +131,25 @@ const { chromium, firefox, expect } = require('@playwright/test');
         expect(await page.evaluate(() => midiRequests)).toBe(2);
         expect(await page.evaluate(() => midiIn.opens)).toBe(2);
       }
+      const requests = await page.evaluate(() => midiRequests);
+      await page.locator('#mix-connection-close').click();
+      await expect(page.locator('#mix-connection')).toBeHidden();
+      await expect(page.locator('#mix-connect')).toHaveAttribute('aria-expanded', 'false');
+      await page.locator('#mix-connect').click();
+      await expect(status).toHaveAttribute('data-connected', 'true');
+      expect(await page.evaluate(() => midiRequests)).toBe(requests);
+      if (mode === 'normal') {
+        await expect(page.locator('#mix-midi-output')).toHaveText('DDJ-FLX4');
+        await page.screenshot({ path: `/work/midi-panel-${engine.name()}-${width}.png` });
+        await page.setViewportSize({ width: width === 1440 ? 1100 : 1440, height: 1000 });
+        await expect(page.locator('#mix-connection')).toBeVisible();
+        await expect(status).toHaveAttribute('data-connected', 'true');
+        await page.locator('#mix-connect').click();
+        await expect(page.locator('#mix-connection')).toBeHidden();
+      }
       expect(errors).toEqual([]);
       await page.close();
-      console.log(`${engine.name()} ${mode}: OK`);
+      console.log(`${engine.name()} ${mode} ${width}: OK`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

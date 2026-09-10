@@ -25,6 +25,7 @@ const time = (seconds) => {
 };
 const run = (callback) => { Promise.resolve().then(callback).catch(e => message(e.message || 'Action impossible.')); };
 let active = false;
+let connectionOpen = false;
 let bus = null;
 let decks = [];
 let midi = null;
@@ -139,6 +140,11 @@ class AudioBus {
       this.head.connect(this.headSplit);
       this.merger.connect(ctx.destination);
     } else this.guard.connect(ctx.destination);
+    this.updateRoutingControls();
+  }
+
+  updateRoutingControls() {
+    const available = this.context.destination.maxChannelCount >= 4;
     $('#mix-routing option[value="split"]').disabled = !available;
     $('#mix-routing').value = this.split ? 'split' : 'stereo';
     $('#mix-head-level').disabled = !this.split;
@@ -279,7 +285,7 @@ class Deck {
       }
     }));
     modeLabel.append(mode); tools.prepend(modeLabel);
-    tools.append(button('anchor', 'Premier temps à la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
+    tools.append(button('anchor', 'Fixer le premier temps à la tête de lecture', Flag, () => saveSettings(this.track.job_id, { grid_offset: this.position() })),
       button('gridBack', 'Reculer la grille de 10 ms', Minus, () => this.shiftGrid(-.01)),
       button('gridForward', 'Avancer la grille de 10 ms', Plus, () => this.shiftGrid(.01)),
       button('analyze', 'Relancer l’analyse du morceau', RefreshCw, () => this.reanalyze()));
@@ -292,11 +298,14 @@ class Deck {
     const bpmTools = document.createElement('div'); bpmTools.className = 'mix-grid-adjust';
     bpmTools.append(this.control('bpm').parentElement, ...$$('[data-fixed-tempo]', tools));
     const offsetTools = document.createElement('div'); offsetTools.className = 'mix-grid-adjust';
-    offsetTools.append(this.control('grid').parentElement, ...$$('[data-action="anchor"], [data-action="gridBack"], [data-action="gridForward"]', tools));
+    offsetTools.append(this.control('grid').parentElement, ...$$('[data-action="gridBack"], [data-action="gridForward"]', tools));
+    const anchor = $('[data-action="anchor"]', tools);
+    anchor.classList.add('mix-grid-anchor');
+    anchor.append(document.createTextNode('Fixer la grille ici'));
     const analyze = $('[data-action="analyze"]', tools);
     analyze.classList.add('mix-analyze-button');
     analyze.append(document.createTextNode('Relancer l’analyse'));
-    tools.append(bpmTools, offsetTools, analyze);
+    tools.append(bpmTools, anchor, offsetTools, analyze);
     for (let i = 0; i < 8; i++) {
       const pad = document.createElement('button');
       pad.type = 'button';
@@ -738,6 +747,7 @@ class Deck {
     this.renderMarkers();
     this.control('bpm').disabled = !this.track;
     $$('.mix-grid-tools input, .mix-grid-tools select, .mix-grid-tools button', this.el).forEach(el => { el.disabled = !this.track; });
+    $('[data-action="anchor"]', this.el).disabled = !this.ready;
     if (this.analysisData?.settings?.tempo_mode === 'variable') {
       $$('[data-control="bpm"], [data-control="grid"], [data-action="anchor"], [data-action="gridBack"], [data-action="gridForward"], [data-fixed-tempo]', this.el).forEach(el => { el.disabled = true; });
     }
@@ -902,6 +912,7 @@ function open() {
 }
 
 function close() {
+  setConnectionOpen(false);
   active = false;
   $('#mix-controls').hidePopover();
   $('#mixer-nav').setAttribute('aria-pressed', 'false');
@@ -926,6 +937,50 @@ function layoutDeckControls() {
     panel.dataset.docked = String(docked);
     if (docked) panel.showPopover();
   });
+  layoutConnection();
+}
+
+function layoutConnection() {
+  const panel = $('#mix-connection');
+  const docked = active && sideControlsQuery.matches;
+  const parent = docked ? $('#deck-controls-0') : $('#mix-performance');
+  if (panel.parentElement !== parent) {
+    if (panel.hasAttribute('popover')) panel.hidePopover();
+    parent.append(panel);
+  }
+  panel.dataset.docked = String(docked);
+  if (docked) {
+    $('#mix-connect').removeAttribute('popovertarget');
+    panel.removeAttribute('popover');
+    panel.hidden = !connectionOpen;
+  } else {
+    $('#mix-connect').setAttribute('popovertarget', panel.id);
+    panel.hidden = false;
+    panel.setAttribute('popover', 'auto');
+    if (connectionOpen) panel.showPopover();
+    else panel.hidePopover();
+  }
+  $('#mix-connect').setAttribute('aria-expanded', String(connectionOpen));
+}
+
+function setConnectionOpen(open) {
+  const changed = connectionOpen !== open;
+  connectionOpen = open;
+  layoutConnection();
+  if (open && $('#mix-connection').dataset.docked === 'true') {
+    const panel = $('#mix-connection'), rail = panel.parentElement;
+    rail.scrollTop = Math.max(rail.scrollTop, panel.offsetTop + Math.min(panel.offsetHeight, rail.clientHeight) - rail.clientHeight + 12);
+  }
+  if (open && changed) void refreshOutputs().catch(error => connectionMessage(error.message));
+}
+
+function connectionMessage(text = '') {
+  const target = $('#mix-connection-message');
+  target.replaceChildren();
+  if (!text) return;
+  const label = document.createElement('span'); label.textContent = text;
+  target.append(label, button('dismissConnection', 'Fermer le message', X, () => connectionMessage()));
+  if (host()?.signedIn) setConnectionOpen(true);
 }
 
 sideControlsQuery.addEventListener('change', layoutDeckControls);
@@ -989,8 +1044,8 @@ function bindMIDI() {
 function midiReady(port) { return port?.state === 'connected' && port.connection === 'open'; }
 
 function midiAction(label, shape) {
-  const button = $('#mix-connect');
-  button.replaceChildren(icon(shape));
+  const button = $('#mix-midi-connect');
+  button.replaceChildren(icon(shape), document.createTextNode(label));
   button.setAttribute('aria-label', label);
   button.title = [label, $('#mix-midi-status').textContent].filter(Boolean).join(' · ');
 }
@@ -1047,6 +1102,7 @@ async function bindMIDINow() {
   if (previousInput) previousInput.onmidimessage = null;
   midiInput = null;
   midiOutput = null;
+  $('#mix-midi-output').textContent = 'Non connectée';
   await closeMIDIPort(previousInput);
   await closeMIDIPort(previousOutput);
   if (epoch !== midiEpoch || !midiWanted) return;
@@ -1062,7 +1118,7 @@ async function bindMIDINow() {
       void closeMIDIPort(input);
       const reason = error.name === 'TimeoutError' ? 'le navigateur ne répond pas' : `port refusé (${error.name || 'erreur'})`;
       midiStatus(`${input.name || 'FLX4'} détecté, connexion impossible : ${reason}.`);
-      message('Réessaie avec le bouton Réinitialiser le MIDI. Si le port reste bloqué, ferme les autres onglets et logiciels utilisant le contrôleur, puis rebranche son câble USB de données.');
+      connectionMessage('Réessaie avec le bouton Réinitialiser le MIDI. Si le port reste bloqué, ferme les autres onglets et logiciels utilisant le contrôleur, puis rebranche son câble USB de données.');
       return;
     }
     if (epoch !== midiEpoch || !midiWanted) { void closeMIDIPort(input); return; }
@@ -1077,12 +1133,14 @@ async function bindMIDINow() {
         await openMIDIPort(output, epoch, 1500);
         if (epoch !== midiEpoch || !midiWanted || midiInput !== input || !midiReady(input)) { void closeMIDIPort(output); return; }
         midiOutput = output;
+        $('#mix-midi-output').textContent = output.name || 'Voyants du contrôleur';
       } catch {
         if (epoch !== midiEpoch || !midiWanted || midiInput !== input || !midiReady(input)) return;
         void closeMIDIPort(output);
         midiStatus(`${input.name || 'Entrée MIDI'} connecté · voyants indisponibles`, true);
+        $('#mix-midi-output').textContent = 'Voyants indisponibles';
       }
-    }
+    } else $('#mix-midi-output').textContent = 'Aucune sortie MIDI détectée';
     decks.forEach(sendLEDs);
     return;
   }
@@ -1100,8 +1158,11 @@ async function disconnectMIDI() {
   if (midiInput) midiInput.onmidimessage = null;
   midiInput = midiOutput = midiOpening = midiFailedInput = midi = null;
   midiAction('Connecter le FLX4', Usb);
-  $('#mix-connect').disabled = false;
+  $('#mix-midi-connect').disabled = false;
+  $('#mix-midi-output').textContent = 'Non connectée';
+  $('#mix-midi-input').replaceChildren(new Option('Détection automatique', ''));
   midiStatus('Non connecté');
+  connectionMessage();
   $('#mix-midi-help').hidden = true;
   midiClosing = Promise.all([midiClosing, ...Array.from(ports, closeMIDIPort)]);
   return midiClosing;
@@ -1112,7 +1173,7 @@ function midiDenied() {
   midiStatus('Accès MIDI refusé par le navigateur.');
   $('#mix-midi-help').hidden = false;
   $('#mix-midi-help').href = firefox ? 'https://support.mozilla.org/en-US/kb/site-permissions-panel' : 'https://support.google.com/chrome/answer/114662';
-  message(firefox
+  connectionMessage(firefox
     ? 'Dans Firefox, ouvre les permissions à gauche de l’adresse du site et retire le blocage MIDI, puis clique sur Réinitialiser le MIDI. Si Firefox propose une extension de permission de site, accepte-la. Le site ne peut pas effacer lui-même un refus enregistré dans le navigateur.'
     : 'Ouvre les paramètres du site depuis l’icône à gauche de son adresse et autorise le MIDI, puis clique sur Réinitialiser le MIDI. Le site ne peut pas effacer lui-même un refus enregistré dans le navigateur.');
 }
@@ -1131,7 +1192,7 @@ async function watchMIDIPermission(epoch) {
       } else if (!midiInput) {
         $('#mix-midi-help').hidden = true;
         midiStatus('Autorisation MIDI modifiée. Réinitialise le MIDI pour te connecter.');
-        message();
+        connectionMessage();
       }
     };
   } catch { /* Some browsers expose Web MIDI without its Permissions API descriptor. */ }
@@ -1139,11 +1200,11 @@ async function watchMIDIPermission(epoch) {
 
 async function connectMIDI(closing = midiClosing) {
   if (midiWanted) { await disconnectMIDI(); return; }
-  if (!navigator.requestMIDIAccess) { message('Web MIDI indisponible dans ce navigateur ou ce contexte. Ouvre le site HTTPS dans un navigateur compatible MIDI sur ordinateur.'); return; }
+  if (!navigator.requestMIDIAccess) { midiStatus('Web MIDI indisponible dans ce navigateur.'); connectionMessage('Ouvre le site HTTPS dans un navigateur compatible MIDI sur ordinateur.'); return; }
   const epoch = ++midiEpoch;
   midiWanted = true;
   $('#mix-midi-help').hidden = true;
-  message();
+  connectionMessage();
   midiAction('Annuler la connexion', Unplug);
   midiStatus('Autorisation MIDI en attente…');
   try {
@@ -1191,7 +1252,7 @@ async function connectMIDI(closing = midiClosing) {
     }
     const error = `Impossible d’ouvrir le port MIDI (${e.name || 'erreur'}). Le port peut être occupé ou déconnecté.`;
     midiStatus(error);
-    message(error);
+    connectionMessage(error);
   }
 }
 
@@ -1205,18 +1266,21 @@ function updateMaster() {
 }
 
 async function refreshOutputs() {
+  const epoch = mixerEpoch;
   await ensureAudio();
+  const audio = bus;
+  const devices = await navigator.mediaDevices?.enumerateDevices() || [];
+  if (epoch !== mixerEpoch || audio !== bus || !host()?.signedIn) return;
   const select = $('#mix-output');
   const value = bus.context.sinkId || '';
   select.replaceChildren(new Option('Sortie système', ''));
-  const devices = await navigator.mediaDevices?.enumerateDevices() || [];
   for (const device of devices.filter(d => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId)) {
     select.append(new Option(device.label || `Sortie audio ${select.length}`, device.deviceId));
   }
   select.value = value;
   select.disabled = typeof bus.context.setSinkId !== 'function';
-  bus.route(bus.split);
-  updateMaster();
+  bus.updateRoutingControls();
+  refreshKnobs();
   if (select.disabled) $('#mix-audio-status').textContent = 'Sélection de sortie indisponible dans ce navigateur. La sortie système est utilisée.';
 }
 
@@ -1237,8 +1301,7 @@ function reset() {
   $('#mix-overviews').replaceChildren();
   $('#mix-controls').hidePopover();
   refreshKnobs();
-  $('#mix-settings').hidden = true;
-  $('#mix-audio-settings').setAttribute('aria-expanded', 'false');
+  connectionMessage();
   $('#mix-routing').value = 'stereo';
   for (const [id, value] of [['mix-cross', '0.5'], ['mix-master', '0.7'], ['mix-head-level', '0.5'], ['mix-head-mix', '0']]) $(`#${id}`).value = value;
   browserFocus = 'tracks'; collectionCursor = '';
@@ -1259,14 +1322,29 @@ $('#library-tracks').addEventListener('keydown', e => {
   }
 });
 midiAction('Connecter le FLX4', Usb);
-$('#mix-connect').addEventListener('click', () => run(connectMIDI));
+$('#mix-connect').append(icon(Usb));
+$('#mix-connect').addEventListener('click', () => {
+  if ($('#mix-connection').dataset.docked === 'true') setConnectionOpen(!connectionOpen);
+});
+$('#mix-connection-close').append(icon(X));
+$('#mix-connection-close').addEventListener('click', () => setConnectionOpen(false));
+$('#mix-connection').addEventListener('toggle', () => {
+  const panel = $('#mix-connection');
+  if (!panel.hasAttribute('popover')) return;
+  const previouslyOpen = connectionOpen;
+  connectionOpen = panel.matches(':popover-open');
+  $('#mix-connect').setAttribute('aria-expanded', String(connectionOpen));
+  if (connectionOpen && !previouslyOpen) void refreshOutputs().catch(error => connectionMessage(error.message));
+});
+const runConnection = callback => Promise.resolve().then(callback).catch(error => connectionMessage(error.message));
+$('#mix-midi-connect').addEventListener('click', () => runConnection(connectMIDI));
 $('#mix-midi-input').addEventListener('change', () => { midiSelection = $('#mix-midi-input').value; run(bindMIDI); });
 $('#mix-midi-refresh').append(icon(RefreshCw));
 $('#mix-midi-refresh').addEventListener('click', () => {
   const closing = disconnectMIDI();
   midiBinding = Promise.resolve();
   // Request access in the click gesture, but finish closing old ports before opening new ones.
-  void connectMIDI(closing).catch(e => message(e.message));
+  void connectMIDI(closing).catch(e => connectionMessage(e.message));
 });
 $('#mix-stop').append(icon(Square));
 $('#mix-stop').addEventListener('click', pause);
@@ -1288,19 +1366,12 @@ $('#mix-timelines').addEventListener('wheel', event => {
   if (zoom.value === '1' || zoom.value === '24') waveWheelDelta = 0;
   zoom.dispatchEvent(new Event('input', { bubbles: true }));
 }, { passive: false });
-$('#mix-audio-settings').append(icon(Settings2));
-$('#mix-audio-settings').addEventListener('click', () => {
-  const settings = $('#mix-settings');
-  settings.hidden = !settings.hidden;
-  $('#mix-audio-settings').setAttribute('aria-expanded', String(!settings.hidden));
-  if (!settings.hidden) run(refreshOutputs);
-});
 $('#mix-output-refresh').append(icon(RefreshCw));
-$('#mix-output-refresh').addEventListener('click', () => run(async () => {
+$('#mix-output-refresh').addEventListener('click', () => runConnection(async () => {
   if (navigator.mediaDevices?.selectAudioOutput) await navigator.mediaDevices.selectAudioOutput();
   await refreshOutputs();
 }));
-$('#mix-output').addEventListener('change', () => run(async () => {
+$('#mix-output').addEventListener('change', () => runConnection(async () => {
   if (!bus) return;
   pause();
   try { await bus.context.setSinkId($('#mix-output').value); }
@@ -1318,7 +1389,7 @@ window.addEventListener('beforeunload', event => {
   if (decks.some(d => d.playing())) { event.preventDefault(); event.returnValue = ''; }
 });
 navigator.mediaDevices?.addEventListener('devicechange', () => {
-  if (active && bus && !$('#mix-settings').hidden) run(refreshOutputs);
+  if (active && bus && connectionOpen) runConnection(refreshOutputs);
 });
 window.Mixer = { get active() { return active; }, sync, reset, pause,
   get currentPlayback() { const d = decks[0]; return { track: d?.track, position: d?.position() || 0, playing: d?.playing() || false }; },
