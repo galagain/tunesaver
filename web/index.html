@@ -7,9 +7,9 @@
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
     <link rel="stylesheet" href="/style.css?v=20260910-7">
-    <link rel="stylesheet" href="/mixer.css?v=20260910-8">
+    <link rel="stylesheet" href="/mixer.css?v=20260910-9">
     <script src="/app.js?v=20260910-7" defer></script>
-    <script src="/mixer.js?v=20260910-8" type="module"></script>
+    <script src="/mixer.js?v=20260910-9" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -221,28 +221,30 @@
     </main>
       <section id="playback-dock" aria-label="Lecture et mix">
         <div class="dock-mode">
-          <button id="mix-connect" type="button" class="mix-icon" title="Connexion FLX4 et audio" aria-label="Connexion FLX4 et audio" aria-controls="mix-connection" aria-expanded="false" aria-describedby="mix-midi-status"></button>
-          <button id="mix-controls-toggle" class="mix-icon" type="button" popovertarget="mix-controls" title="Réglages du lecteur" aria-label="Réglages du lecteur"></button>
+          <button id="mix-connect" type="button" class="mix-icon" title="Connexion FLX4 et audio" aria-label="Connexion FLX4 et audio" aria-controls="mix-connection mix-outputs" aria-expanded="false" aria-describedby="mix-midi-status"></button>
           <button id="mixer-nav" type="button" aria-controls="mix-decks" aria-expanded="false" aria-pressed="false">Mixer</button>
         </div>
         <div id="mix-performance">
-          <section id="mix-connection" popover="auto" aria-labelledby="mix-connection-title">
-            <header class="mix-connection-heading"><h3 id="mix-connection-title">FLX4 et audio</h3><button id="mix-connection-close" type="button" class="mix-icon" title="Fermer le panneau" aria-label="Fermer le panneau FLX4"></button></header>
+          <section id="mix-connection" class="mix-io-panel" popover="auto" aria-labelledby="mix-connection-title">
+            <header class="mix-connection-heading"><h3 id="mix-connection-title">Connexion FLX4</h3><button id="mix-connection-close" type="button" class="mix-icon" title="Fermer le panneau" aria-label="Fermer le panneau FLX4"></button></header>
             <span id="mix-midi-status" role="status">Non connecté</span>
             <div class="mix-connection-actions">
               <button id="mix-midi-connect" type="button" class="mix-icon"></button>
               <button id="mix-midi-refresh" type="button" class="mix-icon" title="Réinitialiser le MIDI" aria-label="Réinitialiser le MIDI"></button>
             </div>
             <label>Entrée MIDI<select id="mix-midi-input"><option value="">Détection automatique</option></select></label>
-            <div class="mix-midi-output">Sortie MIDI<span id="mix-midi-output" role="status">Non connectée</span></div>
             <a id="mix-midi-help" href="https://support.mozilla.org/en-US/kb/site-permissions-panel" target="_blank" rel="noopener noreferrer" hidden>Autorisations MIDI</a>
+          <div id="mix-connection-message" role="status"></div>
+          <section id="mix-outputs" class="mix-io-panel" aria-labelledby="mix-outputs-title">
+            <header class="mix-connection-heading"><h3 id="mix-outputs-title">Sorties</h3><button id="mix-levels-toggle" type="button" class="mix-icon" popovertarget="mix-controls" title="Master et casque" aria-label="Niveaux Master et casque"></button></header>
           <div id="mix-settings">
             <label>Sortie audio<select id="mix-output"><option value="">Sortie système</option></select></label>
             <button id="mix-output-refresh" type="button" class="mix-icon" title="Actualiser les sorties audio" aria-label="Actualiser les sorties audio"></button>
             <label>Routage<select id="mix-routing"><option value="stereo">Master stéréo</option><option value="split" disabled>Master 1/2 + casque 3/4</option></select></label>
             <span id="mix-audio-status" role="status"></span>
           </div>
-          <div id="mix-connection-message" role="status"></div>
+            <div class="mix-midi-output">Sortie MIDI<span id="mix-midi-output" role="status">Non connectée</span></div>
+          </section>
           </section>
           <div id="mix-controls" popover>
           <div class="mix-toolbar"><button id="mix-stop" type="button" class="collection-rename" aria-label="Arrêter les deux platines" title="Arrêter les deux platines"></button></div>

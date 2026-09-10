@@ -93,12 +93,11 @@ function audioFixture() {
         expect(order.previews).toEqual(order.tracks);
         expect(order.keyboard).toEqual(order.tracks);
         const connect = await page.locator('#mix-connect').boundingBox();
-        const settings = await page.locator('#mix-controls-toggle').boundingBox();
         const overviews = await page.locator('#mix-overviews').boundingBox();
+        const upperDeck = await page.locator('.mix-deck[data-deck="0"]').boundingBox();
         expect(connect.x + connect.width).toBeLessThanOrEqual(overviews.x);
-        expect(Math.abs(connect.y + connect.height / 2 - overviews.y - overviews.height / 2)).toBeLessThan(2);
-        expect(connect.y + connect.height).toBeLessThan(settings.y);
-        expect(Math.abs(connect.x + connect.width / 2 - settings.x - settings.width / 2)).toBeLessThan(1);
+        expect(Math.abs(connect.y + connect.height / 2 - upperDeck.y - upperDeck.height / 2)).toBeLessThan(2);
+        await expect(page.locator('#mix-controls-toggle')).toHaveCount(0);
       };
       await page.evaluate(() => {
         window.__handoffEvents = [];
@@ -126,7 +125,7 @@ function audioFixture() {
         await expect(page.locator('#deck-controls-0')).toBeVisible();
         await page.locator('.mix-deck[data-deck="0"] [data-action="settings"]').click();
         await expect(page.locator('#deck-analysis-0')).toBeVisible();
-        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollHeight > panel.clientHeight)).toBe(true);
+        expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollHeight <= panel.clientHeight)).toBe(true);
         expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
         await page.locator('#deck-analysis-0 [data-action="closeAnalysis"]').click();
         await page.evaluate(() => document.querySelector('#deck-controls-0').scrollTop = 0);

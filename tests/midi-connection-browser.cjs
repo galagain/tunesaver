@@ -5,9 +5,9 @@ const { chromium, firefox, expect } = require('@playwright/test');
   const browser = await engine.launch();
   try {
     const cases = ['normal', 'output-hangs', 'input-hangs', 'pending', 'late', 'close-hangs', 'denied', 'permission-change', 'access-hangs'].map(mode => ({ mode, width: 1440 }));
-    cases.push({ mode: 'normal', width: 390 }, { mode: 'normal', width: 320 });
-    for (const { mode, width } of cases) {
-      const page = await browser.newPage({ viewport: { width, height: 1000 } });
+    cases.push({ mode: 'normal', width: 1440, height: 900 }, { mode: 'normal', width: 390 }, { mode: 'normal', width: 320 });
+    for (const { mode, width, height = 1000 } of cases) {
+      const page = await browser.newPage({ viewport: { width, height } });
       const errors = [];
       page.on('pageerror', e => errors.push(e.message));
       await page.addInitScript(mode => {
@@ -52,6 +52,10 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.evaluate(() => { session = { access_token: 'fixture', user: { email: 'fixture@example.com' } }; showApp(); });
       await page.locator('#mixer-nav').click();
       await expect(page.locator('#mix-connection')).toBeHidden();
+      const controlsGeometry = () => page.locator('.workspace, #playback-dock, .deck-controls-heading, .deck-controls-track, .mix-eq, .mix-levels, .mix-tempo, .mix-pads').evaluateAll(elements => elements.map(el => {
+        const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height];
+      }));
+      const beforeConnection = await controlsGeometry();
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-connection')).toBeVisible();
       await expect(page.locator('#mix-connect')).toHaveAttribute('aria-expanded', 'true');
@@ -61,11 +65,19 @@ const { chromium, firefox, expect } = require('@playwright/test');
         const pads = await page.locator('#deck-controls-0 .mix-pads').boundingBox();
         const panel = await page.locator('#mix-connection').boundingBox();
         expect(panel.y).toBeGreaterThan(pads.y + pads.height);
+        expect(await page.locator('#mix-outputs').evaluate(panel => panel.parentElement.id)).toBe('deck-controls-1');
+        const rightPads = await page.locator('#deck-controls-1 .mix-pads').boundingBox();
+        const outputs = await page.locator('#mix-outputs').boundingBox();
+        expect(outputs.y).toBeGreaterThan(rightPads.y + rightPads.height);
+        expect(await controlsGeometry()).toEqual(beforeConnection);
+        expect(await page.locator('.deck-controls').evaluateAll(panels => panels.map(panel => panel.scrollTop))).toEqual([0, 0]);
       }
       await expect(page.locator('#mix-output')).toBeVisible();
       await expect(page.locator('#mix-routing')).toBeVisible();
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-connection')).toBeHidden();
+      await expect(page.locator('#mix-outputs')).toBeHidden();
+      expect(await controlsGeometry()).toEqual(beforeConnection);
       await page.locator('#mix-connect').click();
       await page.locator('#mix-midi-connect').click();
       const status = page.locator('#mix-midi-status');
@@ -140,7 +152,15 @@ const { chromium, firefox, expect } = require('@playwright/test');
       expect(await page.evaluate(() => midiRequests)).toBe(requests);
       if (mode === 'normal') {
         await expect(page.locator('#mix-midi-output')).toHaveText('DDJ-FLX4');
-        await page.screenshot({ path: `/work/midi-panel-${engine.name()}-${width}.png` });
+        await page.screenshot({ path: `/work/midi-panel-${engine.name()}-${width}-${height}.png` });
+        if (width >= 1360) {
+          expect(await page.locator('#mix-connection, #mix-outputs').evaluateAll(panels => panels.every(panel => panel.scrollHeight <= panel.clientHeight + 1))).toBe(true);
+          expect(await controlsGeometry()).toEqual(beforeConnection);
+        }
+        await page.locator('#mix-levels-toggle').click();
+        await expect(page.locator('#mix-controls')).toBeVisible();
+        await page.keyboard.press('Escape');
+        await expect(page.locator('#mix-controls')).toBeHidden();
         await page.setViewportSize({ width: width === 1440 ? 1100 : 1440, height: 1000 });
         await expect(page.locator('#mix-connection')).toBeVisible();
         await expect(status).toHaveAttribute('data-connected', 'true');

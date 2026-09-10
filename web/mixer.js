@@ -942,12 +942,17 @@ function layoutDeckControls() {
 
 function layoutConnection() {
   const panel = $('#mix-connection');
+  const outputs = $('#mix-outputs');
   const docked = active && sideControlsQuery.matches;
   const parent = docked ? $('#deck-controls-0') : $('#mix-performance');
   if (panel.parentElement !== parent) {
     if (panel.hasAttribute('popover')) panel.hidePopover();
     parent.append(panel);
   }
+  const outputParent = docked ? $('#deck-controls-1') : panel;
+  if (outputs.parentElement !== outputParent) outputParent.append(outputs);
+  outputs.dataset.docked = String(docked);
+  outputs.hidden = docked && !connectionOpen;
   panel.dataset.docked = String(docked);
   if (docked) {
     $('#mix-connect').removeAttribute('popovertarget');
@@ -966,11 +971,8 @@ function layoutConnection() {
 function setConnectionOpen(open) {
   const changed = connectionOpen !== open;
   connectionOpen = open;
+  if (!open) $('#mix-controls').hidePopover();
   layoutConnection();
-  if (open && $('#mix-connection').dataset.docked === 'true') {
-    const panel = $('#mix-connection'), rail = panel.parentElement;
-    rail.scrollTop = Math.max(rail.scrollTop, panel.offsetTop + Math.min(panel.offsetHeight, rail.clientHeight) - rail.clientHeight + 12);
-  }
   if (open && changed) void refreshOutputs().catch(error => connectionMessage(error.message));
 }
 
@@ -1312,7 +1314,7 @@ function reset() {
 
 $('#mixer-nav').prepend(icon(Gauge));
 $('#mixer-nav').addEventListener('click', () => active ? close() : open());
-$('#mix-controls-toggle').append(icon(Settings2));
+$('#mix-levels-toggle').append(icon(Volume2));
 $('.library-sidebar').addEventListener('click', e => {
   if (e.target.closest('[data-collection]')) setBrowserFocus('tracks');
 });
