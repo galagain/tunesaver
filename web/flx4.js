@@ -27,7 +27,7 @@ export class FLX4Decoder {
     if (type !== 0xb0) return null;
     if (channel === 6 && key === 0x40) return { action: "browse", value: value < 64 ? value : value - 128 };
     if (channel < 2 && [0x21, 0x22, 0x23, 0x29].includes(key)) {
-      return { action: key === 0x29 ? "seek" : "jog", deck: channel, value: value - 64 };
+      return { action: key === 0x29 ? "seek" : key === 0x21 ? "jog" : "platter", deck: channel, value: value - 64 };
     }
     const base = key >= 32 ? key - 32 : key;
     const controls = channel === 6

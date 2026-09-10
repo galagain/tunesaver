@@ -398,6 +398,45 @@ function audioFixture() {
       await page.evaluate(() => Mixer.pause());
       expect(await page.evaluate(() => __cueWrites)).toBe(0);
       await page.evaluate(() => { TuneSaverMixerHost.requestJson = __cueRequest; });
+      // Exercise the real media transport through the controller's distinct jog messages.
+      for (const index of [0, 1]) {
+        await page.evaluate(i => { __contexts[0].sources[i].media.currentTime = 4; }, index);
+        await page.waitForFunction(i => !__contexts[0].sources[i].media.seeking, index);
+        const jog = async (key, value) => page.evaluate(({ i, key, value }) => {
+          const media = __contexts[0].sources[i].media, other = __contexts[0].sources[1 - i].media;
+          const before = media.currentTime, otherBefore = other.currentTime;
+          __sendMIDI([0xb0 + i, key, value]);
+          return { delta: media.currentTime - before, paused: media.paused, rate: media.playbackRate,
+            otherDelta: other.currentTime - otherBefore };
+        }, { i: index, key, value });
+        for (const key of [0x22, 0x23]) {
+          const forward = await jog(key, 74);
+          expect(forward.delta).toBeCloseTo(.2, 3);
+          expect(forward.paused).toBe(true);
+          expect(forward.otherDelta).toBe(0);
+          expect((await jog(key, 54)).delta).toBeCloseTo(-.2, 3);
+        }
+        expect((await jog(0x21, 74)).delta).toBeCloseTo(.01, 3);
+        expect((await jog(0x29, 65)).delta).toBeCloseTo(.25, 3);
+        await page.evaluate(async i => { await __contexts[0].sources[i].media.play(); }, index);
+        await page.waitForFunction(i => !__contexts[0].sources[i].media.seeking, index);
+        const forward = await jog(0x22, 84);
+        expect(forward.delta).toBeCloseTo(.4, 2);
+        expect(forward.paused).toBe(false);
+        expect((await jog(0x23, 44)).delta).toBeCloseTo(-.4, 2);
+        await page.waitForFunction(i => !__contexts[0].sources[i].media.seeking, index);
+        const nominal = await page.evaluate(i => __contexts[0].sources[i].media.playbackRate, index);
+        const rim = await jog(0x21, 74);
+        expect(Math.abs(rim.delta)).toBeLessThan(.01);
+        expect(rim.rate).toBeCloseTo(nominal + .04, 5);
+        expect(rim.paused).toBe(false);
+        expect((await jog(0x21, 54)).rate).toBeCloseTo(nominal - .04, 5);
+        await expect.poll(() => page.evaluate(i => __contexts[0].sources[i].media.playbackRate, index)).toBeCloseTo(nominal, 5);
+        await jog(0x21, 74);
+        expect((await jog(0x22, 65)).rate).toBeCloseTo(nominal, 5);
+        await page.evaluate(i => { __contexts[0].sources[i].media.pause(); __contexts[0].sources[i].media.currentTime = .01; }, index);
+        expect((await jog(0x22, 0)).delta).toBeCloseTo(-.01, 3);
+      }
       if (width < 1360) await deckControls(0);
       const comment = a.locator('[data-cue-field="comment"][data-cue-index="0"]');
       const color = a.locator('[data-cue-field="color"][data-cue-index="0"]');

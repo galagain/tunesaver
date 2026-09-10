@@ -157,6 +157,17 @@ test('jogs and browser encoders have different relative encodings', () => {
   assert.equal(d.decode([0xb6, 0x40, 1]).value, 1);
 });
 
+test('platter, rim and shifted platter stay distinct on both decks', () => {
+  const d = new FLX4Decoder();
+  for (const deck of [0, 1]) {
+    for (const [key, action] of [[0x21, 'jog'], [0x22, 'platter'], [0x23, 'platter'], [0x29, 'seek']]) {
+      for (const value of [0, 63, 64, 65, 127]) {
+        assert.deepEqual(d.decode([0xb0 + deck, key, value]), { action, deck, value: value - 64 });
+      }
+    }
+  }
+});
+
 test('hotcue pads, shift deletion, filter and unsupported messages', () => {
   const d = new FLX4Decoder();
   assert.deepEqual(d.decode([0x97, 7, 127]), { action: 'hotcue', deck: 0, pad: 7, clear: false });

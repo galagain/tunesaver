@@ -1,5 +1,5 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
-import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
+import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260910-18';
 import { Timeline, cueColors, cueTextColor, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260910-14';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-10';
 import { beatSyncRate, beatSyncCorrection } from './mix-sync.js?v=20260910-16';
@@ -825,13 +825,20 @@ class Deck {
     this.applyRate(this.syncCorrection);
   }
 
-  jog(value, search = false) {
+  jog(value, mode = 'jog') {
     if (!this.ready || !value) return;
+    clearTimeout(this.bendTimer);
     this.setBeatSync(false);
-    if (!this.playing() || search) this.seek(this.position() + value * (search ? 0.25 : 0.02));
-    else {
+    if (mode !== 'jog' || !this.playing()) {
+      const step = mode === 'seek' ? 0.25 : mode === 'platter' ? 0.02 : 0.001;
+      const position = clamp(this.position() + value * step, 0, this.wave.getDuration());
+      if (this.looping && (position < this.loopStart || position >= this.loopEnd)) {
+        this.looping = false;
+        this.update();
+      }
+      this.seek(position);
+    } else {
       this.applyRate(clamp(value * 0.004, -0.12, 0.12));
-      clearTimeout(this.bendTimer);
       this.bendTimer = setTimeout(() => this.applyRate(), 120);
     }
   }
@@ -1172,7 +1179,7 @@ function handleMIDI(event) {
   if (cmd.action === 'shift') { d.shift = cmd.value; return; }
   if (cmd.action === 'hotcue') return run(() => d.hotcue(cmd.pad, cmd.clear));
   if (cmd.action === 'tempo') return d.setTempo((cmd.raw - 8192) / 8192 * 16);
-  if (['jog', 'seek'].includes(cmd.action)) return d.jog(cmd.value, cmd.action === 'seek');
+  if (['jog', 'platter', 'seek'].includes(cmd.action)) return d.jog(cmd.value, cmd.action);
   if (['trim', 'volume', 'low', 'mid', 'high'].includes(cmd.action)) {
     let value = cmd.value;
     if (cmd.action === 'trim') value *= 2;
