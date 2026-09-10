@@ -349,10 +349,13 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mixer_assets_are_public_but_library_stays_private(self) -> None:
         async with TestClient(TestServer(webapp.create_app())) as client:
-            for path in ("/mixer.js", "/flx4.js", "/mix-sync.js", "/mixer.css", "/vendor/mixer-icons.js", "/vendor/player-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
+            for path in ("/mixer.js", "/flx4.js", "/mix-sync.js", "/mix-clock.js", "/mixer.css", "/vendor/SignalsmithStretch.mjs", "/vendor/mixer-icons.js", "/vendor/player-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
                 response = await client.get(path)
                 self.assertEqual(response.status, 200, path)
                 self.assertGreater(len(await response.read()), 100)
+                policy = response.headers["Content-Security-Policy"]
+                self.assertIn("'wasm-unsafe-eval'", policy)
+                self.assertNotIn("'unsafe-eval'", policy)
             response = await client.get("/api/library")
             self.assertEqual(response.status, 401)
             response = await client.get("/vendor/../../.env")

@@ -1,5 +1,6 @@
 const { chromium, firefox, expect } = require('@playwright/test');
 const fs = require('node:fs');
+const { observeClockMedia } = require('./clock-test-bridge.cjs');
 
 function audioFixture(bpm) {
   const rate = 22050, frames = rate * 60, buffer = Buffer.alloc(44 + frames * 2);
@@ -21,6 +22,7 @@ function audioFixture(bpm) {
     ...(isFirefox ? { firefoxUserPrefs: { 'media.autoplay.default': 0 } } : { args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] }) });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }), errors = [];
+    await observeClockMedia(page);
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
       const Original = window.AudioContext;
@@ -28,6 +30,7 @@ function audioFixture(bpm) {
       window.AudioContext = class extends Original {
         createMediaElementSource(media) { __media.push(media); return super.createMediaElementSource(media); }
       };
+      window.__observeClockMedia = player => { __media[__media.indexOf(player.native)] = player; };
       window.__port = { name: 'DDJ-FLX4', id: 'flx4', state: 'connected', type: 'input', connection: 'closed', async open() { this.connection = 'open'; }, async close() { this.connection = 'closed'; } };
       Object.defineProperty(navigator, 'requestMIDIAccess', { configurable: true, value: async () => ({ inputs: new Map([['flx4', __port]]), outputs: new Map() }) });
       window.__send = data => __port.onmidimessage?.({ data });

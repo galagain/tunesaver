@@ -3,6 +3,7 @@ import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260911-
 import { Timeline, cueColors, cueTextColor, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260910-14';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-10';
 import { beatSyncRate } from './mix-sync.js?v=20260911-1';
+import { ClockMedia, createStretch, audioDeadline } from './mix-clock.js?v=20260911-2';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
 
@@ -98,6 +99,7 @@ function cover(track) {
 class AudioBus {
   constructor() {
     this.context = new AudioContext({ latencyHint: 'interactive' });
+    this.stretches = [];
     const ctx = this.context;
     this.master = ctx.createGain();
     this.master.gain.value = 0.7;
@@ -157,6 +159,11 @@ class AudioBus {
   }
 
   set(param, value) { param.setTargetAtTime(value, this.context.currentTime, 0.015); }
+
+  stretch(index) {
+    if (!this.stretches[index]) this.stretches[index] = createStretch(this.context).catch(error => { this.stretches[index] = null; throw error; });
+    return this.stretches[index];
+  }
 }
 
 async function ensureAudio() {
@@ -458,7 +465,7 @@ class Deck {
     this.wave?.pause();
     this.wave?.destroy();
     // WaveSurfer does not reset an externally supplied media element on destroy.
-    if (media) { media.removeAttribute('src'); media.load(); }
+    if (media) media.dispose();
     this.wave = null;
     this.nodes.forEach(node => node.disconnect());
     this.nodes = [];
@@ -503,7 +510,8 @@ class Deck {
       });
       if (version !== this.version) return;
       $('.mix-deck-status', this.el).textContent = 'Préparation audio…';
-      const media = new Audio();
+      const audioBus = bus;
+      const media = new ClockMedia(audioBus.context, () => audioBus.stretch(this.index));
       media.preload = 'auto';
       media.addEventListener('durationchange', () => {
         if (version === this.version) $('[data-duration]', this.overview).textContent = time(this.wave?.getDuration() || 0);
@@ -516,7 +524,7 @@ class Deck {
         renderFunction: overviewRenderer(this.analysisData?.analysis),
       });
       const ctx = bus.context;
-      this.source = ctx.createMediaElementSource(media);
+      this.source = media.output;
       this.trim = ctx.createGain();
       this.low = new BiquadFilterNode(ctx, { type: 'lowshelf', frequency: 250 });
       this.mid = new BiquadFilterNode(ctx, { type: 'peaking', frequency: 1000, Q: 0.7 });
@@ -562,6 +570,14 @@ class Deck {
       $('.mix-deck-status', this.el).textContent = 'Prêt';
       $('[data-duration]', this.overview).textContent = time(this.wave.getDuration());
       this.update();
+      media.prepare(url, signal).then(() => {
+        if (version === this.version) this.update();
+      }).catch(error => {
+        if (version === this.version && error.name !== 'AbortError') {
+          this.update();
+          $('.mix-deck-status', this.el).textContent = 'Lecture seule · préparation du mix indisponible';
+        }
+      });
       this.analysisDelay = setTimeout(() => {
         if (version === this.version) run(() => this.fetchAnalysis());
       }, 0);
@@ -777,21 +793,44 @@ class Deck {
     this.update();
   }
 
-  matchTempo() {
+  async matchTempo() {
     const other = decks[1 - this.index];
     if (!this.ready || !other.ready) return;
+    const version = this.version, otherVersion = other.version;
+    const media = this.wave.getMediaElement(), reference = other.wave.getMediaElement();
+    if (!media.buffer || !reference.buffer) {
+      $('.mix-deck-status', this.el).textContent = 'Préparation du mix…';
+      try { await Promise.all([media.preparing, reference.preparing]); }
+      catch {
+        if (version === this.version && otherVersion === other.version) message('Préparation audio nécessaire pour un calage précis. Recharge les morceaux puis réessaie.');
+        return;
+      }
+    }
+    if (version !== this.version || otherVersion !== other.version || !media.buffer || !reference.buffer) return;
     const bpm = this.grid().bpm;
     const target = other.grid().bpm * other.rate;
     if (!(bpm >= 40 && bpm <= 300 && target > 0)) { message('Renseigne le BPM original des deux morceaux pour aligner leur tempo.'); return; }
     const rate = beatSyncRate(bpm, other.grid().bpm, other.rate);
     if (rate === null) { message('Écart de tempo supérieur à la plage de ±16 %.'); return; }
+    const at = audioDeadline(bus.context);
+    media.activate(at); reference.activate(at);
     this.setTempo((rate - 1) * 100);
-    this.seek(phaseAlignedTime(this.position(), this.grid(), other.position(), other.grid(), this.wave.getDuration()));
+    media.seekAt(phaseAlignedTime(media.positionAt(at), this.grid(media.positionAt(at)), reference.positionAt(at), other.grid(reference.positionAt(at)), this.wave.getDuration()), at);
+    this.update();
   }
 
   updateBeatSyncButton() {
-    const disabled = !this.ready || !decks[1 - this.index]?.ready;
+    const other = decks[1 - this.index];
+    const loaded = this.ready && other?.ready;
+    const prepared = this.wave?.getMediaElement().buffer && other?.wave?.getMediaElement().buffer;
+    const disabled = !loaded || !prepared;
     if (this.syncButton.disabled !== disabled) this.syncButton.disabled = disabled;
+    const failed = this.wave?.getMediaElement().preparationError || other?.wave?.getMediaElement().preparationError;
+    const label = loaded && !prepared
+      ? failed ? 'Calage indisponible : recharge les morceaux' : 'Préparation audio du mix en cours'
+      : `Caler le tempo et les temps sur ${this.index ? 'A' : 'B'}`;
+    this.syncButton.title = label;
+    this.syncButton.setAttribute('aria-label', label);
   }
 
   jog(value, mode = 'jog') {
@@ -825,6 +864,7 @@ class Deck {
   }
 
   update() {
+    this.wave?.getMediaElement().setLoop(this.looping ? this.loopStart : null, this.looping ? this.loopEnd : null);
     this.updateBeatSyncButton();
     decks.filter(deck => deck !== this).forEach(deck => deck.updateBeatSyncButton());
     this.el.dataset.ready = String(this.ready);

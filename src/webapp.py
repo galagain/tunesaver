@@ -126,7 +126,7 @@ def _security_headers(response: web.StreamResponse, request: web.Request) -> Non
         f"default-src 'self'; base-uri 'none'; connect-src {' '.join(connect_sources)}; "
         "font-src 'self'; form-action 'self'; frame-ancestors 'none'; "
         "img-src 'self' blob: https:; media-src 'self' blob:; object-src 'none'; "
-        f"script-src 'self'; style-src {style_sources}"
+        f"script-src 'self' 'wasm-unsafe-eval'; style-src {style_sources}"
     )
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = (
@@ -1359,6 +1359,8 @@ async def api_middleware(
             "/mix-waveforms.js",
             "/mix-knobs.js",
             "/mix-sync.js",
+            "/mix-clock.js",
+            "/vendor/SignalsmithStretch.mjs",
             "/mixer.css",
             "/vendor/wavesurfer/wavesurfer.esm.js",
             "/vendor/mixer-icons.js",
@@ -3462,7 +3464,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("mixer.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mix-sync.js", "mixer.css", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js", "vendor/player-icons.js"):
+    for asset in ("mixer.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mix-sync.js", "mix-clock.js", "mixer.css", "vendor/SignalsmithStretch.mjs", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js", "vendor/player-icons.js"):
         app.router.add_get(f"/{asset}", mixer_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)

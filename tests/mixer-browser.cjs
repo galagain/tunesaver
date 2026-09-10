@@ -1,5 +1,6 @@
 const { chromium, firefox, expect } = require('@playwright/test');
 const fs = require('node:fs');
+const { observeClockMedia } = require('./clock-test-bridge.cjs');
 
 function audioFixture() {
   const rate = 44100, frames = rate * 12, buffer = Buffer.alloc(44 + frames * 4);
@@ -23,6 +24,7 @@ function audioFixture() {
   try {
     for (const width of [2560, 1440, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 1000 } });
+      await observeClockMedia(page);
       page.setDefaultTimeout(15000);
       const errors = [];
       page.on('pageerror', e => { errors.push(e.message); console.error('Browser error:', e.message); });
@@ -40,6 +42,10 @@ function audioFixture() {
             if (!this.gains.length) gain.connect(this.analyser);
             this.gains.push(gain); return gain;
           }
+        };
+        window.__observeClockMedia = player => {
+          const entry = player.context.sources.find(s => s.media === player.native);
+          entry.media = player; entry.source = player.output;
         };
         window.__midi = { inputs: new Map(), outputs: new Map() };
         window.__port = { name: 'Pioneer DDJ\u2011FLX4 MIDI 1', id: 'flx4', type: 'input', state: 'connected', connection: 'closed', async open() { this.connection = 'open'; }, async close() { this.connection = 'closed'; } };
@@ -298,7 +304,7 @@ function audioFixture() {
       await a.locator('[data-action="loopOut"]').click();
       await expect(a.locator('[data-action="loop"]')).toHaveAttribute('aria-pressed', 'true');
       await page.evaluate(() => { const media = __contexts[0].sources[0].media; media.currentTime = 2.1; media.dispatchEvent(new Event('timeupdate')); });
-      await page.waitForFunction(() => __contexts[0].sources[0].media.currentTime < 1.1);
+      await expect.poll(() => page.evaluate(() => __contexts[0].sources[0].media.currentTime)).toBeCloseTo(1.1, 3);
       await a.locator('[data-action="loop"]').click();
       await page.evaluate(() => document.querySelector('#mix-controls').hidePopover());
       await expect(page.locator('#mix-connect')).toHaveAccessibleName('Connexion FLX4 et audio');
