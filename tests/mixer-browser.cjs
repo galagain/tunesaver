@@ -269,7 +269,7 @@ function audioFixture() {
       await page.keyboard.down('Shift');
       await page.mouse.wheel(0, -100);
       await page.keyboard.up('Shift');
-      await expect(page.locator('#mix-wave-zoom')).toHaveValue('5');
+      await expect(page.locator('#mix-wave-zoom')).toHaveValue('13');
       await page.waitForTimeout(100);
       const zoomed = await page.locator('.mix-timeline-lane canvas').evaluateAll(cs => cs.map(c => c.toDataURL()));
       curves.forEach((curve, i) => expect(zoomed[i]).not.toBe(curve));

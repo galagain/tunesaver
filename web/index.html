@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/style.css?v=20260910-7">
     <link rel="stylesheet" href="/mixer.css?v=20260910-11">
     <script src="/app.js?v=20260910-7" defer></script>
-    <script src="/mixer.js?v=20260910-11" type="module"></script>
+    <script src="/mixer.js?v=20260910-12" type="module"></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -254,7 +254,7 @@
             <label>Cue / Master <input id="mix-head-mix" type="range" min="0" max="1" step="0.01" value="0" data-format="percent" disabled></label>
             <div class="mix-cross-label"><label class="mix-cross-toggle">Crossfader <input id="mix-cross-enabled" type="checkbox" role="switch" aria-label="Activer le crossfader" aria-controls="mix-cross"></label><input id="mix-cross" type="range" min="0" max="1" step="0.001" value="0.5" aria-label="Crossfader A vers B" disabled><span class="mix-cross-ends"><span>A</span><span>B</span></span></div>
           </div>
-          <div class="mix-wave-toolbar"><label>Fenêtre des courbes (s)<input id="mix-wave-zoom" type="number" min="1" max="24" step="1" value="4" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
+          <div class="mix-wave-toolbar"><label>Fenêtre des courbes (s)<input id="mix-wave-zoom" type="number" min="1" max="24" step="1" value="12" aria-label="Fenêtre des formes d’onde en secondes"></label></div>
           </div>
           <div id="mix-overviews" class="mix-overviews" aria-label="Aperçus complets des morceaux"></div>
           <div id="mix-timelines" class="mix-timelines"><div id="mix-decks" class="mix-decks"></div></div>

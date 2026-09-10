@@ -51,7 +51,7 @@ let browserFocus = 'tracks';
 let collectionCursor = '';
 
 function animate() {
-  if (!document.hidden) decks.filter(d => !d.index || active).forEach(d => d.timeline.draw(clamp(Number($('#mix-wave-zoom').value) || 4, 1, 24)));
+  if (!document.hidden) decks.filter(d => !d.index || active).forEach(d => d.timeline.draw(clamp(Number($('#mix-wave-zoom').value) || Number($('#mix-wave-zoom').defaultValue), 1, 24)));
   animation = requestAnimationFrame(animate);
 }
 
@@ -1371,7 +1371,7 @@ $('#mix-timelines').addEventListener('wheel', event => {
   if (!steps) return;
   waveWheelDelta -= steps * 100;
   const zoom = $('#mix-wave-zoom');
-  zoom.value = clamp((Number(zoom.value) || 4) - steps, 1, 24);
+  zoom.value = clamp((Number(zoom.value) || Number(zoom.defaultValue)) - steps, 1, 24);
   if (zoom.value === '1' || zoom.value === '24') waveWheelDelta = 0;
   zoom.dispatchEvent(new Event('input', { bubbles: true }));
 }, { passive: false });
