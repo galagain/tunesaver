@@ -33,7 +33,13 @@ function audioFixture() {
         window.AudioContext = class extends Original {
           constructor(opts) { super(opts); this.sources = []; this.gains = []; this.analyser = this.createAnalyser(); window.__contexts.push(this); }
           createMediaElementSource(media) { const source = super.createMediaElementSource(media); this.sources.push({ media, source }); return source; }
-          createGain() { const gain = super.createGain(); if (!this.gains.length) gain.connect(this.analyser); this.gains.push(gain); return gain; }
+          createGain() {
+            const gain = super.createGain(), connect = gain.connect.bind(gain);
+            gain.targets = [];
+            gain.connect = (...args) => { gain.targets.push(args[0]); return connect(...args); };
+            if (!this.gains.length) gain.connect(this.analyser);
+            this.gains.push(gain); return gain;
+          }
         };
         window.__midi = { inputs: new Map(), outputs: new Map() };
         window.__port = { name: 'Pioneer DDJ\u2011FLX4 MIDI 1', id: 'flx4', type: 'input', state: 'connected', connection: 'closed', async open() { this.connection = 'open'; }, async close() { this.connection = 'closed'; } };
@@ -219,6 +225,25 @@ function audioFixture() {
       await assertOverviewOrder();
       await expect(page.locator('#mix-overviews > .mix-overview').first().locator('.mix-overview-label span')).toHaveText('First light');
       await expect(page.locator('#mix-overviews > .mix-overview').last().locator('.mix-overview-label span')).toContainText('Another very long track title');
+      const crossGains = () => page.evaluate(() => {
+        const { gains } = __contexts[0];
+        return gains.filter(g => g.targets.includes(gains[0])).map(g => Math.round(g.gain.value * 1000) / 1000);
+      });
+      const crossEnabled = page.locator('#mix-cross-enabled'), cross = page.locator('#mix-cross');
+      await globalControls();
+      await expect(crossEnabled).not.toBeChecked();
+      await expect(cross).toBeDisabled();
+      await expect.poll(crossGains).toEqual([1, 1]);
+      await crossEnabled.check();
+      await expect(cross).toBeEnabled();
+      await expect.poll(crossGains).toEqual([.707, .707]);
+      await cross.press('Home');
+      await expect.poll(crossGains).toEqual([1, 0]);
+      await cross.press('End');
+      await expect.poll(crossGains).toEqual([0, 1]);
+      await crossEnabled.uncheck();
+      await expect.poll(crossGains).toEqual([1, 1]);
+      await page.locator('#mix-master-close').click();
       await (await deck(0)).locator('[data-action="play"]').click();
       await (await deck(1)).locator('[data-action="play"]').click();
       await page.waitForFunction(() => __contexts[0].sources.every(s => !s.media.paused && s.media.currentTime > .4));
@@ -289,6 +314,20 @@ function audioFixture() {
       await expect(page.locator('#mix-output')).toBeVisible();
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-connection')).toBeHidden();
+      for (const value of [0, 127]) {
+        await page.evaluate(value => { __sendMIDI([0xb6, 0x1f, value]); __sendMIDI([0xb6, 0x3f, value]); }, value);
+        await expect(cross).toHaveValue(value ? '1' : '0');
+        await expect.poll(crossGains).toEqual([1, 1]);
+      }
+      await globalControls();
+      await crossEnabled.check();
+      await expect.poll(crossGains).toEqual([0, 1]);
+      await page.evaluate(() => { __sendMIDI([0xb6, 0x1f, 0]); __sendMIDI([0xb6, 0x3f, 0]); });
+      await expect.poll(crossGains).toEqual([1, 0]);
+      await crossEnabled.uncheck();
+      await expect.poll(crossGains).toEqual([1, 1]);
+      await expect(cross).toBeDisabled();
+      await page.locator('#mix-master-close').click();
       expect(await page.evaluate(() => __panelAudioEvents)).toEqual([]);
       expect(await page.evaluate(() => Mixer.currentPlayback.playing)).toBe(true);
       await page.evaluate(() => { __sendMIDI([0x90, 0x0b, 127]); __sendMIDI([0x91, 0x0b, 127]); });
@@ -371,7 +410,11 @@ function audioFixture() {
       if (Math.abs(dock.y + dock.height - 1000) > 1) throw Error('Playback dock is not fixed to viewport bottom');
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw Error('Horizontal overflow');
       await page.screenshot({ path: `/work/mixer-${isFirefox ? 'firefox-' : ''}${width}.png`, fullPage: true });
+      await globalControls();
+      await crossEnabled.check();
+      await page.locator('#mix-master-close').click();
       await page.locator('#mixer-nav').click();
+      await expect(crossEnabled).toBeChecked();
       await expect(page.locator('#mix-connect')).toBeHidden();
       await expect(b).toBeHidden(); await expect(a).toBeVisible();
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
@@ -384,6 +427,7 @@ function audioFixture() {
       await page.keyboard.press('Escape');
       await expect(page.locator('#deck-controls-0')).toBeHidden();
       await page.locator('#mixer-nav').click(); await expect(a.locator('.mix-deck-status')).toHaveText('Prêt');
+      await expect(crossEnabled).toBeChecked();
       await page.locator('[data-collection="tags:t"]').click();
       await expect(page.locator('.library-track')).toHaveCount(1);
       await expect(page.locator('.library-track')).toHaveAttribute('data-job-id', 'two');
@@ -394,6 +438,8 @@ function audioFixture() {
       await page.locator('.library-track .play-button').click();
       await expect(a.locator('.mix-deck-status')).toHaveText(/Chargement…|Préparation audio…/);
       await page.evaluate(() => showAuth());
+      await expect(crossEnabled).not.toBeChecked();
+      await expect(cross).toBeDisabled();
       await expect(page.locator('#playback-dock')).toBeHidden();
       await page.waitForFunction(() => __contexts[0].state === 'closed');
       await page.waitForTimeout(800);

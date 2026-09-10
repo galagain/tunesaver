@@ -602,7 +602,7 @@ class Deck {
     if (!this.nodes.length) return;
     for (const name of ['low', 'mid', 'high', 'trim']) bus.set(this[name].gain, Number(this.control(name).value));
     bus.set(this.fader.gain, Number(this.control('volume').value));
-    bus.set(this.cross.gain, crossfade(Number($('#mix-cross').value))[this.index]);
+    bus.set(this.cross.gain, $('#mix-cross-enabled').checked ? crossfade(Number($('#mix-cross').value))[this.index] : 1);
     bus.set(this.cueGain.gain, this.headphone && bus.split ? 1 - Number($('#mix-head-mix').value) : 0);
     const filter = Number(this.control('filter').value);
     bus.set(this.lowpass.frequency, filter < 0 ? 22000 * Math.pow(0.002, -filter) : 22000);
@@ -1258,6 +1258,7 @@ async function connectMIDI(closing = midiClosing) {
 }
 
 function updateMaster() {
+  $('#mix-cross').disabled = !$('#mix-cross-enabled').checked;
   refreshKnobs();
   if (!bus) return;
   bus.set(bus.master.gain, Number($('#mix-master').value));
@@ -1304,7 +1305,9 @@ function reset() {
   refreshKnobs();
   connectionMessage();
   $('#mix-routing').value = 'stereo';
+  $('#mix-cross-enabled').checked = false;
   for (const [id, value] of [['mix-cross', '0.5'], ['mix-master', '0.7'], ['mix-head-level', '0.5'], ['mix-head-mix', '0']]) $(`#${id}`).value = value;
+  updateMaster();
   browserFocus = 'tracks'; collectionCursor = '';
   cueMemory.clear(); message();
   initialize();
@@ -1388,6 +1391,7 @@ $('#mix-routing').addEventListener('change', () => {
   if (bus) { bus.route($('#mix-routing').value === 'split'); updateMaster(); }
 });
 for (const id of ['mix-cross', 'mix-master', 'mix-head-level', 'mix-head-mix']) $(`#${id}`).addEventListener('input', updateMaster);
+$('#mix-cross-enabled').addEventListener('change', updateMaster);
 for (const id of ['mix-master', 'mix-head-level', 'mix-head-mix']) makeKnob($(`#${id}`));
 $('#mix-cross').addEventListener('dblclick', () => { $('#mix-cross').value = '0.5'; updateMaster(); });
 window.addEventListener('pagehide', reset);
