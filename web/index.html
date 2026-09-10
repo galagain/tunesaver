@@ -6,9 +6,9 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <meta name="mixer-style-nonce" content="__MIXER_STYLE_NONCE__">
-    <link rel="stylesheet" href="/style.css?v=20260910-4">
+    <link rel="stylesheet" href="/style.css?v=20260910-7">
     <link rel="stylesheet" href="/mixer.css?v=20260910-6">
-    <script src="/app.js?v=20260910-4" defer></script>
+    <script src="/app.js?v=20260910-7" defer></script>
     <script src="/mixer.js?v=20260910-6" type="module"></script>
   </head>
   <body>
@@ -189,6 +189,7 @@
             <p id="library-count" class="library-subtitle"></p>
           </div>
           <div class="library-actions">
+            <input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons">
             <details id="collection-menu" class="workspace-menu" hidden>
               <summary aria-label="Actions de la collection" title="Actions de la collection"><span data-ui-icon="Settings2"></span></summary>
               <div id="collection-actions" class="workspace-menu-items"></div>
@@ -200,13 +201,6 @@
         <div class="library-layout">
           <div class="library-main">
             <div id="library-content">
-            <div class="library-toolbar">
-              <input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons">
-              <select id="library-sort" aria-label="Trier les morceaux">
-                <option value="number">Numéro</option><option value="title">Titre</option><option value="artist">Artiste</option><option value="bpm">BPM</option><option value="key">Clé</option>
-              </select>
-              <button id="library-sort-direction" type="button" title="Ordre décroissant" aria-label="Ordre décroissant">↑</button>
-            </div>
             <div class="library-table-head">
               <button type="button" data-track-sort="number" aria-label="Trier par numéro">#</button>
               <span></span>

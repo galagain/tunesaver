@@ -1484,8 +1484,6 @@ function changeLibrarySort(by, toggle = false) {
   librarySorts.set(libraryScope(), { by, direction: toggle && previous.by === by ? -previous.direction : 1 });
   renderLibrary();
 }
-document.querySelector('#library-sort').addEventListener('change', event => changeLibrarySort(event.target.value));
-document.querySelector('#library-sort-direction').addEventListener('click', () => changeLibrarySort(currentLibrarySort().by, true));
 document.querySelectorAll('[data-track-sort]').forEach(button => button.addEventListener('click', () => changeLibrarySort(button.dataset.trackSort, true)));
 
 async function moveLibraryTrack(id, targetId, after) {
@@ -1585,11 +1583,6 @@ function renderLibrary() {
   const tracks = sortedLibraryTracks(manualTracks)
     .filter(track => `${track.title || track.file_name || ''} ${track.artist || ''}`.toLocaleLowerCase().includes(query));
   const sort = currentLibrarySort();
-  document.querySelector('#library-sort').value = sort.by;
-  const direction = document.querySelector('#library-sort-direction');
-  direction.textContent = sort.direction === 1 ? '↑' : '↓';
-  direction.title = sort.direction === 1 ? 'Ordre décroissant' : 'Ordre croissant';
-  direction.setAttribute('aria-label', direction.title);
   document.querySelectorAll('[data-track-sort]').forEach(button => {
     button.setAttribute('aria-pressed', String(button.dataset.trackSort === sort.by));
     button.dataset.direction = button.dataset.trackSort === sort.by ? String(sort.direction) : '';
