@@ -56,11 +56,25 @@ const { chromium, firefox, expect } = require('@playwright/test');
         const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height];
       }));
       const beforeConnection = await controlsGeometry();
+      const assertComments = async visible => {
+        for (const index of [0, 1]) {
+          const comments = page.locator(`#deck-cue-details-${index} .mix-cue-comments`);
+          if (visible) {
+            await expect(comments).toBeVisible();
+            await expect(comments.locator('.mix-cue-row')).toHaveCount(8);
+            expect((await comments.boundingBox()).height).toBeLessThanOrEqual(184);
+            await expect(comments.locator('.mix-cue-row').last()).toBeInViewport();
+          } else await expect(comments).toBeHidden();
+        }
+        expect(await page.locator('.deck-controls, .mix-cue-details').evaluateAll(panels => panels.every(panel => panel.scrollHeight <= panel.clientHeight + 1))).toBe(true);
+      };
+      if (width >= 1360) await assertComments(true);
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-connection')).toBeVisible();
       await expect(page.locator('#mix-connect')).toHaveAttribute('aria-expanded', 'true');
       expect(await page.evaluate(() => midiRequests)).toBe(0);
       if (width >= 1360) {
+        await assertComments(false);
         expect(await page.locator('#mix-connection').evaluate(panel => panel.parentElement.id)).toBe('deck-cue-details-0');
         const pads = await page.locator('#deck-controls-0 .mix-pads').boundingBox();
         const panel = await page.locator('#mix-connection').boundingBox();
@@ -78,6 +92,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('#mix-connect').click();
       await expect(page.locator('#mix-connection')).toBeHidden();
       await expect(page.locator('#mix-outputs')).toBeHidden();
+      if (width >= 1360) await assertComments(true);
       expect(await controlsGeometry()).toEqual(beforeConnection);
       await page.locator('#mix-connect').click();
       await page.locator('#mix-midi-connect').click();

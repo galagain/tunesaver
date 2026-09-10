@@ -1007,6 +1007,7 @@ function layoutConnection() {
   if (outputs.parentElement !== outputParent) outputParent.append(outputs);
   outputs.dataset.docked = String(docked);
   outputs.hidden = docked && !connectionOpen;
+  $$('.mix-cue-comments').forEach(comments => { comments.hidden = docked && connectionOpen; });
   panel.dataset.docked = String(docked);
   if (docked) {
     $('#mix-connect').removeAttribute('popovertarget');
@@ -1027,12 +1028,6 @@ function setConnectionOpen(open) {
   connectionOpen = open;
   if (!open) $('#mix-controls').hidePopover();
   layoutConnection();
-  if (changed && sideControlsQuery.matches) {
-    for (const id of ['mix-connection', 'mix-outputs']) {
-      const panel = $(`#${id}`), parent = panel.closest('.mix-cue-details');
-      if (parent) parent.scrollTop = open ? parent.scrollHeight - parent.clientHeight : 0;
-    }
-  }
   if (open && changed) void refreshOutputs().catch(error => connectionMessage(error.message));
 }
 

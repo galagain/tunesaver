@@ -393,6 +393,18 @@ function audioFixture() {
       await page.waitForFunction(() => __mixSettings.one.hotcue_details[7].comment === 'Sortie');
       await page.evaluate(() => document.querySelector('#deck-cue-details-0').scrollTop = 0);
       await page.screenshot({ path: `/work/hotcue-comments-${engine.name()}-${width}.png` });
+      if (width >= 1360) {
+        await page.locator('#mix-connect').click();
+        await expect(a.locator('.mix-cue-comments')).toBeHidden();
+        await expect(b.locator('.mix-cue-comments')).toBeHidden();
+        await expect(page.locator('#mix-connection')).toBeVisible();
+        await expect(page.locator('#mix-outputs')).toBeVisible();
+        await page.locator('#mix-connect').click();
+        await expect(comment).toHaveValue('Intro <b>douce</b>');
+        await expect(color).toHaveValue('#123456');
+        await expect(a.locator('.mix-cue-comments')).toBeVisible();
+        await expect(b.locator('.mix-cue-comments')).toBeVisible();
+      }
       await page.evaluate(() => Mixer.loadTrack(libraryState.tracks[0], 1));
       await expect(b.locator('[data-cue-field="comment"][data-cue-index="0"]')).toHaveValue('Intro <b>douce</b>');
       await expect(b.locator('[data-cue-field="color"][data-cue-index="0"]')).toHaveValue('#123456');
