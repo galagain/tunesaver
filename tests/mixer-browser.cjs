@@ -124,10 +124,11 @@ function audioFixture() {
         await expect(page.locator('#deck-controls-0')).toBeHidden();
         await page.setViewportSize({ width: 1360, height: 720 });
         await expect(page.locator('#deck-controls-0')).toBeVisible();
-        await page.locator('#deck-controls-0 .mix-grid-editor summary').click();
+        await page.locator('.mix-deck[data-deck="0"] [data-action="settings"]').click();
+        await expect(page.locator('#deck-analysis-0')).toBeVisible();
         expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollHeight > panel.clientHeight)).toBe(true);
         expect(await page.locator('#deck-controls-0').evaluate(panel => panel.scrollWidth <= panel.clientWidth)).toBe(true);
-        await page.locator('#deck-controls-0 .mix-grid-editor summary').click();
+        await page.locator('#deck-analysis-0 [data-action="closeAnalysis"]').click();
         await page.evaluate(() => document.querySelector('#deck-controls-0').scrollTop = 0);
         await page.setViewportSize({ width, height: 1000 });
         await expect(page.locator('#deck-controls-0')).toBeVisible();
@@ -148,6 +149,8 @@ function audioFixture() {
       await page.locator('#action-dialog-cancel').click();
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
       await a.locator('[data-action="settings"]').click();
+      await expect(a.locator('.mix-grid-editor')).toBeVisible();
+      if (width < 1360) await a.locator('[data-action="deckCommands"]').click();
       await a.locator('[data-action="eject"]').click();
       await expect(page.locator('#action-dialog')).toBeVisible();
       await page.keyboard.press('Escape');
@@ -157,8 +160,30 @@ function audioFixture() {
       const stop = async () => { await globalControls(); await page.locator('#mix-stop').click(); await page.evaluate(() => document.querySelector('#mix-controls').hidePopover()); };
       await stop();
       await expect(page.locator('#mix-performance')).toBeVisible();
-      await deckControls(0);
-      await a.locator('.mix-grid-editor summary').click();
+      const geometry = () => page.locator('.workspace, #mix-overviews, .mix-deck').evaluateAll(elements => elements.map(el => {
+        const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height];
+      }));
+      const beforeAnalysis = await geometry();
+      await a.locator('[data-action="settings"]').click();
+      await expect(a.locator('[data-action="settings"]')).toHaveAttribute('aria-expanded', 'true');
+      await expect(a.locator('.mix-grid-tools')).toBeVisible();
+      expect(await geometry()).toEqual(beforeAnalysis);
+      const analysisBox = await a.locator('.mix-grid-editor').boundingBox();
+      const previewsBox = await page.locator('#mix-overviews').boundingBox();
+      expect(analysisBox.x).toBeGreaterThanOrEqual(0);
+      expect(analysisBox.x + analysisBox.width).toBeLessThanOrEqual(width);
+      expect(analysisBox.y).toBeGreaterThanOrEqual(0);
+      expect(analysisBox.y + analysisBox.height).toBeLessThan(previewsBox.y);
+      if (width >= 700) expect(Math.abs(analysisBox.x + analysisBox.width / 2 - previewsBox.x - previewsBox.width / 2)).toBeLessThan(1);
+      await page.locator('.mix-deck[data-deck="1"] [data-action="settings"]').click();
+      await expect(a.locator('.mix-grid-editor')).toBeHidden();
+      await expect(page.locator('#deck-analysis-1')).toBeVisible();
+      await expect(page.locator('#deck-analysis-1 [data-control="bpm"]')).toBeDisabled();
+      await expect(page.locator('#deck-analysis-1 [data-action="closeAnalysis"]')).toBeEnabled();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#deck-analysis-1')).toBeHidden();
+      await expect(a.locator('[data-action="settings"]')).toHaveAttribute('aria-expanded', 'false');
+      await a.locator('[data-action="settings"]').click();
       const tempoMode = a.locator('[data-control="tempoMode"]');
       await expect(tempoMode).toHaveValue('fixed');
       for (const position of [.2, .8, 2.4]) {
@@ -186,7 +211,7 @@ function audioFixture() {
       await page.screenshot({ path: `/work/tempo-mode-${engine.name()}-${width}.png` });
       await a.locator('[data-control="bpm"]').fill('120'); await a.locator('[data-control="bpm"]').press('Tab');
       await expect(a.locator('.mix-current-bpm')).toHaveText('120.00');
-      await a.locator('.mix-grid-editor summary').click();
+      await a.locator('[data-action="closeAnalysis"]').click();
       await page.evaluate(() => document.querySelector('#deck-controls-0').hidePopover());
       await page.locator('.library-track[data-job-id="two"] .track-menu > summary').click();
       await page.locator('.library-track[data-job-id="two"] button[title="Charger sur B"]').click();
@@ -278,16 +303,28 @@ function audioFixture() {
       await a.locator('[data-clear-pad="0"]').click();
       await expect(page.locator('.mix-overview[data-deck="0"] .mix-cue-marker')).toHaveCount(0);
       const knob = a.locator('[data-control="low"]').locator('..');
+      for (const name of ['low', 'mid', 'high', 'filter', 'tempo']) {
+        const angles = await a.locator(`[data-control="${name}"]`).evaluate(input => {
+          const original = input.value;
+          const angles = [input.min, 0, input.max].map(value => {
+            input.value = value; input.dispatchEvent(new Event('input', { bubbles: true }));
+            return input.parentElement.style.getPropertyValue('--angle');
+          });
+          input.value = original; input.dispatchEvent(new Event('input', { bubbles: true }));
+          return angles;
+        });
+        expect(angles).toEqual(['-135deg', '0deg', '135deg']);
+      }
       const bounds = await knob.boundingBox();
       await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 10); await page.mouse.down(); await page.mouse.move(bounds.x + bounds.width / 2, bounds.y - 30); await page.mouse.up();
       if (Number(await a.locator('[data-control="low"]').inputValue()) <= 0) throw Error('Rotary drag failed');
       await a.locator('[data-control="low"]').focus(); await page.keyboard.press('ArrowDown');
-      await a.locator('.mix-grid-editor summary').click();
+      await a.locator('[data-action="settings"]').click();
       await a.locator('[data-control="bpm"]').fill('125'); await a.locator('[data-control="bpm"]').press('Tab');
       await page.waitForFunction(() => __mixSettings.one.bpm === 125);
       await a.locator('[data-action="gridForward"]').click();
       await page.waitForFunction(() => __mixSettings.one.grid_offset === .01);
-      await a.locator('.mix-grid-editor summary').click();
+      await a.locator('[data-action="closeAnalysis"]').click();
       await a.locator('[data-action="play"]').click();
       await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await page.evaluate(() => { __port.state = 'disconnected'; __midi.onstatechange({ port: __port }); });
@@ -317,6 +354,14 @@ function audioFixture() {
       await expect(page.locator('#mix-connect')).toBeHidden();
       await expect(b).toBeHidden(); await expect(a).toBeVisible();
       await expect(a.locator('.mix-track-info strong')).toHaveText('First light');
+      await a.locator('[data-action="settings"]').click();
+      await expect(a.locator('.mix-grid-tools')).toBeVisible();
+      await expect(a.locator('[data-action="deckCommands"]')).toBeVisible();
+      await a.locator('[data-action="deckCommands"]').click();
+      await expect(a.locator('.mix-grid-editor')).toBeHidden();
+      await expect(page.locator('#deck-controls-0')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#deck-controls-0')).toBeHidden();
       await page.locator('#mixer-nav').click(); await expect(a.locator('.mix-deck-status')).toHaveText('Prêt');
       await page.locator('[data-collection="tags:t"]').click();
       await expect(page.locator('.library-track')).toHaveCount(1);

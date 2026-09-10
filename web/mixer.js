@@ -1,7 +1,7 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
 import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260909-28';
-import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260908-8';
+import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-6';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
 
@@ -218,7 +218,7 @@ class Deck {
       <div class="mix-eq"></div><div class="mix-levels"></div>
       <div class="mix-tempo"><label>Tempo <output class="mix-value">+0.00 %</output><input data-control="tempo" type="range" min="-16" max="16" step="0.01" value="0" aria-label="Tempo ${this.letter}"></label><label>BPM<input data-control="bpm" type="number" min="40" max="300" step="0.001" placeholder="BPM" aria-label="BPM original ${this.letter}"></label></div>
       <div class="mix-options"><label><input data-control="keylock" type="checkbox" checked> Master tempo</label><label><input data-control="quantize" type="checkbox" checked> Quantize</label><span class="mix-key"></span></div>
-      <details class="mix-grid-editor"><summary>Grille et analyse</summary><div class="mix-analysis-info"></div><div class="mix-grid-tools"><label>Premier temps (s)<input data-control="grid" type="number" min="0" step="0.001" value="0"></label><label>Clé<select data-control="key"><option value="">Automatique</option></select></label></div></details>
+      <div class="mix-grid-editor" popover="auto" role="dialog" id="deck-analysis-${index}" aria-labelledby="deck-analysis-title-${index}"><header class="mix-grid-heading"><span class="mix-deck-letter">${this.letter}</span><strong id="deck-analysis-title-${index}">Grille et analyse</strong></header><div class="mix-grid-track"></div><div class="mix-grid-tools"><label>Premier temps (s)<input data-control="grid" type="number" min="0" step="0.001" value="0"></label><label>Clé<select data-control="key"><option value="">Automatique</option></select></label></div><div class="mix-analysis-info" role="status"></div></div>
       <div class="mix-pads" aria-label="Hot cues ${this.letter}"></div>`;
     $('#mix-decks').append(this.el);
     this.buttons = {};
@@ -289,6 +289,14 @@ class Deck {
       el.addEventListener('click', () => run(() => saveSettings(this.track.job_id, { bpm: this.grid().bpm * factor })));
       tools.append(el);
     }
+    const bpmTools = document.createElement('div'); bpmTools.className = 'mix-grid-adjust';
+    bpmTools.append(this.control('bpm').parentElement, ...$$('[data-fixed-tempo]', tools));
+    const offsetTools = document.createElement('div'); offsetTools.className = 'mix-grid-adjust';
+    offsetTools.append(this.control('grid').parentElement, ...$$('[data-action="anchor"], [data-action="gridBack"], [data-action="gridForward"]', tools));
+    const analyze = $('[data-action="analyze"]', tools);
+    analyze.classList.add('mix-analyze-button');
+    analyze.append(document.createTextNode('Relancer l’analyse'));
+    tools.append(bpmTools, offsetTools, analyze);
     for (let i = 0; i < 8; i++) {
       const pad = document.createElement('button');
       pad.type = 'button';
@@ -358,13 +366,16 @@ class Deck {
     panelHeading.append(panelTitle, side);
     this.controlsTitle = document.createElement('div'); this.controlsTitle.className = 'deck-controls-track';
     panel.append(panelHeading, this.controlsTitle);
-    const settings = button('settings', `Réglages de la platine ${this.letter}`, Settings2, () => {
-      if (panel.dataset.docked === 'true') {
-        panel.scrollTop = 0;
-        this.control('tempo').focus({ preventScroll: true });
-      }
-    });
-    settings.setAttribute('popovertarget', panel.id);
+    const analysis = $('.mix-grid-editor', this.el);
+    const settings = button('settings', `Grille et analyse (${this.letter})`, Settings2, () => {});
+    settings.setAttribute('popovertarget', analysis.id);
+    settings.setAttribute('aria-controls', analysis.id);
+    settings.setAttribute('aria-expanded', 'false');
+    analysis.addEventListener('toggle', () => settings.setAttribute('aria-expanded', String(analysis.matches(':popover-open'))));
+    const commands = button('deckCommands', `Commandes de la platine ${this.letter}`, Gauge, () => analysis.hidePopover());
+    commands.setAttribute('popovertarget', panel.id);
+    const dismiss = button('closeAnalysis', 'Fermer les réglages', X, () => analysis.hidePopover());
+    $('.mix-grid-heading', analysis).append(commands, dismiss);
     const mute = button('mute', `Couper le son (${this.letter})`, Volume2, () => {
       const media = this.wave?.getMediaElement();
       if (media) { media.muted = !media.muted; this.update(); }
@@ -377,10 +388,10 @@ class Deck {
     const eject = $('[data-action="eject"]', this.el);
     panelHeading.append(eject);
     const status = $('.mix-deck-status', this.el);
-    for (const child of Array.from(this.el.children)) if (![heading, overview, status].includes(child)) panel.append(child);
+    for (const child of Array.from(this.el.children)) if (![heading, overview, status, analysis].includes(child)) panel.append(child);
     const lane = this.timeline.lane;
     lane.append(status);
-    this.el.append(heading, transport, lane, tools, panel);
+    this.el.append(heading, transport, lane, tools, panel, analysis);
     $('#mix-overviews').append(overview);
   }
 
@@ -705,6 +716,9 @@ class Deck {
     this.controlsTitle.textContent = this.track
       ? [this.track.title || this.track.file_name, this.track.artist].filter(Boolean).join(' · ') : 'Aucun morceau';
     this.controlsTitle.title = this.controlsTitle.textContent;
+    const analysisTitle = $('.mix-grid-track', this.el);
+    analysisTitle.textContent = this.controlsTitle.textContent;
+    analysisTitle.title = this.controlsTitle.textContent;
     this.updateTempoLabel();
     for (const el of Object.values(this.buttons)) el.disabled = !this.ready;
     this.buttons.headphone.disabled = !this.ready || !bus?.split;
@@ -723,7 +737,7 @@ class Deck {
     });
     this.renderMarkers();
     this.control('bpm').disabled = !this.track;
-    $$('.mix-grid-editor input, .mix-grid-editor select, .mix-grid-editor button', this.el).forEach(el => { el.disabled = !this.track; });
+    $$('.mix-grid-tools input, .mix-grid-tools select, .mix-grid-tools button', this.el).forEach(el => { el.disabled = !this.track; });
     if (this.analysisData?.settings?.tempo_mode === 'variable') {
       $$('[data-control="bpm"], [data-control="grid"], [data-action="anchor"], [data-action="gridBack"], [data-action="gridForward"], [data-fixed-tempo]', this.el).forEach(el => { el.disabled = true; });
     }
@@ -895,7 +909,7 @@ function close() {
   layoutOverviews();
   $('#mixer-nav').setAttribute('aria-expanded', 'false');
   updateBrowserFocus();
-  $$('.deck-controls').forEach(panel => panel.hidePopover());
+  $$('.deck-controls, .mix-grid-editor').forEach(panel => panel.hidePopover());
   layoutDeckControls();
 }
 
@@ -904,17 +918,13 @@ function layoutDeckControls() {
   document.body.toggleAttribute('data-side-controls', docked);
   decks.forEach(deck => {
     const panel = $(`#deck-controls-${deck.index}`);
-    const settings = $('[data-action="settings"]', deck.el);
     const mode = docked ? 'manual' : 'auto';
     if (panel.getAttribute('popover') !== mode) {
       panel.hidePopover();
       panel.setAttribute('popover', mode);
     }
     panel.dataset.docked = String(docked);
-    if (docked) {
-      settings.removeAttribute('popovertarget');
-      panel.showPopover();
-    } else settings.setAttribute('popovertarget', panel.id);
+    if (docked) panel.showPopover();
   });
 }
 

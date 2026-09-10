@@ -4,7 +4,11 @@ export function refreshKnobs() {
   for (const [input, knob] of knobs) {
     if (!input.isConnected) { knobs.delete(input); continue; }
     const min = Number(input.min), max = Number(input.max), value = Number(input.value);
-    knob.style.setProperty('--angle', `${-135 + (value - min) / (max - min) * 270}deg`);
+    // Signed controls have a neutral centre, even with asymmetric EQ ranges.
+    const angle = min < 0 && max > 0
+      ? 135 * value / (value < 0 ? -min : max)
+      : -135 + (value - min) / (max - min) * 270;
+    knob.style.setProperty('--angle', `${angle}deg`);
     knob.dataset.disabled = String(input.disabled);
     knob.querySelector('output').textContent = input.dataset.control === 'tempo' ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : value.toFixed(max <= 2 ? 2 : 1);
   }
