@@ -20,6 +20,7 @@ export class FLX4Decoder {
       }
       if (channel > 1) return null;
       if (key === 0x3f) return { action: "shift", deck: channel, value: pressed };
+      if ([0x36, 0x67].includes(key)) return { action: "jogTouch", deck: channel, value: pressed };
       if (!pressed) return null;
       const action = { 11: "play", 12: "cue", 72: "start", 84: "headphone", 16: "loopIn", 17: "loopOut", 77: "loop", 88: "matchTempo" }[key];
       return action ? { action, deck: channel } : null;

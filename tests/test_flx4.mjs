@@ -157,6 +157,17 @@ test('jogs and browser encoders have different relative encodings', () => {
   assert.equal(d.decode([0xb6, 0x40, 1]).value, 1);
 });
 
+test('jog touch reports both press and release, including Shift and Note Off', () => {
+  const d = new FLX4Decoder();
+  for (const deck of [0, 1]) {
+    for (const key of [0x36, 0x67]) {
+      assert.deepEqual(d.decode([0x90 + deck, key, 127]), { action: 'jogTouch', deck, value: true });
+      assert.deepEqual(d.decode([0x90 + deck, key, 0]), { action: 'jogTouch', deck, value: false });
+      assert.deepEqual(d.decode([0x80 + deck, key, 127]), { action: 'jogTouch', deck, value: false });
+    }
+  }
+});
+
 test('platter, rim and shifted platter stay distinct on both decks', () => {
   const d = new FLX4Decoder();
   for (const deck of [0, 1]) {

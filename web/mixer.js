@@ -1,8 +1,8 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
-import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260910-18';
+import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260911-1';
 import { Timeline, cueColors, cueTextColor, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260910-14';
 import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-10';
-import { beatSyncRate, beatSyncCorrection } from './mix-sync.js?v=20260910-16';
+import { beatSyncRate } from './mix-sync.js?v=20260911-1';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
 
@@ -47,7 +47,6 @@ const saves = new Map();
 let mixerEpoch = 0;
 let animation = null;
 let analysisTimer = null;
-let beatSyncTimer = null;
 const sideControlsQuery = matchMedia('(min-width: 1360px)');
 let browserFocus = 'tracks';
 let collectionCursor = '';
@@ -203,9 +202,8 @@ class Deck {
     this.nodes = [];
     this.abort = null;
     this.rate = 1;
-    this.syncEnabled = false;
-    this.syncCorrection = 0;
-    this.syncLastTime = null;
+    this.jogHeld = false;
+    this.jogResume = false;
     this.bendTimer = null;
     this.shift = false;
     this.cue = 0;
@@ -270,8 +268,7 @@ class Deck {
     this.control('tempo').addEventListener('input', () => this.setTempo(Number(this.control('tempo').value)));
     this.control('tempo').addEventListener('dblclick', () => this.setTempo(0));
     this.control('keylock').addEventListener('change', () => this.applyRate());
-    this.syncButton = button('matchTempo', `Activer Beat Sync sur ${index ? 'A' : 'B'}`, Gauge, () => this.matchTempo());
-    this.syncButton.setAttribute('aria-pressed', 'false');
+    this.syncButton = button('matchTempo', `Caler le tempo et les temps sur ${index ? 'A' : 'B'}`, Gauge, () => this.matchTempo());
     $('.mix-tempo', this.el).append(this.syncButton);
     this.control('bpm').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { bpm: Number(this.control('bpm').value) || null })));
     this.control('grid').addEventListener('change', () => run(() => saveSettings(this.track.job_id, { grid_offset: Number(this.control('grid').value) })));
@@ -452,8 +449,7 @@ class Deck {
   playing() { return this.wave?.isPlaying() || false; }
 
   clearAudio() {
-    decks.forEach(deck => deck.setBeatSync(false));
-    this.setBeatSync(false);
+    this.jogHeld = this.jogResume = false;
     this.version++;
     this.abort?.abort();
     clearTimeout(this.bendTimer);
@@ -658,7 +654,7 @@ class Deck {
   }
 
   setTempo(percent) {
-    this.setBeatSync(false);
+    clearTimeout(this.bendTimer);
     this.rate = 1 + clamp(percent, -16, 16) / 100;
     this.control('tempo').value = ((this.rate - 1) * 100).toFixed(2);
     this.updateTempoLabel();
@@ -682,16 +678,42 @@ class Deck {
 
   async toggle() {
     if (!this.ready) return;
-    if (this.playing()) this.wave.pause();
-    else {
-      await ensureAudio();
-      if (!this.ready) return;
-      const other = decks[1 - this.index];
-      if (this.syncEnabled && other?.ready && other.playing()) {
-        this.followBeatSync();
-        this.seek(phaseAlignedTime(this.position(), this.grid(), other.position(), other.grid(), this.wave.getDuration()));
-      }
-      await this.wave.play();
+    if (this.playing() || this.jogResume) this.pause();
+    else await this.play();
+  }
+
+  async play() {
+    if (!this.ready) return;
+    if (this.jogHeld) { this.jogResume = true; return; }
+    const version = this.version;
+    try {
+      const playback = this.wave.play();
+      if (bus.context.state !== 'running') await Promise.all([playback, ensureAudio()]);
+      else await playback;
+    } catch (error) {
+      if (version === this.version && error.name !== 'AbortError') throw error;
+    }
+  }
+
+  pause() {
+    this.jogResume = false;
+    clearTimeout(this.bendTimer);
+    this.applyRate();
+    this.wave?.pause();
+  }
+
+  async jogTouch(pressed) {
+    if (!this.ready || this.jogHeld === pressed) return;
+    this.jogHeld = pressed;
+    clearTimeout(this.bendTimer);
+    this.applyRate();
+    if (pressed) {
+      this.jogResume = this.playing();
+      this.wave.pause();
+    } else {
+      const resume = this.jogResume;
+      this.jogResume = false;
+      if (resume) await this.play();
     }
   }
 
@@ -699,7 +721,7 @@ class Deck {
 
   cueAction() {
     if (!this.ready) return;
-    if (this.playing()) { this.wave.pause(); this.seek(this.cue); }
+    if (this.playing() || this.jogResume) { this.pause(); this.seek(this.cue); }
     else if (this.shift) this.seek(this.cue);
     else { this.cue = this.quantize(this.position()); this.remember({ cue: this.cue }); }
     this.update();
@@ -722,17 +744,12 @@ class Deck {
   async hotcue(pad, clear = false) {
     if (!this.ready) return;
     if (!clear && this.hotcues[pad] !== null) {
-      const position = this.hotcues[pad], version = this.version;
+      const position = this.hotcues[pad];
       if (this.looping && (position < this.loopStart || position >= this.loopEnd)) this.looping = false;
       this.seek(position);
-      try {
-        const playback = this.wave.play();
-        this.update();
-        if (bus.context.state !== 'running') await Promise.all([playback, ensureAudio()]);
-        else await playback;
-      } catch (error) {
-        if (version === this.version && error.name !== 'AbortError') throw error;
-      }
+      const playback = this.play();
+      this.update();
+      await playback;
       return;
     }
     if (clear) { this.hotcues[pad] = null; this.hotcueDetails[pad] = {}; }
@@ -761,7 +778,6 @@ class Deck {
   }
 
   matchTempo() {
-    if (this.syncEnabled) { this.setBeatSync(false); return; }
     const other = decks[1 - this.index];
     if (!this.ready || !other.ready) return;
     const bpm = this.grid().bpm;
@@ -769,67 +785,20 @@ class Deck {
     if (!(bpm >= 40 && bpm <= 300 && target > 0)) { message('Renseigne le BPM original des deux morceaux pour aligner leur tempo.'); return; }
     const rate = beatSyncRate(bpm, other.grid().bpm, other.rate);
     if (rate === null) { message('Écart de tempo supérieur à la plage de ±16 %.'); return; }
-    other.setBeatSync(false);
-    clearTimeout(this.bendTimer);
     this.setTempo((rate - 1) * 100);
-    this.setBeatSync(true);
     this.seek(phaseAlignedTime(this.position(), this.grid(), other.position(), other.grid(), this.wave.getDuration()));
   }
 
-  setBeatSync(enabled) {
-    this.syncEnabled = enabled;
-    this.syncCorrection = 0;
-    this.syncLastTime = null;
-    if (!enabled) this.applyRate();
-    this.updateBeatSyncButton();
-  }
-
   updateBeatSyncButton() {
-    const label = this.syncEnabled ? `Désactiver Beat Sync (suivi de ${this.index ? 'A' : 'B'})` : `Activer Beat Sync sur ${this.index ? 'A' : 'B'}`;
-    if (this.syncButton.title !== label) {
-      this.syncButton.title = label;
-      this.syncButton.setAttribute('aria-label', label);
-    }
-    if (this.syncButton.getAttribute('aria-pressed') !== String(this.syncEnabled)) this.syncButton.setAttribute('aria-pressed', String(this.syncEnabled));
     const disabled = !this.ready || !decks[1 - this.index]?.ready;
     if (this.syncButton.disabled !== disabled) this.syncButton.disabled = disabled;
-  }
-
-  followBeatSync() {
-    this.updateBeatSyncButton();
-    if (!this.syncEnabled) return;
-    const other = decks[1 - this.index];
-    if (!this.ready || !other?.ready) { this.setBeatSync(false); return; }
-    const own = this.grid(), master = other.grid();
-    const rate = beatSyncRate(own.bpm, master.bpm, other.rate);
-    if (rate === null) {
-      this.setBeatSync(false);
-      message('Beat Sync désactivé : vérifie les BPM et la plage de tempo de ±16 %.');
-      return;
-    }
-    if (Math.abs(this.rate - rate) > 1e-9) {
-      this.rate = rate;
-      this.control('tempo').value = ((rate - 1) * 100).toFixed(2);
-      this.updateTempoLabel();
-    }
-    const media = this.wave.getMediaElement(), otherMedia = other.wave.getMediaElement();
-    const now = bus.context.currentTime, elapsed = this.syncLastTime === null ? .05 : now - this.syncLastTime;
-    this.syncLastTime = now;
-    if (!this.playing() || !other.playing() || media.seeking || otherMedia.seeking || media.readyState < 3 || otherMedia.readyState < 3 || bus.context.state !== 'running') {
-      this.syncCorrection = 0;
-      this.applyRate();
-      return;
-    }
-    if (elapsed <= 0) return;
-    this.syncCorrection = beatSyncCorrection({ ...own, position: this.position(), rate }, { ...master, position: other.position() }, this.syncCorrection, elapsed);
-    this.applyRate(this.syncCorrection);
   }
 
   jog(value, mode = 'jog') {
     if (!this.ready || !value) return;
     clearTimeout(this.bendTimer);
-    this.setBeatSync(false);
     if (mode !== 'jog' || !this.playing()) {
+      this.applyRate();
       const step = mode === 'seek' ? 0.25 : mode === 'platter' ? 0.02 : 0.001;
       const position = clamp(this.position() + value * step, 0, this.wave.getDuration());
       if (this.looping && (position < this.loopStart || position >= this.loopEnd)) {
@@ -857,6 +826,7 @@ class Deck {
 
   update() {
     this.updateBeatSyncButton();
+    decks.filter(deck => deck !== this).forEach(deck => deck.updateBeatSyncButton());
     this.el.dataset.ready = String(this.ready);
     this.controlsTitle.textContent = this.track
       ? [this.track.title || this.track.file_name, this.track.artist].filter(Boolean).join(' · ') : 'Aucun morceau';
@@ -1034,8 +1004,6 @@ function initialize() {
   animate();
   clearInterval(analysisTimer);
   analysisTimer = setInterval(() => decks.filter(d => d.ready && d.track && !['done', 'failed'].includes(d.analysisData?.status)).forEach(d => run(() => d.fetchAnalysis())), 4000);
-  clearInterval(beatSyncTimer);
-  beatSyncTimer = setInterval(() => decks.forEach(deck => deck.followBeatSync()), 50);
 }
 
 function layoutOverviews() {
@@ -1062,6 +1030,7 @@ function open() {
 }
 
 function close() {
+  releaseJogs();
   setConnectionOpen(false);
   active = false;
   $('#mix-controls').hidePopover();
@@ -1141,7 +1110,11 @@ function connectionMessage(text = '') {
 
 sideControlsQuery.addEventListener('change', layoutDeckControls);
 
-function pause() { decks.forEach(d => d.wave?.pause()); }
+function pause() { decks.forEach(d => d.pause()); }
+
+function releaseJogs() {
+  decks.forEach(deck => { void deck.jogTouch(false).catch(error => message(error.message)); });
+}
 
 function sendLEDs(deck) {
   if (!midiOutput || midiOutput.state !== 'connected') return;
@@ -1177,6 +1150,7 @@ function handleMIDI(event) {
   }
   if (!d) return;
   if (cmd.action === 'shift') { d.shift = cmd.value; return; }
+  if (cmd.action === 'jogTouch') { void d.jogTouch(cmd.value).catch(error => message(error.message)); return; }
   if (cmd.action === 'hotcue') return run(() => d.hotcue(cmd.pad, cmd.clear));
   if (cmd.action === 'tempo') return d.setTempo((cmd.raw - 8192) / 8192 * 16);
   if (['jog', 'platter', 'seek'].includes(cmd.action)) return d.jog(cmd.value, cmd.action);
@@ -1254,6 +1228,7 @@ async function bindMIDINow() {
   if (input && midiInput === input && midiReady(input)) return;
   midiFailedInput = null;
   const previousInput = midiInput;
+  if (previousInput) releaseJogs();
   const previousOutput = midiOutput;
   if (previousInput) previousInput.onmidimessage = null;
   midiInput = null;
@@ -1305,6 +1280,7 @@ async function bindMIDINow() {
 }
 
 async function disconnectMIDI() {
+  releaseJogs();
   midiWanted = false; midiEpoch++;
   clearInterval(midiTimer);
   if (midi) midi.onstatechange = null;
@@ -1376,12 +1352,14 @@ async function connectMIDI(closing = midiClosing) {
       const previousState = hardwareStates.get(event.port.id);
       hardwareStates.set(event.port.id, event.port.state);
       if (event.port.state === 'disconnected' && event.port === midiInput) {
+        releaseJogs();
         midiInput.onmidimessage = null;
         midiInput = null;
         midiStatus('FLX4 débranché.');
         run(bindMIDI);
       }
       if (event.port === midiInput && !midiReady(event.port)) {
+        releaseJogs();
         midiInput.onmidimessage = null;
         midiFailedInput = midiInput;
         midiInput = null;
@@ -1444,10 +1422,10 @@ async function refreshOutputs() {
 function reset() {
   mixerEpoch++;
   saves.clear();
+  pause();
   close();
   cancelAnimationFrame(animation);
   clearInterval(analysisTimer);
-  clearInterval(beatSyncTimer);
   decks.forEach(d => d.eject(true));
   decks.forEach(d => d.timeline.destroy());
   run(disconnectMIDI);

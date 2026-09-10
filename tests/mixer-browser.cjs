@@ -395,6 +395,14 @@ function audioFixture() {
       await page.waitForFunction(() => __contexts[0].state === 'running');
       await page.evaluate(() => Mixer.pause());
       await assertCueStarted(() => page.locator('.mix-overview[data-deck="0"] .mix-cue-marker').click());
+      await page.evaluate(() => {
+        __sendMIDI([0x90, 0x36, 127]);
+        __sendMIDI([0x97, 0, 127]);
+      });
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'false');
+      expect(await page.evaluate(() => __contexts[0].sources[0].media.currentTime)).toBeCloseTo(await page.evaluate(() => __mixSettings.one.hotcues[0]), 3);
+      await page.evaluate(() => __sendMIDI([0x90, 0x36, 0]));
+      await expect(a.locator('[data-action="play"]')).toHaveAttribute('aria-pressed', 'true');
       await page.evaluate(() => Mixer.pause());
       expect(await page.evaluate(() => __cueWrites)).toBe(0);
       await page.evaluate(() => { TuneSaverMixerHost.requestJson = __cueRequest; });
@@ -434,6 +442,33 @@ function audioFixture() {
         await expect.poll(() => page.evaluate(i => __contexts[0].sources[i].media.playbackRate, index)).toBeCloseTo(nominal, 5);
         await jog(0x21, 74);
         expect((await jog(0x22, 65)).rate).toBeCloseTo(nominal, 5);
+        for (const key of [0x36, 0x67]) {
+          expect(await page.evaluate(({ i, key }) => {
+            __sendMIDI([0x90 + i, key, 127]);
+            return __contexts[0].sources[i].media.paused;
+          }, { i: index, key })).toBe(true);
+          await page.waitForFunction(i => !__contexts[0].sources[i].media.seeking, index);
+          const heldAt = await page.evaluate(i => __contexts[0].sources[i].media.currentTime, index);
+          await page.waitForTimeout(180);
+          expect(await page.evaluate(i => __contexts[0].sources[i].media.currentTime, index)).toBeCloseTo(heldAt, 3);
+          await page.evaluate(({ i, key }) => __sendMIDI([0x90 + i, key, 127]), { i: index, key });
+          expect((await jog(0x22, 74)).paused).toBe(true);
+          await page.evaluate(({ i, key }) => __sendMIDI([0x80 + i, key, 127]), { i: index, key });
+          await page.waitForFunction(i => !__contexts[0].sources[i].media.paused, index);
+          expect((await jog(0x21, 74)).rate).toBeCloseTo(nominal + .04, 5);
+        }
+        await page.evaluate(i => {
+          __sendMIDI([0x90 + i, 0x36, 127]);
+          Mixer.pause();
+          __sendMIDI([0x90 + i, 0x36, 0]);
+        }, index);
+        await page.waitForTimeout(150);
+        expect(await page.evaluate(i => __contexts[0].sources[i].media.paused, index)).toBe(true);
+        await page.evaluate(i => {
+          __sendMIDI([0x90 + i, 0x36, 127]);
+          __sendMIDI([0x90 + i, 0x36, 0]);
+        }, index);
+        expect(await page.evaluate(i => __contexts[0].sources[i].media.paused, index)).toBe(true);
         await page.evaluate(i => { __contexts[0].sources[i].media.pause(); __contexts[0].sources[i].media.currentTime = .01; }, index);
         expect((await jog(0x22, 0)).delta).toBeCloseTo(-.01, 3);
       }

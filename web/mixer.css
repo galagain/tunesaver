@@ -154,7 +154,6 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
 .mix-icon svg { width: 15px; height: 15px; }
 .mix-icon[data-action="play"] { width: 36px; height: 36px; flex-basis: 36px; border-radius: 50%; color: #111; background: var(--deck-color); border: 0; }
 .mix-icon[aria-pressed="true"]:not([data-action="play"]) { color: var(--deck-color); border-color: var(--deck-color); }
-.mix-icon[data-action="matchTempo"][aria-pressed="true"] { background: var(--deck-color); color: #161616; border-color: var(--deck-color); }
 .mix-icon:disabled { opacity: .3; cursor: not-allowed; }
 .mix-tempo { grid-column: 6; display: flex; align-items: center; justify-content: end; gap: 4px; grid-row: 5; }
 .mix-tempo label { display: grid; justify-items: center; gap: 1px; font-size: 9px !important; }
