@@ -10,7 +10,10 @@ export function refreshKnobs() {
       : -135 + (value - min) / (max - min) * 270;
     knob.style.setProperty('--angle', `${angle}deg`);
     knob.dataset.disabled = String(input.disabled);
-    knob.querySelector('output').textContent = input.dataset.control === 'tempo' ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : value.toFixed(max <= 2 ? 2 : 1);
+    const text = input.dataset.format === 'percent' ? `${Math.round(value * 100)} %`
+      : input.dataset.control === 'tempo' ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : value.toFixed(max <= 2 ? 2 : 1);
+    knob.querySelector('output').textContent = text;
+    if (input.dataset.format === 'percent') input.setAttribute('aria-valuetext', text);
   }
 }
 

@@ -1,7 +1,7 @@
 import WaveSurfer from './vendor/wavesurfer/wavesurfer.esm.js';
 import { FLX4Decoder, clamp, crossfade, isFLX4Port } from './flx4.js?v=20260908-8';
 import { Timeline, cueColors, overviewRenderer, phaseAlignedTime, detectedGrid, usesVariableGrid } from './mix-waveforms.js?v=20260909-28';
-import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-6';
+import { makeKnob, refreshKnobs } from './mix-knobs.js?v=20260910-10';
 import { createElement, Play, Pause, Headphones, Flag, Repeat2, LogIn, LogOut, Usb, Settings2, Square, RefreshCw, SkipBack, Gauge, Unplug, X, Minus, Plus } from './vendor/mixer-icons.js';
 import { SkipForward, Volume2, VolumeX } from './vendor/player-icons.js';
 
@@ -149,7 +149,7 @@ class AudioBus {
     $('#mix-routing').value = this.split ? 'split' : 'stereo';
     $('#mix-head-level').disabled = !this.split;
     $('#mix-head-mix').disabled = !this.split;
-    $('#mix-audio-status').textContent = this.split
+    $('#mix-routing').title = this.split
       ? 'Master : canaux 1/2. Casque : canaux 3/4.'
       : available ? 'Sortie stéréo. Quatre canaux disponibles.' : 'Sortie stéréo. Préécoute séparée indisponible sur cette sortie.';
     decks.forEach(d => d.update());
@@ -872,10 +872,6 @@ function browseFocus(back = false) {
 function sync() {
   decks.forEach(d => d.updateNavigation());
   if (!active) return;
-  const analyzed = host().library.tracks.filter(t => t.streamable);
-  const done = analyzed.filter(t => t.mix_analysis?.status === 'done').length;
-  const failed = analyzed.filter(t => t.mix_analysis?.status === 'failed').length;
-  $('#mix-analysis-status').textContent = `Analyse : ${done}/${analyzed.length}${failed ? ` · ${failed} en échec` : ''}`;
   updateBrowserFocus();
 }
 function initialize() {
@@ -925,6 +921,9 @@ function close() {
 }
 
 function layoutDeckControls() {
+  const connection = $('#mix-connection');
+  // Native popover toggle events can arrive after a viewport resize.
+  if (connection.hasAttribute('popover')) connectionOpen = connection.matches(':popover-open');
   const docked = active && sideControlsQuery.matches;
   document.body.toggleAttribute('data-side-controls', docked);
   decks.forEach(deck => {
@@ -1283,7 +1282,7 @@ async function refreshOutputs() {
   select.disabled = typeof bus.context.setSinkId !== 'function';
   bus.updateRoutingControls();
   refreshKnobs();
-  if (select.disabled) $('#mix-audio-status').textContent = 'Sélection de sortie indisponible dans ce navigateur. La sortie système est utilisée.';
+  select.title = select.disabled ? 'Sélection de sortie indisponible dans ce navigateur. La sortie système est utilisée.' : 'Sortie audio';
 }
 
 function reset() {
@@ -1307,7 +1306,6 @@ function reset() {
   $('#mix-routing').value = 'stereo';
   for (const [id, value] of [['mix-cross', '0.5'], ['mix-master', '0.7'], ['mix-head-level', '0.5'], ['mix-head-mix', '0']]) $(`#${id}`).value = value;
   browserFocus = 'tracks'; collectionCursor = '';
-  $('#mix-analysis-status').textContent = '';
   cueMemory.clear(); message();
   initialize();
 }
@@ -1315,6 +1313,10 @@ function reset() {
 $('#mixer-nav').prepend(icon(Gauge));
 $('#mixer-nav').addEventListener('click', () => active ? close() : open());
 $('#mix-levels-toggle').append(icon(Volume2));
+$('#mix-levels-toggle').addEventListener('click', () => {
+  const panel = $('#mix-connection');
+  if (panel.hasAttribute('popover')) panel.hidePopover();
+});
 $('.library-sidebar').addEventListener('click', e => {
   if (e.target.closest('[data-collection]')) setBrowserFocus('tracks');
 });
@@ -1350,6 +1352,8 @@ $('#mix-midi-refresh').addEventListener('click', () => {
 });
 $('#mix-stop').append(icon(Square));
 $('#mix-stop').addEventListener('click', pause);
+$('#mix-master-close').append(icon(X));
+$('#mix-master-close').addEventListener('click', () => $('#mix-controls').hidePopover());
 let waveWheelDelta = 0, waveWheelTime = 0;
 $('#mix-timelines').addEventListener('wheel', event => {
   if (!event.shiftKey || event.ctrlKey || event.metaKey) { waveWheelDelta = 0; return; }

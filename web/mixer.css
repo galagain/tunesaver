@@ -11,6 +11,10 @@ body[data-mixer="true"] #mixer-nav { grid-row: 3; }
 #mixer-nav[aria-pressed="true"] { color: #00d79d; border-color: #00d79d; }
 #mix-performance { flex: 1; min-width: 0; }
 #mix-controls, .deck-controls { color: #eee; background: #242424; border: 1px solid #555; border-radius: 4px; padding: 12px; margin: 0; inset: auto 12px calc(var(--playback-height, 73px) + 8px) auto; width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - var(--playback-height, 73px) - 24px); overflow-y: auto; }
+#mix-controls { inset: 50% auto auto 50%; translate: -50% -50%; width: min(360px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 16px; border-color: #484848; }
+.mix-master-heading { display: flex; gap: 6px; align-items: center; }
+.mix-master-heading h3 { flex: 1; margin: 0; font-size: 13px; font-weight: 600; }
+.mix-master-heading .mix-icon { background: transparent; border: 0; }
 .deck-controls:popover-open { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 .deck-controls > * { grid-column: 1 / -1; min-width: 0; }
 .deck-controls > [data-action="eject"] { justify-self: end; }
@@ -58,7 +62,6 @@ body[data-side-controls] [data-action="deckCommands"] { display: none; }
 #playback-dock input:not([type="range"]):not([type="checkbox"]), #playback-dock select { color: #ddd; background: #242424; border: 1px solid #444; border-radius: 3px; padding: 5px 8px; font-size: 12px; min-height: 30px; }
 #playback-dock label { font-size: 10px; color: #aaa; }
 #playback-dock input[type="checkbox"] { accent-color: var(--deck-color, #00d79d); width: 12px; height: 12px; margin: 0; }
-.mix-toolbar { display: flex; align-items: center; gap: 8px; min-height: 30px; padding-bottom: 4px; }
 #mix-connect { display: none; grid-column: 1; grid-row: 2; width: 32px; height: 32px; padding: 0; background: transparent; border: 0; color: #bbb; }
 body[data-mixer="true"] #mix-connect { display: grid; }
 #mix-connect svg { width: 18px; height: 18px; }
@@ -94,11 +97,9 @@ body[data-mixer="true"] #mix-connect { display: grid; }
 #mix-message span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #mix-message:not(:empty) { padding: 6px 0; }
 #mix-settings { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 8px 6px; align-items: end; }
-#mix-settings label:last-of-type, #mix-audio-status { grid-column: 1 / -1; }
-#mix-audio-status { font-size: 11px; line-height: 1.5; color: #bbb; }
-.mix-wave-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-#mix-analysis-status { font-size: 10px; color: #999; }
-.mix-wave-toolbar label { display: flex; align-items: center; gap: 6px; }
+.mix-wave-toolbar { margin-top: 14px; padding-top: 10px; border-top: 1px solid #393939; }
+#mix-settings label:last-of-type { grid-column: 1 / -1; }
+.mix-wave-toolbar label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 #mix-wave-zoom { width: 52px; min-height: 24px !important; padding: 2px 5px !important; }
 .mix-timeline-lane { position: relative; min-width: 0; height: 54px; }
 .mix-timeline-lane canvas { display: block; width: 100%; height: 54px; box-sizing: border-box; cursor: crosshair; }
@@ -198,10 +199,18 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
 .mix-grid-tools .mix-grid-anchor { grid-column: 1 / -1; display: flex; width: 100%; height: 34px; gap: 8px; padding: 0 10px; font-size: 12px; color: var(--deck-color); border-color: #52625c; }
 .mix-analysis-info { margin-top: 14px; padding-top: 10px; border-top: 1px solid #393939; color: #aaa; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .mix-analysis-info:empty { display: none; }
-.mix-master { display: flex; align-items: center; justify-content: center; gap: 28px; border-top: 1px solid #444; padding: 4px 0; }
-.mix-master > label { display: grid; align-items: center; justify-items: center; gap: 2px; }
-.mix-master .mix-cross-label { width: min(300px, 40%); }
-#mix-cross { width: 100%; accent-color: #bbb; height: 16px; }
+.mix-master { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 8px; padding-top: 18px; }
+.mix-master > label { display: grid; min-width: 0; align-items: center; justify-items: center; gap: 8px; }
+.mix-master .mix-knob { width: 52px; gap: 6px; }
+.mix-master .mix-knob-face { width: 36px; height: 36px; }
+.mix-master .mix-knob output { font-size: 11px; }
+.mix-master .mix-cross-label { grid-column: 1 / -1; width: 100%; padding-top: 12px; border-top: 1px solid #393939; gap: 4px; }
+#mix-cross { appearance: none; width: 100%; height: 22px; margin: 0; background: transparent; cursor: ew-resize; }
+#mix-cross::-webkit-slider-runnable-track { height: 3px; background: #555; border-radius: 2px; }
+#mix-cross::-moz-range-track { height: 3px; background: #555; border-radius: 2px; }
+#mix-cross::-webkit-slider-thumb { appearance: none; width: 12px; height: 18px; margin-top: -7.5px; border: 1px solid #aaa; border-radius: 2px; background: #ddd; }
+#mix-cross::-moz-range-thumb { width: 12px; height: 18px; box-sizing: border-box; border: 1px solid #aaa; border-radius: 2px; background: #ddd; }
+#mix-cross:focus-visible { outline: 1px solid #a3dac7; outline-offset: 3px; }
 .mix-cross-ends { display: flex; justify-content: space-between; width: 100%; font-size: 9px; }
 .mix-cross-ends span:first-child { color: #00d79d; }
 .mix-cross-ends span:last-child { color: #ef8eb3; }
@@ -213,7 +222,6 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
   #app-view { --deck-height: 96px; }
   .dock-mode { flex-basis: 40px; }
   #mixer-nav { width: 36px; }
-  .mix-toolbar { flex-wrap: wrap; gap: 4px; }
   #mix-midi-status { flex-basis: calc(100% - 140px); font-size: 10px; }
   .mix-deck { grid-template-columns: minmax(0, 1fr) 24px; grid-template-rows: 42px 40px; gap: 4px 8px; padding: 4px 8px 6px; }
   .mix-deck-heading { grid-column: 1; grid-row: 1; gap: 4px; }
@@ -228,7 +236,5 @@ body:not([data-mixer="true"]) .mix-deck .mix-timeline-cursor { display: none; }
   .mix-timeline-lane > .mix-overview .mix-cue-markers { inset: 4px 0; }
   .mix-timeline-lane > .mix-overview .mix-time { bottom: -7px; }
   .mix-deck-status { bottom: -5px; font-size: 8px; }
-  .mix-master { gap: 8px; }
-  .mix-master > label { font-size: 9px !important; }
   .mix-current-bpm { font-size: 12px; }
 }
