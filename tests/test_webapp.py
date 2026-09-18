@@ -331,33 +331,32 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         response = await webapp.api_middleware(request, webapp.index_handler)
         self.assertEqual(response.status, 200)
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
-        nonce = request["style_nonce"]
-        self.assertIn(f"'nonce-{nonce}'", response.headers["Content-Security-Policy"])
-        self.assertIn(nonce, response.text)
         self.assertNotIn("__MIXER_STYLE_NONCE__", response.text)
         self.assertIn("media-src 'self' blob:", response.headers["Content-Security-Policy"])
-        self.assertIn("midi=(self)", response.headers["Permissions-Policy"])
-        second = FakeRequest(method="GET", path="/", app=self.app_state)
-        await webapp.api_middleware(second, webapp.index_handler)
-        self.assertNotEqual(nonce, second["style_nonce"])
+        self.assertIn("midi=()", response.headers["Permissions-Policy"])
+        self.assertNotIn('id="mixer-nav"', response.text)
+        self.assertIn('id="player-audio"', response.text)
         index = (PROJECT_ROOT / "web" / "index.html").read_text()
         script = (PROJECT_ROOT / "web" / "app.js").read_text()
         self.assertIn("TuneSaver", index)
         for provider in ("tiddl", "beatport", "qobuz"):
-            self.assertIn(f'id="{provider}-health"', index)
-        self.assertIn("setServiceStatus(provider", script)
+            self.assertNotIn(f'id="{provider}-health"', index)
+        self.assertNotIn("window.Mixer", script)
 
-    async def test_mixer_assets_are_public_but_library_stays_private(self) -> None:
+    async def test_player_assets_are_public_but_library_stays_private(self) -> None:
         async with TestClient(TestServer(webapp.create_app())) as client:
-            for path in ("/mixer.js", "/flx4.js", "/mix-sync.js", "/mix-clock.js", "/mixer.css", "/vendor/SignalsmithStretch.mjs", "/vendor/mixer-icons.js", "/vendor/player-icons.js", "/vendor/wavesurfer/wavesurfer.esm.js"):
+            for path in ("/app.js", "/style.css", "/vendor/mixer-icons.js", "/vendor/player-icons.js"):
                 response = await client.get(path)
                 self.assertEqual(response.status, 200, path)
                 self.assertGreater(len(await response.read()), 100)
                 policy = response.headers["Content-Security-Policy"]
-                self.assertIn("'wasm-unsafe-eval'", policy)
+                self.assertNotIn("'wasm-unsafe-eval'", policy)
                 self.assertNotIn("'unsafe-eval'", policy)
             response = await client.get("/api/library")
             self.assertEqual(response.status, 401)
+            for path in ("/mixer.js", "/mix-clock.js", "/flx4.js", "/mixer.css"):
+                response = await client.get(path)
+                self.assertNotEqual(response.status, 200, path)
             response = await client.get("/vendor/../../.env")
             self.assertNotEqual(response.status, 200)
 

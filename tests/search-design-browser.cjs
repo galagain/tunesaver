@@ -32,7 +32,7 @@ const fs = require('node:fs');
         errors.push(path); return route.fulfill({ status: 500 });
       });
       await page.goto(process.env.MIXER_URL || 'http://127.0.0.1:8082');
-      await page.waitForFunction(() => window.Mixer && publicConfig !== null);
+      await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture' }; showApp(); });
       await page.locator('#search-nav').click();
       await page.locator('#search-input').fill('Odymel');

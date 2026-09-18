@@ -12,7 +12,7 @@ const fs = require('node:fs/promises');
       let result = { name: 'Set: soir/2026', links: ['https://listen.tidal.com/track/1', 'https://open.qobuz.com/track/2'], skipped: 1 };
       await page.route(`**/api/${kind}/p/export`, route => route.fulfill({ json: result }));
       await page.goto(process.env.MIXER_URL || 'http://127.0.0.1:8082');
-      await page.waitForFunction(() => window.Mixer && publicConfig !== null);
+      await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(kind => {
         session = { access_token: 'fixture' };
         document.querySelector('#auth-view').hidden = true;

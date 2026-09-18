@@ -421,7 +421,13 @@ async function loadPrivateImage(image, url) {
 }
 
 function resetPlayer() {
-  window.Mixer?.clearPrimary();
+  playerVersion++;
+  playerAudio.pause();
+  playerAudio.removeAttribute('src');
+  playerAudio.load();
+  playerTitle.textContent = 'Aucun son en lecture';
+  playerArtist.textContent = '';
+  playerCover.replaceChildren();
   currentTrackId = "";
 }
 
@@ -434,7 +440,7 @@ function showAuth(message = "") {
   cancelTrackMove();
   librarySorts.clear();
   siteDialogs.cancel();
-  window.Mixer?.reset();
+  resetPlayer();
   window.clearInterval(queueTimer);
   queueTimer = null;
   saveSession(null);
@@ -474,7 +480,7 @@ function showApp() {
 }
 
 function showAdmin() {
-  window.Mixer?.reset();
+  resetPlayer();
   window.clearInterval(queueTimer);
   queueTimer = null;
   saveSession(null);
@@ -998,7 +1004,23 @@ async function streamTrack(track) {
   const fullTrack = typeof track === "string"
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
     : track;
-  return window.Mixer.playTrack(fullTrack);
+  const version = ++playerVersion;
+  if (fullTrack.job_id === currentTrackId && playerAudio.src && !playerAudio.error) return playerAudio.play();
+  const { url } = await requestJson('/api/stream-ticket', {
+    method: 'POST', body: JSON.stringify({ job_id: fullTrack.job_id }),
+  });
+  if (version !== playerVersion) return;
+  playerAudio.src = url;
+  currentTrackId = fullTrack.job_id;
+  playerTitle.textContent = fullTrack.title || fullTrack.file_name || 'Sans titre';
+  playerArtist.textContent = fullTrack.artist || 'Artiste inconnu';
+  playerCover.replaceChildren();
+  if (fullTrack.cover_url) {
+    const image = document.createElement('img'); image.alt = '';
+    playerCover.append(image);
+    loadPrivateImage(image, fullTrack.cover_url);
+  }
+  await playerAudio.play();
 }
 
 async function playNextTrack() {
@@ -1015,7 +1037,7 @@ async function playNextTrack() {
 }
 
 async function playPreviousTrack() {
-  if (window.Mixer.currentPlayback.position > 3) { window.Mixer.seekPrimary(0); return; }
+  if (playerAudio.currentTime > 3) { playerAudio.currentTime = 0; return; }
   const index = renderedTracks.findIndex(track => track.job_id === currentTrackId);
   const previous = renderedTracks.slice(0, Math.max(0, index)).reverse().find(track => track.streamable);
   if (previous) await streamTrack(previous);
@@ -1066,7 +1088,6 @@ function makeTrackDeleteButton(track) {
       await requestJson(`/api/library/${jobId}`, { method: "DELETE" });
       deletedJobIds.add(jobId);
       if (currentTrackId === jobId) resetPlayer();
-      window.Mixer?.removeTrack(jobId);
       const download = downloadButtonByJob.get(jobId);
       if (download) {
         download.disabled = !activeProviders[track.provider];
@@ -1589,7 +1610,6 @@ function renderLibrary() {
   });
   renderedTracks = tracks;
   if (!tracks.some(track => track.job_id === selectedLibraryTrackId)) selectedLibraryTrackId = tracks[0]?.job_id || '';
-  window.Mixer?.sync();
   document.querySelector("#library-title").textContent = currentLibraryTitle();
   libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
   const renderKey = JSON.stringify([tracks, [...numbers], sort, selectedPlaylistId, selectedTagId, selectedFolderId]);
@@ -1724,12 +1744,6 @@ function renderLibrary() {
         finally { play.disabled = false; }
       });
       actions.append(play);
-      for (const [index, letter] of ['A', 'B'].entries()) {
-        const load = document.createElement('button'); load.type = 'button'; load.title = `Charger sur ${letter}`;
-        appendUIIcon(load, 'LogIn'); load.append(document.createTextNode(`Charger sur ${letter}`));
-        load.addEventListener('click', () => window.Mixer?.loadTrack(track, index).catch(error => showToast(error.message, 'error')));
-        extraActions.append(load);
-      }
     }
     actions.append(makeSourceBadge(track));
     if (track.is_live || track.state === "failed") {
@@ -2454,24 +2468,22 @@ async function start() {
   }
 }
 
-window.TuneSaverMixerHost = {
-  showLibrary: () => setWorkspaceView('library'),
-  ensureVisible: ensureLibraryItemVisible,
-  setCurrentTrack: track => { currentTrackId = track?.job_id || ''; },
-  get library() { return libraryState; },
-  get visibleTracks() { return renderedTracks; },
-  get selectedTrackId() { return selectedLibraryTrackId; },
-  get collectionValue() { return selectedPlaylistId ? `playlists:${selectedPlaylistId}` : selectedTagId ? `tags:${selectedTagId}` : selectedFolderId ? `folders:${selectedFolderId}` : ''; },
-  selectTrack: selectLibraryTrack,
-  playNextTrack,
-  playPreviousTrack,
-  get signedIn() { return Boolean(session); },
-  requestJson,
-  loadPrivateImage,
-  renderLibrary,
-  resetPlayer,
-  makeTrackDeleteButton,
-  collectionRowLabel,
-};
+const playerAudio = document.querySelector('#player-audio');
+const playerTitle = document.querySelector('#player-title');
+const playerArtist = document.querySelector('#player-artist');
+const playerCover = document.querySelector('#player-cover');
+let playerVersion = 0;
+playerAudio.addEventListener('ended', playNextTrack);
+playerAudio.addEventListener('error', () => {
+  if (playerAudio.hasAttribute('src')) showToast('Lecture impossible. Réessaie de lancer le morceau.', 'error');
+});
+for (const [id, icon, action] of [
+  ['player-previous', 'SkipBack', playPreviousTrack],
+  ['player-next', 'SkipForward', playNextTrack],
+]) {
+  const button = document.getElementById(id);
+  appendUIIcon(button, icon);
+  button.addEventListener('click', () => action().catch(error => showToast(error.message, 'error')));
+}
 
 start();

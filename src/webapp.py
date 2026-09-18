@@ -126,11 +126,11 @@ def _security_headers(response: web.StreamResponse, request: web.Request) -> Non
         f"default-src 'self'; base-uri 'none'; connect-src {' '.join(connect_sources)}; "
         "font-src 'self'; form-action 'self'; frame-ancestors 'none'; "
         "img-src 'self' blob: https:; media-src 'self' blob:; object-src 'none'; "
-        f"script-src 'self' 'wasm-unsafe-eval'; style-src {style_sources}"
+        f"script-src 'self'; style-src {style_sources}"
     )
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = (
-        "camera=(), geolocation=(), microphone=(), payment=(), usb=(), midi=(self), speaker-selection=(self)"
+        "camera=(), geolocation=(), microphone=(), payment=(), usb=(), midi=(), speaker-selection=()"
     )
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -1353,16 +1353,7 @@ async def api_middleware(
             "/",
             "/app.js",
             "/style.css",
-            "/mixer.js",
             "/vendor/player-icons.js",
-            "/flx4.js",
-            "/mix-waveforms.js",
-            "/mix-knobs.js",
-            "/mix-sync.js",
-            "/mix-clock.js",
-            "/vendor/SignalsmithStretch.mjs",
-            "/mixer.css",
-            "/vendor/wavesurfer/wavesurfer.esm.js",
             "/vendor/mixer-icons.js",
             "/api/health",
             "/api/config",
@@ -3425,13 +3416,11 @@ async def health_handler(_request: web.Request) -> web.Response:
 
 
 async def index_handler(_request: web.Request) -> web.StreamResponse:
-    nonce = secrets.token_hex(24)
-    _request["style_nonce"] = nonce
     html = (ASSET_ROOT / "index.html").read_text(encoding="utf-8")
-    return web.Response(text=html.replace("__MIXER_STYLE_NONCE__", nonce), content_type="text/html")
+    return web.Response(text=html, content_type="text/html")
 
 
-async def mixer_asset_handler(request: web.Request) -> web.StreamResponse:
+async def icon_asset_handler(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(ASSET_ROOT / request.path.lstrip("/"))
 
 
@@ -3464,8 +3453,8 @@ def create_app() -> web.Application:
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("mixer.js", "flx4.js", "mix-waveforms.js", "mix-knobs.js", "mix-sync.js", "mix-clock.js", "mixer.css", "vendor/SignalsmithStretch.mjs", "vendor/wavesurfer/wavesurfer.esm.js", "vendor/mixer-icons.js", "vendor/player-icons.js"):
-        app.router.add_get(f"/{asset}", mixer_asset_handler)
+    for asset in ("vendor/mixer-icons.js", "vendor/player-icons.js"):
+        app.router.add_get(f"/{asset}", icon_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)
     app.router.add_post("/api/signup", signup_handler)

@@ -17,7 +17,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.route('**/api/history*', route => route.fulfill({ json: { history: [] } }));
       await page.route('**/api/library', route => route.fulfill({ json: { tracks: [], playlists: [], tags: [], folders: [], imports: [] } }));
       await page.goto(process.env.MIXER_URL || 'http://127.0.0.1:8082');
-      await page.waitForFunction(() => window.Mixer && publicConfig !== null);
+      await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture', user: { email: 'fixture@example.com' } }; showApp(); });
       await expect(page.locator('#services, .service')).toHaveCount(0);
       await expect(page.locator('.site-header')).toBeHidden();

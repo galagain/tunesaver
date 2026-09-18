@@ -30,7 +30,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
         return route.fulfill({ json: { removed: true } });
       });
       await page.goto(process.env.MIXER_URL || 'http://127.0.0.1:8082');
-      await page.waitForFunction(() => window.Mixer && publicConfig !== null);
+      await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture', user: { email: 'fixture@example.com' } }; showApp(); });
       await expect(page.locator('#library-tracks .track-delete')).toHaveCount(4);
       await page.waitForFunction(() => queueRefreshPromise === null);
@@ -48,12 +48,10 @@ const { chromium, firefox, expect } = require('@playwright/test');
       }
       await page.evaluate(() => { selectedPlaylistId = selectedTagId = ''; renderLibrary(); });
       if (engine === chromium) {
-        await page.locator('#mixer-nav').click();
         await expect(page.locator('#library-tracks .track-delete')).toHaveCount(4);
         await page.locator('.library-track[data-state="done"] .track-delete').click();
         await page.locator('#action-dialog-cancel').click();
-        await page.screenshot({ path: `/work/track-delete-mixer-${width}.png`, fullPage: true });
-        await page.locator('#mixer-nav').click();
+        await page.screenshot({ path: `/work/track-delete-library-${width}.png`, fullPage: true });
       }
       await page.screenshot({ path: `/work/track-delete-${engine.name()}-${width}.png`, fullPage: true });
       const failed = page.locator('.library-track[data-state="failed"] .track-delete');

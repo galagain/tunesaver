@@ -35,7 +35,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       });
       const login = async () => {
         await page.goto(process.env.MIXER_URL || 'http://127.0.0.1:8082');
-        await page.waitForFunction(() => window.Mixer && publicConfig !== null);
+        await page.waitForFunction(() => publicConfig !== null);
         await page.evaluate(() => { session = { access_token: 'fixture' }; showApp(); });
         await expect(page.locator('.library-track')).toHaveCount(4);
       };
@@ -102,9 +102,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       expect(writes.at(-1).scope).toBe('tag:t');
       await page.locator('.playlist-filter[data-playlist-id=""]').click();
       await expect.poll(order).toEqual(['b', 'c', 'd', 'a']);
-      await page.locator('#mixer-nav').click();
       await expect.poll(order).toEqual(['b', 'c', 'd', 'a']);
-      await page.locator('#mixer-nav').click();
       if (engine === chromium && width === 390) {
         const touch = await page.context().newCDPSession(page);
         const source = page.locator('[data-job-id="d"] .track-number');
