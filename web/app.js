@@ -857,6 +857,7 @@ function isImportPlaylist(value) {
   try {
     const url = new URL(value);
     return (url.hostname === "open.spotify.com" && url.pathname.includes("/playlist/"))
+      || (url.hostname === "music.apple.com" && url.pathname.includes("/playlist/"))
       || (["soundcloud.com", "www.soundcloud.com"].includes(url.hostname) && url.pathname.includes("/sets/"))
       || (["beatport.com", "www.beatport.com"].includes(url.hostname) && /\/(playlists?|charts?)\//.test(url.pathname));
   } catch (_) { return false; }

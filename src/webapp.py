@@ -2626,6 +2626,8 @@ def read_import_source(url: str) -> dict[str, Any]:
         payload = playlist_sources.spotify_playlist(identifier)
     elif provider == "soundcloud":
         payload = playlist_sources.soundcloud_playlist(canonical)
+    elif provider == "applemusic":
+        payload = playlist_sources.apple_music_playlist(canonical)
     else:
         kind, resource_id = identifier.split(":")
         source = beatport_helper_search(resource_id, proxy=configured_beatport_proxy(), collection=kind)
@@ -2669,7 +2671,7 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
             raise PublicError("Trois imports sont deja en cours. Attendez leur fin.", status=429)
         import_id, playlist_id = str(uuid.uuid4()), str(uuid.uuid4())
         db.execute("insert into playlists (id, user_id, name, created_at) values (?, ?, ?, ?)",
-                   (playlist_id, user_id, f"Import {provider.title()}", utc_timestamp()))
+                   (playlist_id, user_id, f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}", utc_timestamp()))
         db.execute("insert into playlist_imports (id, user_id, playlist_id, source_url, created_at) "
                    "values (?, ?, ?, ?, ?)", (import_id, user_id, playlist_id, url, utc_timestamp()))
     return web.json_response({"id": import_id, "playlist_id": playlist_id}, status=202)
@@ -2714,7 +2716,7 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
         with local_db() as db:
             provider = playlist_sources.playlist_source(record["source_url"])[0]
             db.execute("update playlists set name = ? where id = ? and name = ?",
-                       (payload["name"][:80], record["playlist_id"], f"Import {provider.title()}"))
+                       (payload["name"][:80], record["playlist_id"], f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}"))
             db.execute("update playlist_imports set tracks = ?, error = ?, state = 'running' where id = ?",
                        (json.dumps(tracks), source_warning, record["id"]))
     failures = json.loads(record["failures"])

@@ -936,13 +936,19 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(webapp.local_playlists(user["id"])[0]["folder_id"])
 
     async def test_playlist_import_is_owned_persistent_and_skips_wrong_matches(self) -> None:
+        await self.check_playlist_import("https://open.spotify.com/playlist/3cEYpjA9oz9GiPac4AsH4n", "spotify_playlist")
+
+    async def test_apple_playlist_import_is_owned_persistent_and_skips_wrong_matches(self) -> None:
+        await self.check_playlist_import(
+            "https://music.apple.com/fr/playlist/melodic-techno/pl.u-EdAVz8eCqqRzE2b", "apple_music_playlist")
+
+    async def check_playlist_import(self, url, source_reader) -> None:
         user = webapp.local_create_user("import@example.com", "secret123")
         app = webapp.create_app()
         app.cleanup_ctx.clear()
         app[webapp.AUTH_CACHE_KEY][hashlib.sha256(TEST_TOKEN.encode()).hexdigest()] = (
             time.monotonic() + 3600, {"id": user["id"], "email": user["email"]})
         headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
-        url = "https://open.spotify.com/playlist/3cEYpjA9oz9GiPac4AsH4n"
         async with TestClient(TestServer(app)) as client:
             rejected = await client.post("/api/playlist-imports", json={"url": "https://localhost/private"}, headers=headers)
             self.assertEqual(rejected.status, 400)
@@ -961,7 +967,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                          "download_url": "https://listen.tidal.com/track/123"}
             with webapp.local_db() as db:
                 record = dict(db.execute("select * from playlist_imports where id = ?", (result["id"],)).fetchone())
-            with mock.patch.object(webapp, "read_import_source", return_value={"name": "Favorites", "tracks": tracks}), \
+            with mock.patch.object(webapp.playlist_sources, source_reader, return_value={"name": "Favorites", "tracks": tracks}), \
                  mock.patch.object(webapp, "worker_is_active", return_value=True), \
                  mock.patch.object(webapp, "search_tidal", return_value=[candidate]), \
                  mock.patch.object(webapp, "search_qobuz", return_value=[]), \

@@ -9,12 +9,13 @@ import sys
 import tempfile
 import unicodedata
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 MAX_TRACKS = 500
+SOURCE_LABELS = {"applemusic": "Apple Music"}
 
 
 class PlaylistError(Exception):
@@ -33,6 +34,10 @@ def playlist_source(value):
         match = re.fullmatch(r"/(?:intl-[a-z]+/)?(?:embed/)?playlist/([A-Za-z0-9]{22})", path)
         if match:
             return "spotify", match[1], f"https://open.spotify.com/playlist/{match[1]}"
+    if host == "music.apple.com":
+        match = re.fullmatch(r"/([a-z]{2})/playlist/(?:[^/]+/)?(pl\.[A-Za-z0-9-]+)", path)
+        if match:
+            return "applemusic", match[2], f"https://music.apple.com{path}"
     if host in {"soundcloud.com", "www.soundcloud.com"} and re.fullmatch(r"/[\w-]+/sets/[\w-]+", path):
         return "soundcloud", path, f"https://soundcloud.com{path}"
     if host in {"beatport.com", "www.beatport.com"}:
@@ -40,7 +45,68 @@ def playlist_source(value):
         if match:
             kind = "chart" if match[1].startswith("chart") else "playlist"
             return "beatport", f"{kind}:{match[2]}", f"https://www.beatport.com{path}"
-    raise PlaylistError("Collez un lien complet de playlist Spotify, SoundCloud ou Beatport.")
+    raise PlaylistError("Collez un lien complet de playlist Apple Music, Spotify, SoundCloud ou Beatport.")
+
+
+def apple_music_playlist(url):
+    provider, identifier, url = playlist_source(url)
+    if provider != "applemusic":
+        raise PlaylistError("Lien Apple Music invalide.")
+    try:
+        # Apple redirects ID-only or renamed playlist URLs to their current slug.
+        for _ in range(4):
+            response = requests.get(url, timeout=(5, 25), allow_redirects=False)
+            if response.status_code in (301, 302, 303, 307, 308):
+                source, target_id, target = playlist_source(urljoin(url, response.headers.get("Location", "")))
+                if source != "applemusic" or target_id != identifier:
+                    raise PlaylistError("Redirection Apple Music invalide.")
+                url = target
+                continue
+            response.raise_for_status()
+            if response.status_code != 200:
+                raise PlaylistError("La playlist Apple Music est inaccessible.")
+            response.encoding = "utf-8"
+            return apple_music_metadata(response.text, identifier)
+        raise PlaylistError("Trop de redirections Apple Music.")
+    except requests.RequestException as exc:
+        raise PlaylistError("Playlist Apple Music inaccessible : verifiez son lien et sa visibilite publique.") from exc
+
+
+def apple_music_metadata(html, identifier):
+    try:
+        script = BeautifulSoup(html, "html.parser").find("script", id="serialized-server-data")
+        payload = json.loads(script.string)
+        page = next(item["data"] for item in payload["data"]
+                    if item.get("intent", {}).get("$kind") == "PlaylistDetailPageIntent"
+                    and item["intent"]["contentDescriptor"]["identifiers"]["storeAdamID"] == identifier)
+        sections = page["sections"]
+        header = next(item for section in sections if section.get("itemKind") == "containerDetailHeaderLockup"
+                      for item in section["items"]
+                      if item.get("contentDescriptor", {}).get("identifiers", {}).get("storeAdamID") == identifier)
+        total = header["trackCount"]
+        if type(total) is not int or total < 1:
+            raise PlaylistError("La playlist Apple Music ne contient aucun titre accessible.")
+        if total > MAX_TRACKS:
+            raise PlaylistError("La playlist depasse la limite de 500 titres.")
+        entries = [item for section in sections
+                   if section.get("itemKind") == "trackLockup" and section.get("id") == f"track-list - {identifier}"
+                   for item in section["items"]]
+        if len(entries) != total:
+            raise PlaylistError(f"Lecture Apple Music incomplete ({len(entries)}/{total} titres). Aucun telechargement lance.")
+        tracks = []
+        for item in entries:
+            title = item.get("title")
+            artist = item.get("artistName") or ", ".join(link["title"] for link in item.get("subtitleLinks", []))
+            duration = item.get("duration")
+            if (item.get("contentDescriptor", {}).get("kind") != "song"
+                    or not isinstance(title, str) or not title.strip()
+                    or not isinstance(artist, str) or not artist.strip()
+                    or not isinstance(duration, (int, float)) or duration <= 0):
+                raise PlaylistError("Un titre Apple Music est inaccessible ou incomplet. Import non lance.")
+            tracks.append({"title": title.strip(), "artist": artist.strip(), "duration": duration / 1000})
+        return {"name": header["title"], "total": total, "tracks": tracks}
+    except (AttributeError, KeyError, TypeError, ValueError, StopIteration) as exc:
+        raise PlaylistError("Lecture Apple Music impossible : playlist privee, indisponible ou format de page modifie.") from exc
 
 
 def get_page(url, **kwargs):

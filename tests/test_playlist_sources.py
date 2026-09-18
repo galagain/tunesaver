@@ -9,6 +9,68 @@ import playlist_sources as sources
 
 
 class PlaylistSourceTests(unittest.TestCase):
+    apple_id = "pl.u-EdAVz8eCqqRzE2b"
+    apple_url = "https://music.apple.com/fr/playlist/melodic-techno/pl.u-EdAVz8eCqqRzE2b"
+
+    def apple_page(self, count=2, total=None):
+        header = {"title": "Melodic techno", "trackCount": count if total is None else total,
+                  "contentDescriptor": {"identifiers": {"storeAdamID": self.apple_id}}}
+        tracks = [{"title": "Sarabande (Christian Löffler Remix)", "artistName": "Christian Prommer",
+                   "duration": 463389, "contentDescriptor": {"kind": "song"}} for _ in range(count)]
+        sections = [{"itemKind": "containerDetailHeaderLockup", "items": [header]},
+                    {"id": f"track-list - {self.apple_id}", "itemKind": "trackLockup", "items": tracks},
+                    {"id": "recommendations", "itemKind": "trackLockup", "items": tracks[:1]}]
+        data = {"data": [{"intent": {"$kind": "PlaylistDetailPageIntent",
+                 "contentDescriptor": {"identifiers": {"storeAdamID": self.apple_id}}},
+                 "data": {"sections": sections}}]}
+        return '<script id="serialized-server-data" type="application/json">' + json.dumps(data, ensure_ascii=False) + '</script>'
+
+    def test_apple_urls(self):
+        for suffix in ("", "?l=en&ls=1", "/"):
+            self.assertEqual(sources.playlist_source(self.apple_url + suffix),
+                             ("applemusic", self.apple_id, self.apple_url))
+        self.assertEqual(sources.playlist_source("https://music.apple.com/us/playlist/pl.abc123")[1], "pl.abc123")
+        for url in ("https://music.apple.com.evil.test/fr/playlist/pl.abc",
+                    "https://music.apple.com/fr/album/pl.abc",
+                    "https://music.apple.com:8080/fr/playlist/pl.abc",
+                    "https://music.apple.com/fr/playlist/plXabc"):
+            with self.subTest(url=url), self.assertRaises(sources.PlaylistError):
+                sources.playlist_source(url)
+
+    def test_apple_metadata_preserves_versions_durations_order_and_duplicates(self):
+        result = sources.apple_music_metadata(self.apple_page(150), self.apple_id)
+        self.assertEqual(result["total"], 150)
+        self.assertEqual(len(result["tracks"]), 150)
+        self.assertEqual(result["name"], "Melodic techno")
+        self.assertEqual(result["tracks"][0], {"title": "Sarabande (Christian Löffler Remix)",
+                         "artist": "Christian Prommer", "duration": 463.389})
+
+    def test_apple_rejects_partial_empty_oversized_or_invalid_pages(self):
+        for page in (self.apple_page(2, 5), self.apple_page(0), self.apple_page(1, 501),
+                     self.apple_page().replace('"artistName": "Christian Prommer"', '"artistName": ""'),
+                     self.apple_page().replace('"kind": "song"', '"kind": "music-video"'),
+                     "<html>Private playlist</html>", '<script id="serialized-server-data">broken</script>'):
+            with self.subTest(page=page[:80]), self.assertRaises(sources.PlaylistError):
+                sources.apple_music_metadata(page, self.apple_id)
+
+    def test_apple_redirects_are_validated_before_fetch_and_accents_preserved(self):
+        response = sources.requests.Response()
+        response.status_code = 200
+        response._content = self.apple_page().encode("utf-8")
+        response.encoding = "ISO-8859-1"
+        redirect = mock.Mock(status_code=301, headers={"Location": self.apple_url})
+        with mock.patch.object(sources.requests, "get", side_effect=[redirect, response]) as get:
+            result = sources.apple_music_playlist("https://music.apple.com/fr/playlist/" + self.apple_id)
+            self.assertIn("Löffler", result["tracks"][0]["title"])
+            self.assertEqual(get.call_count, 2)
+            self.assertFalse(get.call_args.kwargs["allow_redirects"])
+        for target in ("https://localhost/private", "https://music.apple.com/fr/playlist/pl.other"):
+            with mock.patch.object(sources.requests, "get", return_value=mock.Mock(
+                    status_code=302, headers={"Location": target})) as get:
+                with self.assertRaises(sources.PlaylistError):
+                    sources.apple_music_playlist(self.apple_url)
+                get.assert_called_once()
+
     def test_urls_are_canonical_and_restrict_external_hosts(self):
         self.assertEqual(sources.playlist_source("https://open.spotify.com/intl-fr/playlist/3cEYpjA9oz9GiPac4AsH4n?si=abc")[2],
                          "https://open.spotify.com/playlist/3cEYpjA9oz9GiPac4AsH4n")

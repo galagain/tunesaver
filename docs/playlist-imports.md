@@ -1,15 +1,15 @@
 # Imports de playlists
 
-Dans **Importer une playlist**, coller un lien complet Spotify, SoundCloud ou
+Dans **Importer une playlist**, coller un lien complet Apple Music, Spotify, SoundCloud ou
 Beatport, puis cliquer sur **Importer et telecharger**. La barre de recherche
 accepte aussi ces liens. Les liens courts de partage doivent d'abord etre ouverts
 pour obtenir le lien complet.
 
 Une playlist locale est creee. Beatport fournit directement les morceaux ; les
-titres Spotify et SoundCloud sont recherches sur TIDAL, Qobuz, puis Beatport.
+titres Apple Music, Spotify et SoundCloud sont recherches sur TIDAL, Qobuz, puis Beatport.
 L'artiste, le titre, la version et la duree connue doivent correspondre. Les
 titres non identifies ne sont pas telecharges et figurent dans le bilan d'import.
-Il ne s'agit pas d'un telechargement audio depuis Spotify ou SoundCloud.
+Il ne s'agit pas d'un telechargement audio depuis Apple Music, Spotify ou SoundCloud.
 
 L'import reste actif apres fermeture du navigateur et reprend apres redemarrage.
 Le bilan indique les titres mis en file ; le statut de chaque telechargement
@@ -31,11 +31,16 @@ qui n'appartiennent a aucune playlist, y compris dans les dossiers replies.
 
 ## Acces et limites
 
-- Playlists accessibles publiquement pour Spotify et SoundCloud ; les playlists
+- Playlists accessibles publiquement pour Apple Music, Spotify et SoundCloud ; les playlists
   Beatport doivent etre accessibles au compte Beatport configure sur le serveur.
 - Maximum : 500 titres et trois imports actifs par compte. Les imports sont
   traites successivement pour limiter la charge et les appels aux plateformes.
-- Sans identifiants API, TuneSaver utilise l'apercu leger pour moins de 100 titres.
+- Apple Music : les titres, artistes et durees proviennent des donnees JSON de
+  la page publique music.apple.com, sans compte ni cle API Apple. Le nombre
+  extrait doit correspondre au total annonce ; si Apple ne fournit qu'un
+  apercu incomplet, l'import echoue explicitement sans lancer les telechargements.
+  Les redirections sont limitees au meme identifiant de playlist chez Apple.
+- Pour Spotify, sans identifiants API, TuneSaver utilise l'apercu leger pour moins de 100 titres.
   A partir de 100 titres, ou si cet apercu est inaccessible, il ouvre la page publique dans Chromium,
   sans connexion, et fait defiler la liste pour charger toutes les pages.
   Les titres sont collectes dans leur ordre, puis leur nombre est compare au
