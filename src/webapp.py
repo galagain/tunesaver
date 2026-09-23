@@ -12,15 +12,13 @@ import mimetypes
 import os
 import re
 import secrets
-import shutil
 import smtplib
 import sqlite3
 import subprocess
-import tempfile
 import time
 import uuid
 import zipfile
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import date, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -2912,8 +2910,6 @@ def playlist_download_files(user_id: str, playlist_id: str) -> dict[str, Any]:
     if not files:
         raise PublicError("Aucun fichier disponible dans cette playlist.")
     size = sum(item["member"].file_size if item["member"] else item["size"] for item in files)
-    if size > 4 * 1024 ** 3:
-        raise PublicError("La playlist depasse 4 Go. Telechargez-la en plusieurs playlists.")
     return {"name": playlist["name"], "files": files, "skipped": len(ids) - len(files), "size": size}
 
 
@@ -2936,20 +2932,46 @@ async def playlist_download_ticket_handler(request: web.Request) -> web.Response
                               "skipped": result["skipped"]})
 
 
-def write_playlist_zip(target, files):
+class ZipOutput:
+    """Non-seekable ZIP sink, drained after each bounded audio read."""
+
+    def __init__(self):
+        self.buffer = bytearray()
+
+    def write(self, data):
+        self.buffer.extend(data)
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def take(self):
+        data = bytes(self.buffer)
+        self.buffer.clear()
+        return data
+
+
+def playlist_zip_chunks(files):
+    target = ZipOutput()
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
         for item in files:
             member = item["member"]
             filename = Path((member.filename if member else item["name"]).replace("\\", "/")).name
             filename = re.sub(r'[\x00-\x1f\x7f]', "_", filename)
             name = f'{item["number"]:03d} - {filename}'
-            if member:
-                with zipfile.ZipFile(item["path"]) as source, source.open(member) as data:
-                    with archive.open(name, "w", force_zip64=True) as output:
-                        shutil.copyfileobj(data, output, length=1024 * 1024)
-            else:
-                archive.write(item["path"], name)
-    target.seek(0)
+            with ExitStack() as stack:
+                if member:
+                    source = stack.enter_context(zipfile.ZipFile(item["path"]))
+                    data = stack.enter_context(source.open(member))
+                else:
+                    data = stack.enter_context(item["path"].open("rb"))
+                with archive.open(name, "w", force_zip64=True) as output:
+                    yield target.take()
+                    while chunk := data.read(1024 * 1024):
+                        output.write(chunk)
+                        yield target.take()
+            yield target.take()
+    yield target.take()
 
 
 async def playlist_files_handler(request: web.Request) -> web.StreamResponse:
@@ -2962,32 +2984,37 @@ async def playlist_files_handler(request: web.Request) -> web.StreamResponse:
         raise PublicError("Une archive est deja en cours de telechargement. Reessayez apres sa fin.", status=429)
     async with lock:
         result = await asyncio.to_thread(playlist_download_files, ticket["user_id"], ticket["playlist_id"])
-        if shutil.disk_usage(tempfile.gettempdir()).free < result["size"] + 512 * 1024 ** 2:
-            raise PublicError("Espace temporaire insuffisant pour preparer cette playlist.", status=507)
-        with tempfile.TemporaryFile() as archive:
-            task = asyncio.create_task(asyncio.to_thread(write_playlist_zip, archive, result["files"]))
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                await task
-                raise
-            except (OSError, zipfile.BadZipFile) as exc:
-                raise PublicError("Un fichier est devenu indisponible. Relancez le telechargement.") from exc
-            size = archive.seek(0, os.SEEK_END)
-            archive.seek(0)
-            filename = re.sub(r'[/\\\x00-\x1f\x7f]', "_", result["name"])[:100] + ".zip"
-            response = web.StreamResponse(headers={
-                "Content-Type": "application/zip", "Content-Length": str(size),
-                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}",
-                "Cache-Control": "no-store",
-            })
-            _security_headers(response, request)
+        filename = re.sub(r'[/\\\x00-\x1f\x7f]', "_", result["name"])[:100] + ".zip"
+        response = web.StreamResponse(headers={
+            "Content-Type": "application/zip",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}",
+            "Cache-Control": "no-store",
+        })
+        _security_headers(response, request)
+        chunks = playlist_zip_chunks(result["files"])
+        try:
             await response.prepare(request)
-            while chunk := await asyncio.to_thread(archive.read, 1024 * 1024):
-                await response.write(chunk)
+            while True:
+                # Wait for an in-flight read before closing the generator on cancellation.
+                task = asyncio.create_task(asyncio.to_thread(next, chunks, None))
+                try:
+                    chunk = await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    await task
+                    raise
+                if chunk is None:
+                    break
+                if chunk:
+                    await response.write(chunk)
             await response.write_eof()
-            return response
-
+        except (OSError, zipfile.BadZipFile, RuntimeError):
+            LOGGER.warning("Transfert ZIP interrompu", exc_info=True)
+            response.force_close()
+            if request.transport:
+                request.transport.close()
+        finally:
+            await asyncio.to_thread(chunks.close)
+        return response
 
 async def playlist_folder_handler(request: web.Request) -> web.Response:
     user_id = request["user"]["id"]

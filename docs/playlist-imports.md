@@ -23,8 +23,9 @@ Le menu de parametres d'une playlist propose **Telecharger toute la playlist**.
 Le ZIP contient les fichiers disponibles, numerotes dans l'ordre enregistre.
 Les sons en cours ou indisponibles sont exclus apres confirmation. Les fichiers
 restent sur le serveur. Les ZIP contenant un seul morceau sont ouverts pour
-inclure directement ce morceau. Limite : 4 Go par archive, une archive a la fois.
-Le fichier temporaire est supprime apres le transfert ou la deconnexion.
+inclure directement ce morceau. Il n'y a pas de limite de taille imposee :
+le ZIP64 est envoye progressivement, sans fichier temporaire ni copie complete
+en memoire. Une seule archive est transferee a la fois.
 **Exporter les liens** reste disponible separement.
 
 Les playlists peuvent etre rangees dans des dossiers a un niveau. Le bouton

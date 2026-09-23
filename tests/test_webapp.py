@@ -991,6 +991,26 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(deleted.status, 200)
             self.assertEqual(webapp.local_imports(user["id"]), [])
 
+    async def test_playlist_zip_stream_is_bounded_and_closes_files_on_disconnect(self) -> None:
+        path = Path(self.temporary.name) / "stream.flac"
+        path.write_bytes(b"audio" * (700 * 1024))
+        files = [{"path": path, "name": "stream.flac", "member": None, "number": 1}]
+        handle = path.open("rb")
+        with mock.patch.object(Path, "open", return_value=handle):
+            chunks = webapp.playlist_zip_chunks(files)
+            self.assertTrue(next(chunks).startswith(b"PK"))
+            self.assertEqual(handle.tell(), 0)
+            self.assertLessEqual(len(next(chunks)), 1024 * 1024)
+            self.assertEqual(handle.tell(), 1024 * 1024)
+            chunks.close()
+            self.assertTrue(handle.closed)
+        chunks = list(webapp.playlist_zip_chunks(files))
+        self.assertLessEqual(max(map(len, chunks)), 1024 * 1024)
+        with zipfile.ZipFile(io.BytesIO(b"".join(chunks))) as archive:
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.getinfo("001 - stream.flac").extract_version, 45)
+            self.assertEqual(archive.read("001 - stream.flac"), path.read_bytes())
+
     async def test_playlist_zip_download_is_owned_ordered_and_handles_unavailable_files(self) -> None:
         user = webapp.local_create_user("zip@example.com", "secret123")
         foreign = webapp.local_create_user("zip-other@example.com", "secret123")
@@ -1046,9 +1066,6 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.status, 429)
                 finally:
                     app[webapp.PLAYLIST_ZIP_LOCK_KEY].release()
-                with mock.patch.object(webapp.shutil, "disk_usage", return_value=mock.Mock(free=0)):
-                    response = await client.get(ticket["url"])
-                    self.assertEqual(response.status, 507)
                 response = await client.get("/api/playlist-files/invalid")
                 self.assertEqual(response.status, 403)
                 for value in app[webapp.PLAYLIST_TICKETS_KEY].values():
@@ -1057,7 +1074,14 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 403)
                 deliveries["one"]["size"] = 5 * 1024 ** 3
                 response = await client.post("/api/playlists/zip/download-ticket", json={}, headers=headers)
-                self.assertEqual(response.status, 400)
+                self.assertEqual(response.status, 200)
+                large_ticket = await response.json()
+                with mock.patch.object(tempfile, "TemporaryFile", side_effect=AssertionError("No temporary ZIP")):
+                    response = await client.get(large_ticket["url"])
+                    self.assertEqual(response.status, 200)
+                    self.assertNotIn("Content-Length", response.headers)
+                    with zipfile.ZipFile(io.BytesIO(await response.read())) as archive:
+                        self.assertEqual(archive.read("002 - same.flac"), b"first-audio")
                 deliveries.clear()
                 response = await client.post("/api/playlists/zip/download-ticket", json={}, headers=headers)
                 self.assertEqual(response.status, 400)
