@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import sys
 import tempfile
@@ -989,6 +990,77 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             deleted = await client.delete(f"/api/playlists/{result['playlist_id']}", json={}, headers=headers)
             self.assertEqual(deleted.status, 200)
             self.assertEqual(webapp.local_imports(user["id"]), [])
+
+    async def test_playlist_zip_download_is_owned_ordered_and_handles_unavailable_files(self) -> None:
+        user = webapp.local_create_user("zip@example.com", "secret123")
+        foreign = webapp.local_create_user("zip-other@example.com", "secret123")
+        app = webapp.create_app()
+        app.cleanup_ctx.clear()
+        app[webapp.AUTH_CACHE_KEY][hashlib.sha256(TEST_TOKEN.encode()).hexdigest()] = (
+            time.monotonic() + 3600, user)
+        headers = {"Authorization": f"Bearer {TEST_TOKEN}"}
+        folder = Path(self.temporary.name)
+        first = folder / "one.flac"
+        first.write_bytes(b"first-audio")
+        second = folder / "two.zip"
+        with zipfile.ZipFile(second, "w") as archive:
+            archive.writestr("../../same.flac", b"second-audio")
+        deliveries = {
+            "one": {"path": first, "name": "same.flac", "size": first.stat().st_size},
+            "two": {"path": second, "name": "same.flac", "size": second.stat().st_size},
+        }
+        with webapp.local_db() as db:
+            db.execute("insert into playlists(id,user_id,name,created_at) values(?,?,?,?)",
+                       ("zip", user["id"], "Ma playlist", "now"))
+            db.execute("insert into playlists(id,user_id,name,created_at) values(?,?,?,?)",
+                       ("foreign", foreign["id"], "Private", "now"))
+            for job in ("one", "missing", "two"):
+                db.execute("insert into playlist_items(playlist_id,job_id,created_at) values(?,?,?)", ("zip", job, "now"))
+            db.execute("insert into library_orders(user_id,scope,track_ids) values(?,?,?)",
+                       (user["id"], "playlist:zip", '["two","one","missing"]'))
+        def delivery(job, owner):
+            self.assertEqual(owner, user["id"])
+            return deliveries.get(job)
+        with mock.patch.object(webapp, "delivery_for_job", side_effect=delivery):
+            async with TestClient(TestServer(app)) as client:
+                response = await client.post("/api/playlists/zip/download-ticket", json={})
+                self.assertEqual(response.status, 401)
+                response = await client.post("/api/playlists/foreign/download-ticket", json={}, headers=headers)
+                self.assertEqual(response.status, 404)
+                response = await client.post("/api/playlists/zip/download-ticket", json={}, headers=headers)
+                self.assertEqual(response.status, 200)
+                ticket = await response.json()
+                self.assertEqual((ticket["count"], ticket["skipped"]), (2, 1))
+                response = await client.get(ticket["url"])
+                self.assertEqual(response.status, 200)
+                self.assertIn("attachment", response.headers["Content-Disposition"])
+                with zipfile.ZipFile(io.BytesIO(await response.read())) as archive:
+                    self.assertEqual(archive.namelist(), ["001 - same.flac", "002 - same.flac"])
+                    self.assertEqual(archive.read("001 - same.flac"), b"second-audio")
+                    self.assertEqual(archive.read("002 - same.flac"), b"first-audio")
+                self.assertTrue(first.exists())
+                self.assertTrue(second.exists())
+                await app[webapp.PLAYLIST_ZIP_LOCK_KEY].acquire()
+                try:
+                    response = await client.post("/api/playlists/zip/download-ticket", json={}, headers=headers)
+                    self.assertEqual(response.status, 429)
+                finally:
+                    app[webapp.PLAYLIST_ZIP_LOCK_KEY].release()
+                with mock.patch.object(webapp.shutil, "disk_usage", return_value=mock.Mock(free=0)):
+                    response = await client.get(ticket["url"])
+                    self.assertEqual(response.status, 507)
+                response = await client.get("/api/playlist-files/invalid")
+                self.assertEqual(response.status, 403)
+                for value in app[webapp.PLAYLIST_TICKETS_KEY].values():
+                    value["expires"] = 0
+                response = await client.get(ticket["url"])
+                self.assertEqual(response.status, 403)
+                deliveries["one"]["size"] = 5 * 1024 ** 3
+                response = await client.post("/api/playlists/zip/download-ticket", json={}, headers=headers)
+                self.assertEqual(response.status, 400)
+                deliveries.clear()
+                response = await client.post("/api/playlists/zip/download-ticket", json={}, headers=headers)
+                self.assertEqual(response.status, 400)
 
     async def test_library_stream_and_playlists_use_owned_deliveries(self) -> None:
         user = webapp.local_create_user("library@example.com", "secret123")

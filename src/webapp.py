@@ -12,9 +12,11 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import smtplib
 import sqlite3
 import subprocess
+import tempfile
 import time
 import uuid
 import zipfile
@@ -104,6 +106,8 @@ SEARCH_SEMAPHORES_KEY = web.AppKey("search_semaphores", dict)
 STATUS_CACHE_KEY = web.AppKey("status_cache", dict)
 AUTH_CACHE_KEY = web.AppKey("auth_cache", dict)
 ADMIN_SESSIONS_KEY = web.AppKey("admin_sessions", dict)
+PLAYLIST_TICKETS_KEY = web.AppKey("playlist_tickets", dict)
+PLAYLIST_ZIP_LOCK_KEY = web.AppKey("playlist_zip_lock", asyncio.Lock)
 
 
 class PublicError(Exception):
@@ -1372,6 +1376,7 @@ async def api_middleware(
             request.path not in public_paths
             and not request.path.startswith("/api/files/")
             and not request.path.startswith("/api/stream/")
+            and not request.path.startswith("/api/playlist-files/")
         ):
             request["user"] = await authenticate_request(request)
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
@@ -2885,6 +2890,105 @@ async def collection_export_handler(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
+def playlist_download_files(user_id: str, playlist_id: str) -> dict[str, Any]:
+    with local_db() as db:
+        playlist = db.execute("select name from playlists where id=? and user_id=?",
+                              (playlist_id, user_id)).fetchone()
+        if not playlist:
+            raise PublicError("Playlist introuvable.", status=404)
+        ids = [row["job_id"] for row in db.execute(
+            "select job_id from playlist_items where playlist_id=? order by created_at, rowid", (playlist_id,))]
+        order = db.execute("select track_ids from library_orders where user_id=? and scope=?",
+                           (user_id, f"playlist:{playlist_id}")).fetchone()
+        if order:
+            ranks = {job: i for i, job in enumerate(json.loads(order["track_ids"]))}
+            ids.sort(key=lambda job: ranks.get(job, len(ranks)))
+    files = []
+    for number, job_id in enumerate(ids, 1):
+        delivery = delivery_for_job(job_id, user_id)
+        if delivery:
+            member = single_zip_audio(delivery["path"]) if delivery["path"].suffix.lower() == ".zip" else None
+            files.append({**delivery, "member": member, "number": number})
+    if not files:
+        raise PublicError("Aucun fichier disponible dans cette playlist.")
+    size = sum(item["member"].file_size if item["member"] else item["size"] for item in files)
+    if size > 4 * 1024 ** 3:
+        raise PublicError("La playlist depasse 4 Go. Telechargez-la en plusieurs playlists.")
+    return {"name": playlist["name"], "files": files, "skipped": len(ids) - len(files), "size": size}
+
+
+async def playlist_download_ticket_handler(request: web.Request) -> web.Response:
+    if request.app[PLAYLIST_ZIP_LOCK_KEY].locked():
+        raise PublicError("Une archive est deja en cours de telechargement. Reessayez apres sa fin.", status=429)
+    user_id, playlist_id = request["user"]["id"], request.match_info["playlist_id"]
+    result = await asyncio.to_thread(playlist_download_files, user_id, playlist_id)
+    tickets = request.app[PLAYLIST_TICKETS_KEY]
+    now = time.monotonic()
+    for key, value in list(tickets.items()):
+        if value["expires"] <= now:
+            del tickets[key]
+    if len(tickets) >= 100:
+        raise PublicError("Trop de demandes de telechargement. Reessayez dans quelques minutes.", status=429)
+    token = secrets.token_urlsafe(32)
+    tickets[hashlib.sha256(token.encode()).hexdigest()] = {
+        "user_id": user_id, "playlist_id": playlist_id, "expires": now + DOWNLOAD_TICKET_SECONDS}
+    return web.json_response({"url": f"/api/playlist-files/{token}", "count": len(result["files"]),
+                              "skipped": result["skipped"]})
+
+
+def write_playlist_zip(target, files):
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+        for item in files:
+            member = item["member"]
+            filename = Path((member.filename if member else item["name"]).replace("\\", "/")).name
+            filename = re.sub(r'[\x00-\x1f\x7f]', "_", filename)
+            name = f'{item["number"]:03d} - {filename}'
+            if member:
+                with zipfile.ZipFile(item["path"]) as source, source.open(member) as data:
+                    with archive.open(name, "w", force_zip64=True) as output:
+                        shutil.copyfileobj(data, output, length=1024 * 1024)
+            else:
+                archive.write(item["path"], name)
+    target.seek(0)
+
+
+async def playlist_files_handler(request: web.Request) -> web.StreamResponse:
+    token = request.match_info["token"]
+    ticket = request.app[PLAYLIST_TICKETS_KEY].get(hashlib.sha256(token.encode()).hexdigest())
+    if not ticket or ticket["expires"] <= time.monotonic():
+        raise PublicError("Lien expire. Relancez le telechargement depuis la playlist.", status=403)
+    lock = request.app[PLAYLIST_ZIP_LOCK_KEY]
+    if lock.locked():
+        raise PublicError("Une archive est deja en cours de telechargement. Reessayez apres sa fin.", status=429)
+    async with lock:
+        result = await asyncio.to_thread(playlist_download_files, ticket["user_id"], ticket["playlist_id"])
+        if shutil.disk_usage(tempfile.gettempdir()).free < result["size"] + 512 * 1024 ** 2:
+            raise PublicError("Espace temporaire insuffisant pour preparer cette playlist.", status=507)
+        with tempfile.TemporaryFile() as archive:
+            task = asyncio.create_task(asyncio.to_thread(write_playlist_zip, archive, result["files"]))
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+            except (OSError, zipfile.BadZipFile) as exc:
+                raise PublicError("Un fichier est devenu indisponible. Relancez le telechargement.") from exc
+            size = archive.seek(0, os.SEEK_END)
+            archive.seek(0)
+            filename = re.sub(r'[/\\\x00-\x1f\x7f]', "_", result["name"])[:100] + ".zip"
+            response = web.StreamResponse(headers={
+                "Content-Type": "application/zip", "Content-Length": str(size),
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}",
+                "Cache-Control": "no-store",
+            })
+            _security_headers(response, request)
+            await response.prepare(request)
+            while chunk := await asyncio.to_thread(archive.read, 1024 * 1024):
+                await response.write(chunk)
+            await response.write_eof()
+            return response
+
+
 async def playlist_folder_handler(request: web.Request) -> web.Response:
     user_id = request["user"]["id"]
     folder_id = request.match_info.get("folder_id")
@@ -3449,6 +3553,8 @@ def create_app() -> web.Application:
     }
     app[AUTH_CACHE_KEY] = {}
     app[ADMIN_SESSIONS_KEY] = {}
+    app[PLAYLIST_TICKETS_KEY] = {}
+    app[PLAYLIST_ZIP_LOCK_KEY] = asyncio.Lock()
     app.cleanup_ctx.append(playlist_import_context)
     app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
@@ -3475,6 +3581,8 @@ def create_app() -> web.Application:
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
     app.router.add_get("/api/playlists/{playlist_id}/export", collection_export_handler)
+    app.router.add_post("/api/playlists/{playlist_id}/download-ticket", playlist_download_ticket_handler)
+    app.router.add_get("/api/playlist-files/{token}", playlist_files_handler)
     app.router.add_get("/api/tags/{tag_id}/export", collection_export_handler)
     app.router.add_post("/api/playlist-folders", playlist_folder_handler)
     app.router.add_patch("/api/playlist-folders/{folder_id}", playlist_folder_handler)

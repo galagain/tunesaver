@@ -1285,6 +1285,22 @@ function renderCollectionActions() {
     actions.append(download);
   }
   if (collection === 'playlists') {
+    const archive = document.createElement('button'); archive.type = 'button';
+    appendUIIcon(archive, 'LogOut');
+    archive.append(document.createTextNode('Télécharger toute la playlist'));
+    archive.addEventListener('click', async () => {
+      archive.disabled = true;
+      try {
+        const result = await requestJson(`/api/playlists/${item.id}/download-ticket`, { method: 'POST', body: '{}' });
+        if (result.skipped && !await siteDialogs.confirm(`${result.count} fichier(s) disponible(s). ${result.skipped} son(s) en cours, en échec ou indisponible(s) seront exclus. Télécharger les fichiers disponibles ?`)) return;
+        const link = document.createElement('a');
+        link.href = result.url; link.download = '';
+        document.body.append(link); link.click(); link.remove();
+        showToast('Préparation du ZIP. Le téléchargement va démarrer.');
+      } catch (error) { showToast(error.message, 'error'); }
+      finally { archive.disabled = false; }
+    });
+    actions.append(archive);
     const label = document.createElement('label'); label.textContent = 'Dossier';
     const select = document.createElement('select'); select.setAttribute('aria-label', 'Déplacer la playlist dans un dossier');
     select.append(new Option('À la racine', ''));
