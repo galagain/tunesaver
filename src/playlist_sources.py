@@ -1,6 +1,7 @@
 """Playlist metadata readers and conservative cross-catalog matching."""
 
 import json
+import math
 import os
 import re
 import signal
@@ -296,29 +297,81 @@ def normalized_words(value):
     return " ".join(re.findall(r"[a-z0-9]+", value))
 
 
+def split_featured_artists(value):
+    guests = set()
+
+    def extract(match):
+        credit = match.group(1).strip()
+        # Ambiguous credits containing version words must not erase a remix label.
+        if re.search(r"\b(remix|edit|dub|mix|live|instrumental|acoustic|extended)\b", credit, re.I):
+            return match.group(0)
+        guests.update(normalized_words(credit).split())
+        return " "
+
+    marker = r"(?:feat\.?|ft\.?|featuring)\s+"
+    value = re.sub(r"[\(\[]\s*" + marker + r"([^()\[\]]+)[\)\]]", extract, value, flags=re.I)
+    value = re.sub(r"\s+" + marker + r"([^()\[\]]+?)(?=\s+[-\u2013\u2014]\s+|[\(\[]|$)",
+                   extract, value, flags=re.I)
+    return normalized_words(value), guests
+
+
+def matching_metadata(track):
+    title, guests = split_featured_artists(track.get("title", ""))
+    artist, artist_guests = split_featured_artists(track.get("artist", ""))
+    mix = normalized_words(track.get("mix", ""))
+    if mix and mix not in {"original mix", "original"} and mix not in title:
+        title += " " + mix
+    title = " ".join(re.sub(r"\b(original mix|original version)\b", "", title).split())
+    return title, set(artist.split()), guests | artist_guests
+
+
+def matching_duration(value):
+    try:
+        if isinstance(value, str) and re.fullmatch(r"\d+:\d{2}(?::\d{2})?", value):
+            seconds = 0
+            for part in value.split(":"):
+                seconds = seconds * 60 + int(part)
+        else:
+            seconds = float(value)
+        return seconds if math.isfinite(seconds) and seconds > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def split_release_edition(title):
+    match = re.search(r"\s+(radio edit|radio version|extended mix|extended version|single version|album version|edit)$", title)
+    return (title[:match.start()], match[1]) if match else (title, "")
+
+
 def matching_track(track, candidates):
-    title = normalized_words(track["title"])
-    artist = set(normalized_words(track.get("artist", "")).split())
+    title, artist, guests = matching_metadata(track)
     if not title or not artist:
         return None
+    reference_duration = matching_duration(track.get("duration"))
     matches = []
-    for candidate in candidates:
-        other_title = normalized_words(candidate.get("title", ""))
-        mix = normalized_words(candidate.get("mix", ""))
-        if mix and mix not in {"original mix", "original"} and mix not in other_title:
-            other_title += " " + mix
-        clean = lambda text: re.sub(r"\b(original mix|original version)\b", "", text).strip()
-        if clean(title) != clean(other_title):
+    for index, candidate in enumerate(candidates):
+        other_title, other_artist, other_guests = matching_metadata(candidate)
+        seconds = matching_duration(candidate.get("duration"))
+        difference = abs(reference_duration - seconds) if reference_duration and seconds else None
+        if difference is not None and difference > 12:
             continue
-        other_artist = set(normalized_words(candidate.get("artist", "")).split())
-        if not other_artist or len(artist & other_artist) / max(len(artist), len(other_artist)) < 0.8:
+        if title != other_title:
+            base, edition = split_release_edition(title)
+            other_base, other_edition = split_release_edition(other_title)
+            # Some catalogs omit standard release labels. Accept a missing label
+            # only with near-identical durations; never equate two explicit editions.
+            if (base != other_base or bool(edition) == bool(other_edition)
+                    or difference is None or difference > 2):
+                continue
+        if guests and other_guests and len(guests & other_guests) / max(len(guests), len(other_guests)) < 0.8:
             continue
-        duration = str(candidate.get("duration", ""))
-        seconds = 0
-        if re.fullmatch(r"\d+:\d{2}(?::\d{2})?", duration):
-            for part in duration.split(":"):
-                seconds = seconds * 60 + int(part)
-        if track.get("duration") and seconds and abs(track["duration"] - seconds) > 12:
+        # A credited guest can live in the title, the artist list, or be omitted
+        # by the source. Unknown additional artists still fail the original check.
+        primary = artist - (guests | other_guests)
+        other_primary = other_artist - (guests | other_guests)
+        if (not primary or not other_primary
+                or len(primary & other_primary) / max(len(primary), len(other_primary)) < 0.8):
             continue
-        matches.append(candidate)
-    return matches[0] if matches else None
+        score = difference if difference is not None else (math.inf if reference_duration else 0)
+        matches.append((score, index, candidate))
+    return min(matches, key=lambda match: match[:2])[2] if matches else None

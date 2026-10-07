@@ -1633,6 +1633,7 @@ def normalize_tidal_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 quality=quality,
                 duration=duration,
                 cover_url=cover_url,
+                mix=str(track.get("version") or ""),
                 source_url=download_url,
             )
         )
@@ -1681,6 +1682,10 @@ def normalize_beatport_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
         bpm_label = f"{int(bpm)} BPM" if isinstance(bpm, (int, float)) and bpm else ""
         key = track.get("key") if isinstance(track.get("key"), dict) else {}
         key_label = str(key.get("name", "")).strip()
+        seconds = playlist_sources.matching_duration(track.get("length"))
+        if seconds is None and isinstance(track.get("length_ms"), (int, float)):
+            seconds = playlist_sources.matching_duration(track["length_ms"] / 1000)
+        duration = format_duration(seconds) if seconds else ""
         cover_url = first_image_url(track.get("image")) or first_image_url(release.get("image")) or first_image_url(track.get("images")) or first_image_url(release.get("images"))
 
         safe_slug = quote(slug, safe="-")
@@ -1695,6 +1700,7 @@ def normalize_beatport_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 album=album_title,
                 label=label,
                 mix=mix_name if mix_name.lower() != "original mix" else "",
+                duration=duration,
                 bpm=bpm_label,
                 key=key_label,
                 cover_url=cover_url,
@@ -1749,6 +1755,7 @@ def normalize_qobuz_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 quality=quality,
                 duration=duration,
                 cover_url=cover_url,
+                mix=str(track.get("version") or ""),
                 source_url=download_url,
             )
         )
