@@ -306,7 +306,8 @@ def soundcloud_metadata(playlist, fetch_missing):
         artist = publisher.get("artist") or (entry.get("user") or {}).get("username", "")
         if not publisher.get("artist") and " - " in title:
             artist, title = title.split(" - ", 1)
-        tracks.append({"title": title, "artist": artist, "duration": (entry.get("duration") or 0) / 1000})
+        duration = entry.get("full_duration") or (0 if entry.get("policy") == "SNIP" else entry.get("duration")) or 0
+        tracks.append({"title": title, "artist": artist, "duration": duration / 1000})
     return {"name": playlist.get("title") or "SoundCloud", "tracks": tracks, "total": total}
 
 
