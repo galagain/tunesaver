@@ -1295,6 +1295,13 @@ def local_playlist_remove_track(user_id: str, playlist_id: str, job_id: str) -> 
             "delete from playlist_items where playlist_id = ? and job_id = ?",
             (playlist_id, job_id),
         )
+        scope = f"playlist:{playlist_id}"
+        order = db.execute("select track_ids from library_orders where user_id=? and scope=?",
+                           (user_id, scope)).fetchone()
+        if order:
+            ids = [item for item in json.loads(order["track_ids"]) if item != job_id]
+            db.execute("update library_orders set track_ids=? where user_id=? and scope=?",
+                       (json.dumps(ids), user_id, scope))
 
 
 def local_tag_remove_track(user_id: str, tag_id: str, job_id: str) -> None:

@@ -1382,7 +1382,11 @@ function manualLibraryTracks() {
   const tracks = [...liveTracksForLibrary(), ...stored];
   const collection = selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
     : selectedTagId ? libraryState.tags.find(t => t.id === selectedTagId) : null;
-  const ranks = new Map((libraryState.orders?.[libraryScope()] || collection?.track_ids || []).map((id, index) => [id, index]));
+  const order = [...new Set([
+    ...(libraryState.orders?.[libraryScope()] || []),
+    ...(collection?.track_ids || []),
+  ])];
+  const ranks = new Map(order.map((id, index) => [id, index]));
   return tracks.sort((a, b) => (ranks.get(a.job_id) ?? ranks.size) - (ranks.get(b.job_id) ?? ranks.size));
 }
 
