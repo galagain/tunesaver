@@ -1,6 +1,6 @@
 # Playlist import checks
 
-## Three playlists and three albums
+## Complete input matrix (16 cases)
 
 From the project directory:
 
@@ -18,6 +18,14 @@ The same run also reads these albums, using the same ordered track-list format:
 - Spotify: https://open.spotify.com/album/4m2880jivSbbyEGAKfITCa
 - Apple Music: https://music.apple.com/us/album/random-access-memories/617154241
 - SoundCloud: https://soundcloud.com/daftpunkofficialmusic/sets/random-access-memories-10th
+- TIDAL: https://tidal.com/album/20115556
+- Beatport release: https://www.beatport.com/release/random-access-memories/1091742
+- Qobuz: https://www.qobuz.com/fr-fr/album/random-access-memories-daft-punk/0886443927087
+
+`TRACKS` in `run_playlist_tests.py` also lists one verified direct song URL for
+each of these six services. A manual `Artist - Title` entry completes the matrix:
+3 playlists, 6 albums/releases, 6 tracks, 1 manual entry. Beatport calls albums
+and EPs releases (`/release/`); these are read as ordered album track lists.
 
 The first two are Random Access Memories; the SoundCloud case is its 10th
 Anniversary Edition. On 2026-10-07 they returned 13, 13 and 22 tracks respectively.
@@ -27,11 +35,20 @@ the collection kind. SoundCloud albums use the existing sets reader.
 
 Each execution creates a unique directory under `data/playlist-tests/`, containing
 TXT and JSON exports for successful reads and a `report.json` with counts,
-timings and failures. All six cases are attempted even if one fails. Exit
-code is 0 only when all six succeed, otherwise 1 (130 on interruption).
+timings and failures. `inputs.json` groups all successful collections using the
+same versioned schema. A failed case is listed in the report, never silently
+included as a partial collection. All 16 cases are attempted even if one fails.
+Exit code is 0 only when all cases succeed, otherwise 1 (130 on interruption).
 Use `--output-dir PATH` for a different parent directory, or omit `--docker`
 when running inside the configured Python environment. Counts are checked
 against source metadata, not historical hard-coded totals.
+
+Every track has the same fields, including `target` and `requires_matching`.
+Native TIDAL/Beatport/Qobuz entries have a validated direct track target and
+`requires_matching: false`. Other sources have `target: null` and
+`requires_matching: true`. Tests check this contract, order and completeness.
+The Python matcher skips both album and track searches for native entries.
+No matching or audio downloading occurs in this metadata test runner.
 
 Imports have two independent phases:
 

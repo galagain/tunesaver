@@ -18,6 +18,36 @@ from test_spotify_browser import page
 class PlaylistExportTests(unittest.TestCase):
     url = "https://open.spotify.com/playlist/57HAIqxdHbi332994xcOKc"
 
+    def test_native_tracks_albums_and_external_tracks_share_schema(self):
+        from catalog_matcher import Catalog, match_collection, read_input
+        urls = [("tidal", "https://tidal.com/track/20115557", "https://tidal.com/album/20115556"),
+                ("beatport", "https://www.beatport.com/track/song/4400239", "https://www.beatport.com/release/album/1091742"),
+                ("qobuz", "https://play.qobuz.com/track/9140024", "https://www.qobuz.com/fr-fr/album/album/0886443927087")]
+        fields = None
+        for provider, track_url, album_url in urls:
+            native = {"title": "Song", "artist": "Artist", "duration": 180,
+                      "provider": provider, "source_url": track_url}
+            album = {"name": "Album", "kind": "album", "provider": "tiddl" if provider == "tidal" else provider,
+                     "source": album_url, "tracks": [native, native]}
+            with mock.patch.object(Catalog, "track", return_value=native), \
+                 mock.patch.object(Catalog, "album", return_value=album), \
+                 mock.patch.object(Catalog, "search_tracks", side_effect=AssertionError("No search")), \
+                 mock.patch.object(Catalog, "search_albums", side_effect=AssertionError("No search")):
+                for url in (track_url, album_url):
+                    result = export.read_playlist(url)
+                    item = result["tracks"][0]
+                    fields = fields or set(item)
+                    self.assertEqual(set(item), fields)
+                    self.assertEqual(item["target"]["provider"], provider)
+                    self.assertEqual(item["target"]["url"], track_url)
+                    self.assertFalse(item["requires_matching"])
+                    self.assertEqual(match_collection(read_input(url, Catalog()), Catalog())["matched"], result["total"])
+        with mock.patch("catalog_matcher.public_track", return_value={"title": "Song", "artist": "Artist"}):
+            external = export.read_playlist("https://open.spotify.com/track/0dEIca2nhcxDUV8C5QkPYb")
+        self.assertEqual(set(external["tracks"][0]), fields)
+        self.assertIsNone(external["tracks"][0]["target"])
+        self.assertTrue(external["tracks"][0]["requires_matching"])
+
     def test_large_playlist_preserves_order_duplicates_and_durations(self):
         tracks = [{"title": "Same", "artist": "Artist", "duration": "3:21"}] * 1201
         with mock.patch.object(spotify_http, "read_playlist", return_value={"name": "Large", "total": 1201, "tracks": tracks}):

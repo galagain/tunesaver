@@ -32,6 +32,11 @@ https://soundcloud.com/daftpunkofficialmusic/sets/random-access-memories-10th
 
 ## Ordre et validation
 
+Un lien natif TIDAL, Beatport ou Qobuz est prioritaire sur cet ordre : son
+identifiant est deja connu. Les metadonnees sont lues directement, sans recherche
+de remplacement, et le rapport indique `method: direct`. Cela vaut aussi pour
+tous les titres d'un album natif ou d'une playlist native deja resolue.
+
 1. TIDAL, puis Beatport, puis Qobuz. Une fois un morceau apparie, les sources
    suivantes ne sont plus sollicitees pour celui-ci.
 2. Pour un album, chaque source est d'abord interrogee sur l'album entier.
@@ -54,7 +59,7 @@ Une recherche d'album peut etre refusee si son edition ou sa liste differe.
 
 JSON avec une section par entree, les tentatives d'album et chaque morceau :
 `matched`, `not_found`, `ambiguous`, `unavailable` ou `error`. Un appariement
-contient la plateforme, le lien et la methode (`album` ou `track`). Les erreurs
+contient la plateforme, le lien et la methode (`album`, `track` ou `direct`). Les erreurs
 de connexion ne sont pas confondues avec une absence de resultat.
 
 `-o -` ecrit le JSON sur stdout ; la progression reste sur stderr.

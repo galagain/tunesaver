@@ -18,6 +18,22 @@ class MatchError(ValueError):
     pass
 
 
+def direct_target(track):
+    provider = {"tiddl": "tidal"}.get(track.get("provider"), track.get("provider"))
+    url = track.get("download_url") or track.get("source_url") or ""
+    host = urlparse(url).hostname
+    hosts = {"tidal": {"tidal.com", "listen.tidal.com", "www.tidal.com"},
+             "beatport": {"beatport.com", "www.beatport.com"},
+             "qobuz": {"play.qobuz.com", "open.qobuz.com", "www.qobuz.com", "qobuz.com"}}
+    parsed = urlparse(url)
+    if (provider in hosts and host in hosts[provider] and parsed.scheme == "https"
+            and not parsed.username and not parsed.password and parsed.port in (None, 443)
+            and re.fullmatch(r"/(?:browse/|[a-z]{2}(?:-[a-z]{2})?/)?track/(?:[^/]+/)?[0-9]+/?", parsed.path)
+            and not track.get("unavailable")):
+        return {"provider": provider, "kind": "track", "url": url, "method": "direct"}
+    return None
+
+
 def match_track(track, candidates):
     def metadata(item):
         mix = item.get("mix", "")
@@ -72,6 +88,12 @@ def match_collection(collection, catalog, progress=None):
     rows = [{"number": n, "input": track, "status": "unavailable" if track.get("unavailable") else "not_found",
              "match": None, "attempts": []} for n, track in enumerate(collection["tracks"], 1)]
     album_attempts = []
+    for row in rows:
+        target = direct_target(row["input"])
+        if target:
+            row.update(status="matched", match={**row["input"], "provider": target["provider"],
+                                               "source_url": target["url"], "download_url": target["url"],
+                                               "method": "direct"})
     for provider in PROVIDERS:
         pending = [row for row in rows if row["match"] is None and row["status"] != "unavailable"]
         if not pending:
@@ -127,10 +149,13 @@ def safe_error(exc):
 
 class Catalog:
     def __init__(self):
-        import webapp
-        self.web = webapp
         self.cache = {}
         self.unavailable = {}
+
+    @property
+    def web(self):
+        import webapp
+        return webapp
 
     def api(self, provider, path, **params):
         if provider in self.unavailable:
@@ -244,7 +269,8 @@ class Catalog:
         normalized = self.normalize(provider, tracks)
         if len(normalized) != total:
             raise MatchError("Des titres de l'album sont indisponibles.")
-        return {"name": name, "kind": "album", "source": url, "url": url, "tracks": normalized}
+        return {"name": name, "kind": "album", "provider": "tiddl" if provider == "tidal" else provider,
+                "source": url, "url": url, "tracks": normalized}
 
     def search_albums(self, provider, collection):
         name = collection["name"]
@@ -289,7 +315,7 @@ def read_input(value, catalog):
     if not re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*://", value):
         parts = re.split(r"\s+(?:-|\u00b7|\u2013|\u2014)\s+", value, maxsplit=1)
         track = {"artist": parts[0], "title": parts[1]} if len(parts) == 2 else {"artist": "", "title": value}
-        return {"name": value, "kind": "track", "source": "manual", "tracks": [track]}
+        return {"name": value, "kind": "track", "provider": "manual", "source": "manual", "tracks": [track]}
     parsed = urlparse(value)
     if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443):
         raise MatchError("Utilisez un lien HTTPS public de musique.")
@@ -306,25 +332,20 @@ def read_input(value, catalog):
         if kind in {"album", "release"}:
             return catalog.album(provider, identifier)
         track = catalog.track(provider, identifier)
-        return {"name": track["title"], "kind": "track", "source": value, "tracks": [track]}
+        return {"name": track["title"], "kind": "track", "provider": "tiddl" if provider == "tidal" else provider,
+                "source": value, "tracks": [track]}
     try:
         sources.playlist_source(value)
     except sources.PlaylistError:
         track = public_track(value)
-        return {"name": track["title"], "kind": "track", "source": value, "tracks": [track]}
+        provider = {"open.spotify.com": "spotify", "music.apple.com": "applemusic",
+                    "soundcloud.com": "soundcloud", "www.soundcloud.com": "soundcloud"}[host]
+        return {"name": track["title"], "kind": "track", "provider": provider, "source": value,
+                "tracks": [{**track, "source_url": value}]}
     import export_playlist
-    exported = export_playlist.read_playlist(value)
-    kind = "album" if "/album/" in path else "playlist"
-    if host in {"soundcloud.com", "www.soundcloud.com"}:
-        # SoundCloud uses /sets/ for both kinds; the public hydration identifies albums.
-        html = sources.get_page(value).text
-        match = re.search(r"window\.__sc_hydration\s*=\s*(\[.*?\]);", html, re.S)
-        if match:
-            data = next((x["data"] for x in json.loads(match[1]) if x.get("hydratable") == "playlist"), {})
-            if data.get("set_type") in {"album", "ep", "single", "compilation"} or data.get("is_album"):
-                kind = "album"
-    return {"name": exported["name"], "kind": kind, "source": value,
-            "tracks": [{**t, "duration": t["duration_seconds"]} for t in exported["tracks"]]}
+    provider, canonical, payload = export_playlist.read_playlist_metadata(value)
+    kind = payload.get("kind") or ("album" if "/album/" in path else "playlist")
+    return {**payload, "kind": kind, "provider": provider, "source": canonical}
 
 
 def public_track(url):

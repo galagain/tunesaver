@@ -1,8 +1,46 @@
-# Exporter une playlist sans telecharger les sons
+# Exporter des entrees musicales sans telecharger les sons
 
 Le script `export_playlist.py` accepte les playlists Spotify, Apple Music,
 SoundCloud, Beatport (playlists et charts), TIDAL et Qobuz. Il n'effectue aucune
 recherche de correspondance et n'ajoute rien aux comptes TuneSaver.
+
+Il accepte aussi les liens de morceaux des six plateformes, les albums natifs
+TIDAL/Qobuz, les releases Beatport et les noms saisis `Artiste - Titre`.
+Tous produisent le meme schema JSON (`schema_version: 1`) : `name`, `source`,
+`url`, `kind` (`playlist`, `album` ou `track`), `total` et `tracks`.
+Un morceau isole est une liste a un element, pas un format special.
+
+Chaque morceau expose les memes champs : `number`, `title`, `artist`,
+`duration_seconds`, `url`, `unavailable`, `mix`, `album`, `target`,
+`requires_matching`. Pour un lien natif TIDAL, Beatport ou Qobuz :
+
+```json
+{
+  "number": 1,
+  "title": "Give Life Back to Music",
+  "artist": "Daft Punk",
+  "duration_seconds": 275,
+  "url": "https://listen.tidal.com/track/20115557",
+  "unavailable": false,
+  "mix": "",
+  "album": "Random Access Memories",
+  "target": {
+    "provider": "tidal",
+    "kind": "track",
+    "url": "https://listen.tidal.com/track/20115557",
+    "method": "direct"
+  },
+  "requires_matching": false
+}
+```
+
+Les titres des albums natifs sont eux aussi resolus directement. Une entree
+externe a `target: null` et `requires_matching: true`. Ces champs preparent un
+futur telechargement sans lancer de recherche pour les liens natifs. Le moteur
+`match_music.py` saute deja ces recherches. `tiddl` reste l'identifiant historique
+de la source TIDAL au niveau collection ; la cible utilise `tidal`.
+Le CSV encode `target` en JSON dans sa colonne. Le TXT reste une vue lisible ;
+utiliser le JSON comme fichier d'echange complet.
 
 Les albums Spotify et Apple Music, ainsi que les albums SoundCloud (`/sets/`),
 sont acceptes avec le meme format de sortie et le meme ordre de titres.

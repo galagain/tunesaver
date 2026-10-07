@@ -9,7 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 import match_music
-from catalog_matcher import Catalog, MatchError, match_album, match_collection, read_input, match_track, public_track
+from catalog_matcher import Catalog, MatchError, match_album, match_collection, read_input, match_track, public_track, direct_target
 import playlist_sources
 
 
@@ -22,6 +22,26 @@ def collection(kind="playlist", tracks=None):
 
 
 class CatalogMatcherTests(unittest.TestCase):
+    def test_native_links_skip_all_matching_for_tracks_and_albums(self):
+        for provider, url in [("tiddl", "https://listen.tidal.com/track/20115557"),
+                              ("beatport", "https://www.beatport.com/track/give-life-back-to-music/4400239"),
+                              ("qobuz", "https://play.qobuz.com/track/9140024")]:
+            for kind in ("track", "album", "playlist"):
+                catalog = mock.Mock()
+                source = track(provider=provider, source_url=url)
+                result = match_collection(collection(kind, [source, source] if kind != "track" else [source]), catalog)
+                self.assertEqual(result["matched"], result["total"])
+                self.assertTrue(all(row["match"]["method"] == "direct" for row in result["tracks"]))
+                self.assertTrue(all(row["attempts"] == [] for row in result["tracks"]))
+                catalog.search_tracks.assert_not_called()
+                catalog.search_albums.assert_not_called()
+
+    def test_direct_target_validates_host_and_kind(self):
+        for url in ("https://evil.test/track/1", "http://tidal.com/track/1", "https://tidal.com/album/1",
+                    "https://user@tidal.com/track/1", "https://tidal.com:8080/track/1"):
+            self.assertIsNone(direct_target(track(provider="tidal", source_url=url)))
+        self.assertIsNone(direct_target(track(provider="tidal", source_url="https://tidal.com/track/1", unavailable=True)))
+
     def test_priority_and_no_search_after_match(self):
         catalog = mock.Mock()
         catalog.search_tracks.side_effect = lambda p, q: [track()] if p == "beatport" else []

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export playlist metadata, without audio downloads or cross-catalog matching."""
+"""Export music inputs to one schema, without audio or cross-catalog matching."""
 
 import argparse
 import csv
@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 
-def read_playlist(url):
+def read_playlist_metadata(url):
     import playlist_sources as sources
 
     provider, identifier, canonical = sources.playlist_source(url)
@@ -33,6 +33,12 @@ def read_playlist(url):
         # Importing webapp does not start its server or access its database.
         import webapp
         payload = webapp.read_import_source(canonical)
+    return provider, canonical, payload
+
+
+def read_playlist(url):
+    from catalog_matcher import Catalog, read_input, direct_target
+    payload = read_input(url, Catalog())
     tracks = payload["tracks"]
     if payload.get("total", len(tracks)) != len(tracks):
         raise ValueError("Liste incomplete : aucun fichier ecrit.")
@@ -41,11 +47,15 @@ def read_playlist(url):
         title = track.get("title")
         if not isinstance(title, str) or not title.strip():
             raise ValueError("Titre manquant : aucun fichier ecrit.")
+        target = direct_target(track)
         rows.append({"number": number, "title": title, "artist": track.get("artist", ""),
                      "duration_seconds": duration_seconds(track.get("duration")),
                      "url": track.get("source_url") or track.get("download_url") or "",
-                     "unavailable": bool(track.get("unavailable"))})
-    return {"name": payload["name"], "source": provider, "url": canonical,
+                     "unavailable": bool(track.get("unavailable")),
+                     "mix": track.get("mix", ""), "album": track.get("album", ""),
+                     "target": target, "requires_matching": target is None})
+    return {"schema_version": 1, "name": payload["name"], "source": payload["provider"],
+            "url": payload["source"], "kind": payload["kind"],
             "total": len(rows), "tracks": rows}
 
 
@@ -95,9 +105,10 @@ def render(payload, format_name):
         return json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     if format_name == "csv":
         output = io.StringIO(newline="")
-        writer = csv.DictWriter(output, fieldnames=["number", "title", "artist", "duration_seconds", "url", "unavailable"])
+        writer = csv.DictWriter(output, fieldnames=["number", "title", "artist", "duration_seconds", "url", "unavailable",
+                                                  "mix", "album", "target", "requires_matching"])
         writer.writeheader()
-        writer.writerows(payload["tracks"])
+        writer.writerows({**track, "target": json.dumps(track.get("target"), ensure_ascii=False)} for track in payload["tracks"])
         return output.getvalue()
     lines = [one_line(payload["name"]), payload["url"], f"{payload['total']} titres", ""]
     for track in payload["tracks"]:
@@ -132,7 +143,7 @@ def write_output(path, content, *, force=False):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Lister une playlist Spotify, Apple Music, SoundCloud, Beatport, TIDAL ou Qobuz, sans telecharger les sons.")
+    parser = argparse.ArgumentParser(description="Lister une playlist, un album, un lien de morceau ou un nom Artiste - Titre, sans telecharger les sons.")
     parser.add_argument("url", help="Lien complet de la playlist")
     parser.add_argument("-o", "--output", default="playlist.txt", help="Fichier de sortie (defaut : playlist.txt), ou - pour le terminal")
     parser.add_argument("--format", choices=["txt", "json", "csv"], help="Defaut : extension du fichier, sinon txt")
