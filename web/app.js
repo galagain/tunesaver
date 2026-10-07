@@ -124,6 +124,7 @@ let adminChartMode = "tracks";
 let adminDailyStats = [];
 let selectedPlaylistId = "";
 let selectedTagId = "";
+let librarySearchScope = null;
 let selectedLibraryTrackId = '';
 let trackMove = null;
 let draggedLibraryTrack = false;
@@ -1503,6 +1504,12 @@ window.addEventListener('blur', cancelTrackMove);
 
 function renderLibrary() {
   if (draggedLibraryTrack || trackMove || savingTrackOrder) return;
+  const scope = libraryScope();
+  if (librarySearchScope !== scope) {
+    document.querySelector('#library-search').value = '';
+    librarySearchScope = scope;
+    libraryTracks.scrollTop = 0;
+  }
   renderImports();
   renderPlaylists();
   updateWorkspaceNavigation();
