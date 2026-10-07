@@ -28,8 +28,12 @@ SCHEMA = (
 
 def register(app, db_factory, read_json, error):
     with db_factory() as db:
-        for statement in SCHEMA:
-            db.execute(statement)
+        if getattr(db, 'dialect', '') == 'postgres':
+            db.execute('select id from feedback_threads limit 0')
+            db.execute('select id from feedback_messages limit 0')
+        else:
+            for statement in SCHEMA:
+                db.execute(statement)
 
     def now():
         return datetime.now(timezone.utc).isoformat()

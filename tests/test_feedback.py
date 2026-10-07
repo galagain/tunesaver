@@ -3,11 +3,13 @@ import hashlib
 import struct
 import time
 import unittest
+from unittest import mock
 import zlib
 
 from aiohttp.test_utils import TestClient, TestServer
 import test_webapp as fixtures
 from test_webapp import webapp
+import feedback
 
 
 def tiny_png():
@@ -89,3 +91,14 @@ class FeedbackTests(unittest.IsolatedAsyncioTestCase):
             await self.create()
         response = await self.request('POST', '/api/feedback', data={'kind': 'bug', 'title': 'Test', 'body': 'Test'})
         self.assertEqual(response.status, 429)
+
+    def test_postgres_runtime_only_checks_existing_tables(self):
+        database = mock.MagicMock()
+        database.dialect = 'postgres'
+        factory = mock.MagicMock()
+        factory.return_value.__enter__.return_value = database
+        feedback.register(webapp.web.Application(), factory, webapp.read_json_object, webapp.PublicError)
+        self.assertEqual(database.execute.call_args_list, [
+            mock.call('select id from feedback_threads limit 0'),
+            mock.call('select id from feedback_messages limit 0'),
+        ])
