@@ -2058,7 +2058,9 @@ function renderAdminUsers(profiles) {
     const email = document.createElement("strong");
     email.textContent = profile.email || "Sans e-mail";
     const details = document.createElement("span");
-    details.textContent = formatAdminDate(profile.created_at) || profile.user_id;
+    details.textContent = profile.last_download_at
+      ? `Dernier téléchargement : ${formatAdminDate(profile.last_download_at)}`
+      : 'Aucun téléchargement';
     button.append(email, details);
 
     const status = document.createElement("span");
@@ -2205,7 +2207,7 @@ function renderAdminChart() {
 
   const svg = chartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
-    role: "img",
+    role: "group",
     "aria-label": adminChartMode === "savings"
       ? "Économies par jour"
       : "Sons téléchargés par jour",
@@ -2275,6 +2277,56 @@ function renderAdminChart() {
     }));
   }
   adminChart.append(svg);
+  adminDailyStats.forEach((item, index) => {
+    const hit = chartSvgElement('rect', {
+      class: 'chart-day-hit', x: margin.left + step * index, y: margin.top,
+      width: step, height: height - margin.top, fill: 'transparent',
+      tabindex: 0, role: 'button',
+      'aria-label': `${item.date} : ${item.tracks} sons, voir les utilisateurs`,
+    });
+    hit.addEventListener('click', () => openAdminDay(item));
+    hit.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openAdminDay(item);
+      }
+    });
+    svg.append(hit);
+  });
+}
+
+const adminDayDialog = document.querySelector('#admin-day-dialog');
+document.querySelector('#admin-day-close').addEventListener('click', () => adminDayDialog.close());
+function openAdminDay(item) {
+  document.querySelector('#admin-day-title').textContent = new Intl.DateTimeFormat('fr-FR', {dateStyle: 'long'})
+    .format(new Date(`${item.date}T12:00:00`));
+  document.querySelector('#admin-day-total').textContent = `${item.tracks} son${item.tracks > 1 ? 's' : ''} téléchargé${item.tracks > 1 ? 's' : ''}`;
+  const pie = document.querySelector('#admin-day-pie');
+  const list = document.querySelector('#admin-day-users');
+  list.replaceChildren();
+  const colors = ['#5ee6ad', '#62b9f6', '#f7be62', '#ed829f', '#b39af5', '#e5df72', '#66d9da', '#ef9867'];
+  const stops = [];
+  let position = 0;
+  for (const [index, user] of (item.users || []).entries()) {
+    const percent = item.tracks ? user.tracks / item.tracks * 100 : 0;
+    const color = colors[index % colors.length];
+    stops.push(`${color} ${position}% ${position + percent}%`);
+    position += percent;
+    const row = document.createElement('li');
+    const swatch = document.createElement('span');
+    swatch.className = 'admin-day-swatch';
+    swatch.style.background = color;
+    const name = document.createElement('span');
+    name.textContent = user.email;
+    const count = document.createElement('strong');
+    count.textContent = `${user.tracks} · ${percent.toLocaleString('fr-FR', {maximumFractionDigits: 1})} %`;
+    row.append(swatch, name, count);
+    list.append(row);
+  }
+  pie.style.background = stops.length ? `conic-gradient(${stops.join(',')})` : '#363636';
+  pie.setAttribute('aria-label', item.tracks ? 'Répartition des sons par utilisateur, détaillée dans la liste' : 'Aucun téléchargement ce jour');
+  if (!item.tracks) list.textContent = 'Aucun téléchargement ce jour.';
+  adminDayDialog.showModal();
 }
 
 function renderAdminHistory(items) {

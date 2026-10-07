@@ -235,6 +235,17 @@
               </div>
             </header>
             <div id="admin-chart" class="admin-chart" aria-live="polite"></div>
+            <dialog id="admin-day-dialog" aria-labelledby="admin-day-title">
+              <header class="admin-day-header">
+                <h2 id="admin-day-title"></h2>
+                <button id="admin-day-close" type="button" aria-label="Fermer" title="Fermer"><span data-ui-icon="X"></span></button>
+              </header>
+              <p id="admin-day-total"></p>
+              <div class="admin-day-content">
+                <div id="admin-day-pie" role="img"></div>
+                <ul id="admin-day-users"></ul>
+              </div>
+            </dialog>
           </section>
 
           <div class="admin-layout">

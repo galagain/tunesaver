@@ -1607,6 +1607,26 @@ h1 {
 }
 
 .admin-chart-panel { margin-bottom: 16px; }
+.chart-day-hit { cursor: pointer; }
+.chart-day-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#admin-day-dialog { width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; padding: 22px; color: #eee; background: #202020; border: 1px solid #484848; border-radius: 8px; }
+#admin-day-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.admin-day-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.admin-day-header h2 { font-size: 18px; margin: 0; }
+#admin-day-close { display: grid; place-items: center; width: 32px; height: 32px; flex: none; padding: 6px; border: 0; background: transparent; color: #ddd; }
+#admin-day-close svg { width: 20px; height: 20px; }
+#admin-day-total { color: #bcbcbc; margin: 8px 0 22px; }
+.admin-day-content { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 24px; align-items: center; }
+#admin-day-pie { width: 180px; aspect-ratio: 1; border-radius: 50%; }
+#admin-day-users { list-style: none; padding: 0; margin: 0; min-width: 0; }
+#admin-day-users li { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 5px 9px; align-items: center; padding: 9px 0; border-bottom: 1px solid #383838; font-size: 13px; }
+#admin-day-users li > span:nth-child(2) { overflow-wrap: anywhere; }
+#admin-day-users strong { grid-column: 2; font-size: 12px; color: #bbb; font-variant-numeric: tabular-nums; font-weight: 500; }
+.admin-day-swatch { width: 10px; height: 10px; border-radius: 2px; }
+@media (max-width: 600px) {
+  .admin-day-content { grid-template-columns: minmax(0, 1fr); }
+  #admin-day-pie { justify-self: center; }
+}
 
 .admin-chart-panel .admin-panel-header {
   height: auto;

@@ -20,7 +20,8 @@ import time
 import uuid
 import zipfile
 from contextlib import ExitStack, contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
@@ -645,14 +646,18 @@ def local_admin_profiles() -> list[dict[str, Any]]:
     with local_db() as db:
         rows = db.execute(
             """
-            select id, email, email_verified, approved, blocked, created_at, last_sign_in_at
+            select id, email, email_verified, approved, blocked, created_at, last_sign_in_at,
+              (select max(coalesce(nullif(completed_at, ''), download_history.created_at))
+               from download_history where user_id=users.id and state='done') as last_download_at
             from users
-            order by created_at desc
+            order by coalesce((select max(coalesce(nullif(completed_at, ''), download_history.created_at))
+               from download_history where user_id=users.id and state='done'), '') desc, created_at desc, id
             """
         ).fetchall()
     return [
         {
             "user_id": row["id"],
+            "last_download_at": row["last_download_at"] or "",
             "email": row["email"],
             "email_verified": bool(row["email_verified"]),
             "last_sign_in_at": row["last_sign_in_at"] or "",
@@ -819,12 +824,13 @@ def local_daily_history_rows() -> list[dict[str, Any]]:
     with local_db() as db:
         rows = db.execute(
             """
-            select created_at, state, track_count, estimated_savings_cents
-            from download_history
-            where state = 'done'
-            order by created_at desc
-            limit 5000
-            """
+            select h.created_at, h.completed_at, h.state, h.track_count,
+                   h.estimated_savings_cents, h.user_id, u.email
+            from download_history h left join users u on u.id=h.user_id
+            where h.state = 'done'
+              and coalesce(nullif(h.completed_at, ''), h.created_at) >= ?
+            """,
+            ((datetime.now(ZoneInfo('Europe/Paris')).date() - timedelta(days=31)).isoformat(),),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -3398,13 +3404,14 @@ async def tag_track_delete_handler(request: web.Request) -> web.Response:
 def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         raise SourceError("Réponse statistiques invalide.")
-    today = date.today()
+    today = datetime.now(ZoneInfo('Europe/Paris')).date()
     first_day = today - timedelta(days=days - 1)
     totals = {
         (first_day + timedelta(days=offset)).isoformat(): {
             "date": (first_day + timedelta(days=offset)).isoformat(),
             "tracks": 0,
             "savings_cents": 0,
+            "users": {},
         }
         for offset in range(days)
     }
@@ -3413,9 +3420,12 @@ def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, 
             continue
         if row.get("state") not in {"", None, "done"}:
             continue
-        created_at = str(row.get("created_at", ""))[:10]
+        created_at = str(row.get("completed_at") or row.get("created_at", ""))
         try:
-            day = date.fromisoformat(created_at)
+            timestamp = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=ZoneInfo('UTC'))
+            day = timestamp.astimezone(ZoneInfo('Europe/Paris')).date()
         except ValueError:
             continue
         if day < first_day or day > today:
@@ -3431,6 +3441,14 @@ def normalize_admin_daily_stats(rows: Any, *, days: int = 30) -> list[dict[str, 
             savings_cents = 0
         bucket["tracks"] += max(track_count, 1)
         bucket["savings_cents"] += max(savings_cents, 0)
+        user_id = str(row.get("user_id") or "")
+        user = bucket["users"].setdefault(user_id, {
+            "user_id": user_id, "email": row.get("email") or "Compte supprimé",
+            "tracks": 0,
+        })
+        user["tracks"] += max(track_count, 1)
+    for bucket in totals.values():
+        bucket["users"] = sorted(bucket["users"].values(), key=lambda user: (-user["tracks"], user["email"]))
     return list(totals.values())
 
 

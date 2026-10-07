@@ -75,7 +75,7 @@ class WebAppFunctionTests(unittest.TestCase):
         self.assertFalse(webapp.verify_password("wrong", salt, digest))
 
     def test_admin_daily_stats_fill_days_and_sum_done_jobs(self) -> None:
-        today = webapp.date.today()
+        today = webapp.datetime.now(webapp.ZoneInfo('Europe/Paris')).date()
         yesterday = today - webapp.timedelta(days=1)
         rows = [
             {
@@ -688,7 +688,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         webapp.local_upsert_history(user["id"], [
             {
                 "job_id": "job-1",
-                "created_at": webapp.date.today().isoformat() + "T12:00:00Z",
+                "created_at": webapp.datetime.now(webapp.ZoneInfo('Europe/Paris')).date().isoformat() + "T12:00:00Z",
                 "state": "done",
                 "track_count": 2,
                 "estimated_savings_cents": 298,
