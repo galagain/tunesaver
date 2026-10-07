@@ -58,6 +58,7 @@ const { chromium, expect } = require('@playwright/test');
       await page.getByRole('button', { name: 'Télécharger', exact: true }).click();
       await expect.poll(() => starts).toBe(1);
       await expect(page.locator('#collection-download')).toBeDisabled();
+      await expect(page.getByRole('button', { name: 'Arrêter', exact: true })).toHaveCount(0);
       await expect(page.locator('.import-preview-track')).toHaveCount(1201);
       item.state = 'matched'; item.total = 2; item.processed = 2; item.matched = 2;
       tracks[0].matching = { status: 'matched', final: true, target: { provider: 'tidal', url: 'https://tidal.com/track/1' } };

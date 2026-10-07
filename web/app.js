@@ -1817,16 +1817,6 @@ function renderImports() {
     status.textContent = item.state === "ready" ? `${item.total} titres · Aucun téléchargement lancé`
       : `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.matched || 0} trouvés · ${item.queued} en file` : ""}${item.activity ? ' · ' + item.activity : ''}`;
     summary.append(name, status);
-    if (['pending', 'running'].includes(item.state)) {
-      const stop = document.createElement('button');
-      stop.type = 'button'; stop.textContent = 'Arrêter';
-      stop.addEventListener('click', async event => {
-        event.preventDefault(); event.stopPropagation(); stop.disabled = true;
-        try { await requestJson(`/api/playlist-imports/${item.id}/stop`, { method: 'POST', body: '{}' }); await refreshLibrary(); }
-        catch (error) { showToast(error.message); stop.disabled = false; }
-      });
-      summary.append(stop);
-    }
     if (["done", "partial", "failed", "cancelled"].includes(item.state)) {
       const close = document.createElement("button");
       close.type = "button";
