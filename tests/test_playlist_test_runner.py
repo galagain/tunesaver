@@ -18,21 +18,23 @@ def payload(source):
 
 
 class PlaylistTestRunnerTests(unittest.TestCase):
-    def test_three_exports_and_report(self):
+    def test_six_exports_and_report(self):
         with tempfile.TemporaryDirectory() as root, contextlib.redirect_stdout(io.StringIO()):
-            reader = mock.Mock(side_effect=[payload(source) for source, _ in runner.PLAYLISTS])
+            reader = mock.Mock(side_effect=[payload(source) for source, _, _ in runner.CASES])
             result = runner.run_tests(Path(root), reader)
-            self.assertEqual(result["passed"], 3)
-            self.assertEqual(reader.call_args_list, [mock.call(url) for _, url in runner.PLAYLISTS])
-            self.assertEqual(len(list(Path(root).iterdir())), 7)
+            self.assertEqual(result["passed"], 6)
+            self.assertEqual(reader.call_args_list, [mock.call(url) for _, _, url in runner.CASES])
+            self.assertEqual(len(list(Path(root).iterdir())), 13)
+            self.assertEqual([r["kind"] for r in result["results"]], ["playlist"] * 3 + ["album"] * 3)
             self.assertEqual(json.loads((Path(root) / "report.json").read_text()), result)
 
     def test_failure_does_not_skip_other_playlists_or_leak_details(self):
         with tempfile.TemporaryDirectory() as root, contextlib.redirect_stdout(io.StringIO()):
-            reader = mock.Mock(side_effect=[payload("spotify"), RuntimeError("secret-token"), payload("soundcloud")])
+            reader = mock.Mock(side_effect=[payload("spotify"), RuntimeError("secret-token"), payload("soundcloud")]
+                               + [payload(source) for source, _ in runner.ALBUMS])
             result = runner.run_tests(Path(root), reader)
-            self.assertEqual(result["passed"], 2)
-            self.assertEqual(reader.call_count, 3)
+            self.assertEqual(result["passed"], 5)
+            self.assertEqual(reader.call_count, 6)
             self.assertFalse((Path(root) / "applemusic.txt").exists())
             self.assertNotIn("secret-token", json.dumps(result))
 
@@ -42,12 +44,13 @@ class PlaylistTestRunnerTests(unittest.TestCase):
             for _ in range(2):
                 self.assertEqual(runner.main(["--docker", "--output-dir", root]), 1)
             self.assertEqual(len(list(Path(root).iterdir())), 2)
-            self.assertEqual(read.call_count, 6)
+            self.assertEqual(read.call_count, 12)
 
     def test_rejects_incomplete_payload(self):
         item = payload("spotify")
         item["total"] = 166
         with tempfile.TemporaryDirectory() as root, contextlib.redirect_stdout(io.StringIO()):
-            result = runner.run_tests(Path(root), mock.Mock(side_effect=[item, payload("applemusic"), payload("soundcloud")]))
-            self.assertEqual(result["passed"], 2)
+            result = runner.run_tests(Path(root), mock.Mock(side_effect=[item, payload("applemusic"), payload("soundcloud")]
+                                     + [payload(source) for source, _ in runner.ALBUMS]))
+            self.assertEqual(result["passed"], 5)
             self.assertFalse((Path(root) / "spotify.txt").exists())

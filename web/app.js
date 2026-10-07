@@ -861,10 +861,10 @@ function playlistLinksFromText(value) {
 function isImportPlaylist(value) {
   try {
     const url = new URL(value);
-    return (url.hostname === "open.spotify.com" && url.pathname.includes("/playlist/"))
+    return (url.hostname === "open.spotify.com" && /\/(playlist|album)\//.test(url.pathname))
       || (["tidal.com", "www.tidal.com", "listen.tidal.com"].includes(url.hostname) && url.pathname.includes("/playlist/"))
       || (["qobuz.com", "www.qobuz.com", "play.qobuz.com", "open.qobuz.com"].includes(url.hostname) && /\/playlists?\//.test(url.pathname))
-      || (url.hostname === "music.apple.com" && url.pathname.includes("/playlist/"))
+      || (url.hostname === "music.apple.com" && /\/(playlist|album)\//.test(url.pathname) && !url.searchParams.has("i"))
       || (["soundcloud.com", "www.soundcloud.com"].includes(url.hostname) && url.pathname.includes("/sets/"))
       || (["beatport.com", "www.beatport.com"].includes(url.hostname) && /\/(playlists?|charts?)\//.test(url.pathname));
   } catch (_) { return false; }

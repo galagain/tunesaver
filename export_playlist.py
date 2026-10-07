@@ -20,7 +20,9 @@ def read_playlist(url):
     import playlist_sources as sources
 
     provider, identifier, canonical = sources.playlist_source(url)
-    if provider == "spotify":
+    if provider == "spotify" and "/album/" in canonical:
+        payload = sources.spotify_album(canonical)
+    elif provider == "spotify":
         from spotify_http import read_playlist as read_spotify
         payload = read_spotify(canonical)
     elif provider == "applemusic":

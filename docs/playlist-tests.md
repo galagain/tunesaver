@@ -1,6 +1,6 @@
 # Playlist import checks
 
-## Three reference playlists
+## Three playlists and three albums
 
 From the project directory:
 
@@ -13,10 +13,22 @@ This runs Spotify `57HAIqxdHbi332994xcOKc`, Apple Music Jazz House
 different display label), and SoundCloud `delicieuse-musique/sets/jazz-house`.
 Spotify uses HTTP only. No audio is downloaded and no user playlist is created.
 
+The same run also reads these albums, using the same ordered track-list format:
+
+- Spotify: https://open.spotify.com/album/4m2880jivSbbyEGAKfITCa
+- Apple Music: https://music.apple.com/us/album/random-access-memories/617154241
+- SoundCloud: https://soundcloud.com/daftpunkofficialmusic/sets/random-access-memories-10th
+
+The first two are Random Access Memories; the SoundCloud case is its 10th
+Anniversary Edition. On 2026-10-07 they returned 13, 13 and 22 tracks respectively.
+Album exports use `spotify-album`, `applemusic-album` and `soundcloud-album`
+filenames, so they cannot overwrite the playlist exports. Each report records
+the collection kind. SoundCloud albums use the existing sets reader.
+
 Each execution creates a unique directory under `data/playlist-tests/`, containing
 TXT and JSON exports for successful reads and a `report.json` with counts,
-timings and failures. All three sources are attempted even if one fails. Exit
-code is 0 only when all three succeed, otherwise 1 (130 on interruption).
+timings and failures. All six cases are attempted even if one fails. Exit
+code is 0 only when all six succeed, otherwise 1 (130 on interruption).
 Use `--output-dir PATH` for a different parent directory, or omit `--docker`
 when running inside the configured Python environment. Counts are checked
 against source metadata, not historical hard-coded totals.

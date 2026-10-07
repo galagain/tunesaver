@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read and export the three reference playlists, without downloading audio."""
+"""Read and export three playlists and three albums, without downloading audio."""
 
 import argparse
 from datetime import datetime, timezone
@@ -17,14 +17,22 @@ PLAYLISTS = [
     ("applemusic", "https://music.apple.com/sn/playlist/jazz-house/pl.2e69eda9c8af461e8924dfebbcdf9794?l=fr-FR"),
     ("soundcloud", "https://soundcloud.com/delicieuse-musique/sets/jazz-house"),
 ]
+ALBUMS = [
+    ("spotify", "https://open.spotify.com/album/4m2880jivSbbyEGAKfITCa"),
+    ("applemusic", "https://music.apple.com/us/album/random-access-memories/617154241"),
+    ("soundcloud", "https://soundcloud.com/daftpunkofficialmusic/sets/random-access-memories-10th"),
+]
+CASES = [(source, "playlist", url) for source, url in PLAYLISTS] + [
+    (source, "album", url) for source, url in ALBUMS]
 
 
 def run_tests(directory, reader):
     results = []
-    for source, url in PLAYLISTS:
-        print(f"[{source}] Lecture de la playlist...", flush=True)
+    for source, kind, url in CASES:
+        case_id = source if kind == "playlist" else f"{source}-album"
+        print(f"[{case_id}] Lecture {kind}...", flush=True)
         started = time.monotonic()
-        result = {"source": source, "url": url}
+        result = {"source": source, "kind": kind, "url": url}
         try:
             payload = reader(url)
             tracks = payload["tracks"]
@@ -34,17 +42,17 @@ def run_tests(directory, reader):
                    for index, track in enumerate(tracks, 1)):
                 raise ValueError("Numero ou titre manquant dans la liste.")
             for format_name in ("txt", "json"):
-                export_playlist.write_output(directory / f"{source}.{format_name}",
+                export_playlist.write_output(directory / f"{case_id}.{format_name}",
                                              export_playlist.render(payload, format_name))
             result.update(status="ok", name=payload["name"], total=len(tracks),
-                          files=[f"{source}.txt", f"{source}.json"])
+                          files=[f"{case_id}.txt", f"{case_id}.json"])
         except Exception as exc:
             public = type(exc) is ValueError or type(exc).__name__ in {"PlaylistError", "SourceError"}
             result.update(status="failed", error=str(exc) if public else type(exc).__name__)
         result["seconds"] = round(time.monotonic() - started, 2)
         results.append(result)
         detail = f"{result['total']} titres" if result["status"] == "ok" else result["error"]
-        print(f"[{source}] {result['status'].upper()} - {detail} ({result['seconds']} s)", flush=True)
+        print(f"[{case_id}] {result['status'].upper()} - {detail} ({result['seconds']} s)", flush=True)
     report = {"created_at": datetime.now(timezone.utc).isoformat(),
               "passed": sum(item["status"] == "ok" for item in results),
               "tested": len(results), "results": results}

@@ -1,5 +1,6 @@
 """Playlist metadata readers and conservative cross-catalog matching."""
 
+import base64
 import json
 import math
 import os
@@ -10,7 +11,7 @@ import sys
 import tempfile
 import unicodedata
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -39,13 +40,16 @@ def playlist_source(value):
         if match:
             return "qobuz", match[1], f"https://play.qobuz.com/playlist/{match[1]}"
     if host == "open.spotify.com":
-        match = re.fullmatch(r"/(?:intl-[a-z]+/)?(?:embed/)?playlist/([A-Za-z0-9]{22})", path)
+        match = re.fullmatch(r"/(?:intl-[a-z]+/)?(?:embed/)?(playlist|album)/([A-Za-z0-9]{22})", path)
         if match:
-            return "spotify", match[1], f"https://open.spotify.com/playlist/{match[1]}"
+            return "spotify", match[2], f"https://open.spotify.com/{match[1]}/{match[2]}"
     if host == "music.apple.com":
         match = re.fullmatch(r"/([a-z]{2})/playlist/(?:[^/]+/)?(pl\.[A-Za-z0-9-]+)", path)
         if match:
             return "applemusic", match[2], f"https://music.apple.com{path}"
+        match = re.fullmatch(r"/[a-z]{2}/album/(?:[^/]+/)?([0-9]+)", path)
+        if match and "i" not in parse_qs(parsed.query, keep_blank_values=True):
+            return "applemusic", match[1], f"https://music.apple.com{path}"
     if host in {"soundcloud.com", "www.soundcloud.com"} and re.fullmatch(r"/[\w-]+/sets/[\w-]+", path):
         return "soundcloud", path, f"https://soundcloud.com{path}"
     if host in {"beatport.com", "www.beatport.com"}:
@@ -120,7 +124,8 @@ def apple_music_metadata(html, identifier):
         script = BeautifulSoup(html, "html.parser").find("script", id="serialized-server-data")
         payload = json.loads(script.string)
         page = next(item["data"] for item in payload["data"]
-                    if item.get("intent", {}).get("$kind") == "PlaylistDetailPageIntent"
+                    if item.get("intent", {}).get("$kind") == (
+                        "AlbumDetailPageIntent" if identifier.isdigit() else "PlaylistDetailPageIntent")
                     and item["intent"]["contentDescriptor"]["identifiers"]["storeAdamID"] == identifier)
         sections = page["sections"]
         header = next(item for section in sections if section.get("itemKind") == "containerDetailHeaderLockup"
@@ -137,7 +142,7 @@ def apple_music_metadata(html, identifier):
         tracks = []
         for item in entries:
             title = item.get("title")
-            artist = item.get("artistName") or ", ".join(link["title"] for link in item.get("subtitleLinks", []))
+            artist = item.get("artistName") or ", ".join(link["title"] for link in (item.get("subtitleLinks") or []))
             duration = item.get("duration")
             if (item.get("contentDescriptor", {}).get("kind") != "song"
                     or not isinstance(title, str) or not title.strip()
@@ -217,6 +222,40 @@ def spotify_playlist(playlist_id):
     except (PlaylistError, AttributeError, KeyError, TypeError, ValueError):
         pass
     return spotify_browser_playlist(playlist_id)
+
+
+def spotify_album(url):
+    provider, identifier, canonical = playlist_source(url)
+    if provider != "spotify" or "/album/" not in canonical:
+        raise PlaylistError("Lien d'album Spotify invalide.")
+    return spotify_album_metadata(get_page(canonical).text, identifier)
+
+
+def spotify_album_metadata(html, identifier):
+    """Read the album itself, excluding related releases and audio previews."""
+    try:
+        script = BeautifulSoup(html, "html.parser").find("script", id="initialState")
+        state = json.loads(base64.b64decode(script.string, validate=True))
+        album = state["entities"]["items"][f"spotify:album:{identifier}"]
+        page = album["tracksV2"]
+        total = page["totalCount"]
+        entries = page["items"]
+        if (type(total) is not int or total < 1 or len(entries) != total
+                or page.get("pagingInfo", {}).get("offset", 0) != 0):
+            raise PlaylistError("Lecture de l'album Spotify incomplete. Aucun import lance.")
+        tracks = []
+        for entry in entries:
+            track = entry["track"]
+            title = track["name"]
+            artist = ", ".join(a["profile"]["name"] for a in track["artists"]["items"])
+            duration = track["duration"]["totalMilliseconds"]
+            if not title or not artist or not isinstance(duration, (int, float)) or duration <= 0:
+                raise PlaylistError("Un titre de l'album Spotify est incomplet.")
+            tracks.append({"title": title, "artist": artist, "duration": duration / 1000,
+                           "source_url": f"https://open.spotify.com/track/{track['id']}"})
+        return {"name": album["name"], "total": total, "tracks": tracks}
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise PlaylistError("Album Spotify inaccessible ou format de page modifie.") from exc
 
 
 def spotify_browser_playlist(playlist_id):

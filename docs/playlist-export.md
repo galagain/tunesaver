@@ -4,6 +4,16 @@ Le script `export_playlist.py` accepte les playlists Spotify, Apple Music,
 SoundCloud, Beatport (playlists et charts), TIDAL et Qobuz. Il n'effectue aucune
 recherche de correspondance et n'ajoute rien aux comptes TuneSaver.
 
+Les albums Spotify et Apple Music, ainsi que les albums SoundCloud (`/sets/`),
+sont acceptes avec le meme format de sortie et le meme ordre de titres.
+Le site les traite egalement comme des imports de playlists, avec confirmation
+avant la recherche et le telechargement. Un lien Apple Music contenant `?i=`
+designe un morceau, pas un album entier.
+
+Les albums Spotify sont lus dans les metadonnees de leur page publique, sans
+navigateur ni limite de taille ajoutee. Si la page ne fournit pas tous les titres
+annonces, le lecteur signale une erreur au lieu d'exporter une liste partielle.
+
 Depuis le dossier du projet, dans l'environnement Python de TuneSaver :
 
 ```sh

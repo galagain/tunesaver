@@ -2664,7 +2664,8 @@ async def history_handler(request: web.Request) -> web.Response:
 def read_import_source(url: str) -> dict[str, Any]:
     provider, identifier, canonical = playlist_sources.playlist_source(url)
     if provider == "spotify":
-        payload = playlist_sources.spotify_playlist(identifier)
+        payload = (playlist_sources.spotify_album(canonical) if "/album/" in canonical
+                   else playlist_sources.spotify_playlist(identifier))
     elif provider == "soundcloud":
         payload = playlist_sources.soundcloud_playlist(canonical)
     elif provider == "applemusic":
