@@ -2728,6 +2728,14 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
     except (playlist_sources.PlaylistError, ValueError) as exc:
         raise PublicError(str(exc)) from exc
     user_id = request["user"]["id"]
+    if import_engine.is_single_track(url):
+        semaphore = request.app[SEARCH_SEMAPHORES_KEY].get(provider, request.app[SEARCH_SEMAPHORES_KEY]['tiddl'])
+        async with semaphore:
+            try:
+                result = await asyncio.to_thread(import_engine.add_single_track, sys.modules[__name__], user_id, url)
+            except (ValueError, playlist_sources.PlaylistError) as exc:
+                raise PublicError(str(exc)) from exc
+        return web.json_response(result, status=202)
     with local_db() as db:
         existing = db.execute("select id, playlist_id from playlist_imports where user_id = ? "
                               "and source_url = ? and state in ('pending', 'ready', 'running')", (user_id, url)).fetchone()
@@ -2807,7 +2815,7 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
         raise PublicError("La correspondance n'est pas un morceau.")
     # Serialize enqueue and playlist membership so a restart reuses the same job.
     with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
-        if not local_playlist_has_owner(db, record["playlist_id"], owner):
+        if record.get('playlist_id') and not local_playlist_has_owner(db, record["playlist_id"], owner):
             raise PublicError("La playlist a ete supprimee.")
         job_id = existing_job(provider, url, owner)
         if not job_id:
@@ -2823,8 +2831,9 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
             job_id = musicdl.enqueue(provider, [url], owner_id=owner, ephemeral=True,
                                      metadata={"title": result["title"][:200], "artist": result.get("artist", "")[:200], "kind": "track"})
         db.execute("delete from library_removed where user_id = ? and job_id = ?", (owner, job_id))
-        db.execute("insert or ignore into playlist_items (playlist_id, job_id, created_at) values (?, ?, ?)",
-                   (record["playlist_id"], job_id, utc_timestamp()))
+        if record.get('playlist_id'):
+            db.execute("insert or ignore into playlist_items (playlist_id, job_id, created_at) values (?, ?, ?)",
+                       (record["playlist_id"], job_id, utc_timestamp()))
     return job_id
 
 

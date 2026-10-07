@@ -1,7 +1,7 @@
 """Persistent website imports backed by the same metadata matcher as the CLI."""
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import catalog_matcher as matcher
 import playlist_sources as sources
@@ -51,6 +51,40 @@ def read(value):
     if not tracks or payload.get('total', len(tracks)) != len(tracks):
         raise ValueError("Liste vide ou incomplete : aucun telechargement lance.")
     return payload
+
+
+def is_single_track(value):
+    provider, canonical = identify(value)
+    if provider == 'manual':
+        return True
+    try:
+        sources.playlist_source(canonical)
+        return False
+    except sources.PlaylistError:
+        pass
+    parsed = urlparse(canonical)
+    if provider == 'applemusic':
+        return 'i' in parse_qs(parsed.query, keep_blank_values=True)
+    return not re.search(r'/(album|release)/', parsed.path)
+
+
+def add_single_track(api, owner, value):
+    payload = read(value)
+    if payload.get('kind') != 'track' or len(payload['tracks']) != 1:
+        raise api.PublicError('Ce lien ne correspond pas a un morceau seul.')
+    result = matcher.match_collection(payload, matcher.Catalog())['tracks'][0]
+    candidate = result.get('match')
+    if result['status'] != 'matched' or not candidate:
+        raise api.PublicError('Aucune correspondance fiable pour ce morceau. Aucun telechargement lance.', status=422)
+    target = matcher.direct_target(candidate)
+    if not target:
+        raise api.PublicError('Correspondance sans lien de telechargement.', status=422)
+    provider = 'tiddl' if target['provider'] == 'tidal' else target['provider']
+    if not api.worker_is_active(provider):
+        raise api.PublicError('La source de telechargement est arretee.', status=503)
+    job_id = api.enqueue_import_track({'user_id': owner, 'playlist_id': None},
+        {**candidate, 'provider': provider, 'download_url': target['url']})
+    return {'job_id': job_id, 'kind': 'track', 'playlist_id': None}
 
 
 def export_result(record):

@@ -20,6 +20,9 @@ const {chromium, expect} = require('@playwright/test');
           imports.push(url);
           await new Promise(resolve => setTimeout(resolve, 150));
           const id = `import-${imports.length}`;
+          if (url.includes('/track/') || url === 'https://soundcloud.com/artist/song') {
+            return route.fulfill({status: 202, json: {kind: 'track', job_id: id, playlist_id: null}});
+          }
           library.playlists.push({id, name: id, track_ids: []});
           library.imports.push({id, playlist_id: id, name: id, state: 'pending', total: 0, queued: 0, processed: 0});
           return route.fulfill({status: 202, json: {id, playlist_id: id}});
@@ -55,6 +58,10 @@ const {chromium, expect} = require('@playwright/test');
         await expect(page.locator('#search-view')).toBeHidden();
         expect(imports).toHaveLength(index + 1);
         expect(imports[index]).toBe(url);
+        if (url.includes('/track/') || url === 'https://soundcloud.com/artist/song') {
+          expect(await page.evaluate(() => selectedPlaylistId)).toBe('');
+          await expect(page.locator('#library-title')).toHaveText('Mes sons');
+        }
       }
       await page.locator('#search-nav').click();
       await page.locator('#search-input').fill('https://invalid.test/playlist');

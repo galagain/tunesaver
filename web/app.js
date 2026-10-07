@@ -763,11 +763,11 @@ async function searchDirect(query) {
 async function enqueueList(links) {
   for (const url of links) {
     const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
-    selectedPlaylistId = imported.playlist_id;
+    selectedPlaylistId = imported.playlist_id || '';
     selectedTagId = "";
     selectedFolderId = "";
   }
-  showToast("Lecture des titres lancée.");
+  showToast(selectedPlaylistId ? 'Lecture des titres lancée.' : 'Morceau ajouté dans Tous mes sons.');
   resultsSection.hidden = true;
   await refreshQueue();
   await refreshLibrary();
