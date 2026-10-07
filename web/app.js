@@ -779,22 +779,11 @@ async function enqueueList(links) {
   setWorkspaceView('library');
 }
 
-async function groupSearchInPlaylist(query, lines) {
-  let links = lines;
-  if (!lines.every(isMusicURL)) {
-    if (lines.length !== 1) throw new Error('Colle un lien par ligne pour les regrouper.');
-    if (lastTextSearch !== query || !searchResultsByProvider.size) {
-      searchResultsByProvider.clear(); lastTextSearch = query;
-      resultsSection.hidden = false;
-      for (const provider of providers) setPlatformLoading(provider);
-      await Promise.allSettled(providers.map(provider => searchProvider(query, provider)));
-    }
-    if (searchResultsByProvider.size !== providers.length) throw new Error('Une source est inaccessible. Relance la recherche avant de regrouper tous les résultats.');
-    links = [...searchResultsByProvider.values()].flat().map(result => result.download_url).filter(Boolean);
-  }
-  links = [...new Set(links)];
+async function groupSearchInPlaylist(lines) {
+  if (!lines.length || !lines.every(isMusicURL)) throw new Error('Colle des liens pour créer une playlist.');
+  const links = [...new Set(lines)];
   if (!links.length) throw new Error('Aucun morceau à regrouper.');
-  const name = await siteDialogs.prompt('Nom de la playlist', lines.every(isMusicURL) ? 'Nouvelle playlist' : query.slice(0, 80), { maxLength: 80 });
+  const name = await siteDialogs.prompt('Nom de la playlist', 'Nouvelle playlist', { maxLength: 80 });
   if (name === null) return;
   if (!name.trim()) throw new Error('Donne un nom à la playlist.');
   const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ urls: links, name: name.trim(), auto_download: true }) });
@@ -807,6 +796,14 @@ async function groupSearchInPlaylist(query, lines) {
 function isMusicURL(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
+
+function updateSearchPlaylistButton() {
+  const lines = input.value.trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  searchPlaylistButton.disabled = searchButton.disabled || !lines.length || !lines.every(isMusicURL);
+  searchPlaylistButton.title = 'Créer une playlist à partir des liens';
+}
+input.addEventListener('input', updateSearchPlaylistButton);
+updateSearchPlaylistButton();
 
 function hasDroppedFiles(event) {
   return Array.from(event.dataTransfer?.types || []).includes('Files');
@@ -852,7 +849,7 @@ window.addEventListener('drop', async event => {
     }
     showToast('Import lancé. Les fichiers déjà disponibles seront réutilisés.');
   } catch (error) { showToast(error.message || 'Fichier texte illisible.', 'error'); }
-  finally { searchButton.disabled = searchPlaylistButton.disabled = false; input.readOnly = false; }
+  finally { searchButton.disabled = false; updateSearchPlaylistButton(); input.readOnly = false; }
 }, true);
 
 input.addEventListener('paste', event => {
@@ -862,6 +859,7 @@ input.addEventListener('paste', event => {
   if (!lines?.length || !lines.every(isMusicURL)) return;
   event.preventDefault();
   input.value = lines.join('\n');
+  updateSearchPlaylistButton();
 });
 
 input.addEventListener("keydown", (event) => {
@@ -892,7 +890,7 @@ form.addEventListener("submit", async (event) => {
   searchButton.setAttribute('aria-busy', 'true');
   try {
     if (event.submitter === searchPlaylistButton) {
-      await groupSearchInPlaylist(query, lines);
+      await groupSearchInPlaylist(lines);
       return;
     }
     if (lines.length > 1 || isMusicURL(query)) {
@@ -912,7 +910,7 @@ form.addEventListener("submit", async (event) => {
     searchMessage.textContent = error.message;
   } finally {
     searchButton.disabled = false;
-    searchPlaylistButton.disabled = false;
+    updateSearchPlaylistButton();
     input.readOnly = false;
     searchButton.setAttribute('aria-busy', 'false');
   }
