@@ -4,7 +4,10 @@ Le site et les scripts utilisent `catalog_matcher` pour les correspondances et
 les memes lecteurs de metadonnees pour les playlists, albums, liens et saisies
 `Artiste - Titre`.
 
-1. Importer une liste affiche ses metadonnees sans chercher ni telecharger.
+1. Coller un lien dans le champ de recherche lance automatiquement la lecture,
+   quel que soit son type (morceau, album ou playlist). Un lien saisi au clavier
+   se valide avec Entree. Le site affiche les metadonnees sans chercher ni telecharger.
+   La recherche textuelle reste disponible dans ce meme champ.
 2. Choisir le nombre de titres (0 = tous), puis rechercher seulement ou rechercher
    et telecharger. L'ordre est TIDAL, Beatport, Qobuz.
 3. Les albums sont recherches entiers avant le repli morceau par morceau.

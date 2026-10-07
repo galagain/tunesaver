@@ -27,12 +27,13 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture' }; showApp(); });
       await page.locator('#search-nav').click();
-      await page.locator('#import-playlist-button').click();
-      await expect(page.locator('#import-links')).toHaveAttribute('placeholder', /Apple Music/);
-      await page.locator('#import-links').fill(url);
-      await page.locator('#import-submit').click();
+      await page.locator('#search-input').evaluate((input, text) => {
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', text);
+        input.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}));
+      }, url);
       await expect.poll(() => imports.length).toBe(1);
-      await expect(page.locator('#import-panel')).toBeHidden();
+      await expect(page.locator('#search-view')).toBeHidden();
       await page.locator('#search-nav').click();
       await page.locator('#search-input').fill(url);
       await page.locator('#search-input').press('Enter');

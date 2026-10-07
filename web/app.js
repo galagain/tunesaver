@@ -38,11 +38,6 @@ const userEmail = document.querySelector("#user-email");
 const form = document.querySelector("#search-form");
 const input = document.querySelector("#search-input");
 const searchButton = document.querySelector("#search-button");
-const importPlaylistButton = document.querySelector("#import-playlist-button");
-const importPanel = document.querySelector("#import-panel");
-const importLinks = document.querySelector("#import-links");
-const importCancel = document.querySelector("#import-cancel");
-const importSubmit = document.querySelector("#import-submit");
 const searchMessage = document.querySelector("#search-message");
 const resultsSection = document.querySelector("#results-section");
 const queueSection = document.querySelector("#queue-section");
@@ -832,72 +827,31 @@ async function searchDirect(query) {
 }
 
 async function enqueueList(links) {
-  const playlists = links;
-  const direct = [];
-  if (direct.length && !await siteDialogs.confirm(`Ajouter ${direct.length} liens à la file de téléchargement ?`)) return;
-  for (const url of playlists) {
+  for (const url of links) {
     const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
     selectedPlaylistId = imported.playlist_id;
     selectedTagId = "";
     selectedFolderId = "";
   }
-  if (direct.length) {
-    await requestJson("/api/downloads", {
-      method: "POST",
-      body: JSON.stringify({ links: direct, confirm_complete: true }),
-    });
-  }
-  showToast(playlists.length ? "Lecture de la playlist lancée." : "Téléchargements ajoutés.");
+  showToast("Lecture des titres lancée.");
   resultsSection.hidden = true;
   await refreshQueue();
   await refreshLibrary();
-  if (playlists.length) setWorkspaceView('library');
+  setWorkspaceView('library');
 }
 
-function playlistLinksFromText(value) {
-  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+function isMusicURL(value) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
 
-function isImportPlaylist(value) {
-  try {
-    const url = new URL(value);
-    return (url.hostname === "open.spotify.com" && /\/(playlist|album)\//.test(url.pathname))
-      || (["tidal.com", "www.tidal.com", "listen.tidal.com"].includes(url.hostname) && url.pathname.includes("/playlist/"))
-      || (["qobuz.com", "www.qobuz.com", "play.qobuz.com", "open.qobuz.com"].includes(url.hostname) && /\/playlists?\//.test(url.pathname))
-      || (url.hostname === "music.apple.com" && /\/(playlist|album)\//.test(url.pathname) && !url.searchParams.has("i"))
-      || (["soundcloud.com", "www.soundcloud.com"].includes(url.hostname) && url.pathname.includes("/sets/"))
-      || (["beatport.com", "www.beatport.com"].includes(url.hostname) && /\/(playlists?|charts?)\//.test(url.pathname));
-  } catch (_) { return false; }
-}
-
-importPlaylistButton.addEventListener("click", () => {
-  importPanel.hidden = !importPanel.hidden;
-  if (!importPanel.hidden) importLinks.focus();
-});
-
-importCancel.addEventListener("click", () => {
-  importPanel.hidden = true;
-  importLinks.value = "";
-});
-
-importSubmit.addEventListener("click", async () => {
-  const links = playlistLinksFromText(importLinks.value);
-  if (!links.length) {
-    searchMessage.textContent = "Colle au moins un lien à importer.";
-    importLinks.focus();
-    return;
-  }
-  importSubmit.disabled = true;
-  searchMessage.textContent = "";
-  try {
-    await enqueueList(links);
-    importPanel.hidden = true;
-    importLinks.value = "";
-  } catch (error) {
-    searchMessage.textContent = error.message;
-  } finally {
-    importSubmit.disabled = false;
-  }
+input.addEventListener('paste', event => {
+  if (searchButton.disabled) { event.preventDefault(); return; }
+  const pasted = event.clipboardData?.getData('text/plain').trim();
+  const lines = pasted?.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!lines?.length || !lines.every(isMusicURL)) return;
+  event.preventDefault();
+  input.value = lines.join('\n');
+  form.requestSubmit();
 });
 
 input.addEventListener("keydown", (event) => {
@@ -913,6 +867,7 @@ document.addEventListener("keydown", (event) => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (searchButton.disabled) return;
   const query = input.value.trim();
   const lines = query.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (!query) {
@@ -922,9 +877,10 @@ form.addEventListener("submit", async (event) => {
   }
   searchMessage.textContent = "";
   searchButton.disabled = true;
+  input.readOnly = true;
   searchButton.setAttribute('aria-busy', 'true');
   try {
-    if (lines.length > 1 || isImportPlaylist(query)) {
+    if (lines.length > 1 || isMusicURL(query)) {
       await enqueueList(lines);
       return;
     }
@@ -939,6 +895,7 @@ form.addEventListener("submit", async (event) => {
     searchMessage.textContent = error.message;
   } finally {
     searchButton.disabled = false;
+    input.readOnly = false;
     searchButton.setAttribute('aria-busy', 'false');
   }
 });

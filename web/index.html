@@ -95,7 +95,7 @@
         <h1 id="page-title" class="sr-only">Rechercher de la musique</h1>
 
         <form id="search-form" class="search-form" novalidate>
-          <label class="sr-only" for="search-input">Titre, artiste ou lien direct</label>
+          <label class="sr-only" for="search-input">Lien, titre ou artiste</label>
           <div class="search-box">
             <textarea
               id="search-input"
@@ -104,21 +104,12 @@
               maxlength="100000"
               autocomplete="off"
               spellcheck="false"
-              placeholder="Titre, artiste ou liens (un par ligne)…"
+              placeholder="Colle un lien ou cherche un titre…"
               required
             ></textarea>
             <button id="search-button" class="primary-button" type="submit" title="Rechercher" aria-label="Rechercher"><span data-ui-icon="Search" aria-hidden="true"></span></button>
-            <button id="import-playlist-button" class="secondary-button import-button" type="button" title="Importer des titres" aria-label="Importer des titres"><span data-ui-icon="ListPlus" aria-hidden="true"></span><span class="import-label">Importer</span></button>
           </div>
         </form>
-        <div id="import-panel" class="import-panel" hidden>
-          <label class="sr-only" for="import-links">Playlists, albums, liens ou Artiste - Titre</label>
-          <textarea id="import-links" rows="7" spellcheck="false" placeholder="Playlists, albums, liens ou Artiste - Titre"></textarea>
-          <div class="import-actions">
-            <button id="import-cancel" class="text-button compact" type="button">Annuler</button>
-            <button id="import-submit" class="primary-button" type="button">Importer</button>
-          </div>
-        </div>
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
       </section>
 

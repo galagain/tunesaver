@@ -2207,7 +2207,7 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 }
 
 #search-view .search-section { margin: 0; padding: 0; }
-#search-view .search-box { grid-template-columns: minmax(0, 1fr) 36px auto; height: 44px; min-height: 44px; gap: 6px; padding: 4px 5px 4px 12px; border-color: #414141; border-radius: 4px 4px 0 0; background: #232323; }
+#search-view .search-box { grid-template-columns: minmax(0, 1fr) 36px; height: 44px; min-height: 44px; gap: 6px; padding: 4px 5px 4px 12px; border-color: #414141; border-radius: 4px 4px 0 0; background: #232323; }
 #search-view .search-box:focus-within { border-color: #6b827b; box-shadow: none; }
 #search-view .search-box textarea { height: 34px; min-height: 34px; max-height: 34px; padding: 8px 0; font-size: 12px; }
 #search-view .search-box button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; grid-column: auto; grid-row: auto; height: 34px; min-height: 34px; margin: 0; padding: 0 10px; border: 1px solid #484848; border-radius: 3px; font-size: 11px; font-weight: 500; box-shadow: none; }
@@ -2253,7 +2253,7 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
   #search-view .platform-panel { border-right: 0; }
 }
 @media (max-width: 700px) {
-  #search-view .search-box { grid-template-columns: minmax(0, 1fr) 34px 34px; }
+  #search-view .search-box { grid-template-columns: minmax(0, 1fr) 34px; }
   #search-view #import-playlist-button { width: 34px; padding: 0; }
   #search-view .import-label { display: none; }
 }

@@ -75,9 +75,8 @@ const fs = require('node:fs');
         await expect(download).toHaveText(label);
         await expect(download.locator('svg')).toHaveCount(1);
       }
-      await page.locator('#import-playlist-button').click();
-      await expect(page.locator('#import-panel')).toBeVisible();
-      await page.locator('#import-cancel').click();
+      await expect(page.locator('#import-playlist-button')).toHaveCount(0);
+      await expect(page.locator('#import-panel')).toHaveCount(0);
       await page.keyboard.press('Escape');
       await expect(page.locator('#results-section')).toBeHidden();
       expect(errors).toEqual([]);
