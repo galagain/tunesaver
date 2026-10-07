@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>TuneSaver | Scenarios de test</title>
+  <style>/* VIEWER_CSS */</style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">ts</span><div>TuneSaver<small>TESTS DES SOURCES</small></div></div>
+    <div class="run-summary"><span id="run-status"></span><span id="run-date"></span></div>
+    <label class="search side-search"><span data-icon="Search"></span><input id="scenario-search" type="search" placeholder="Scenarios" aria-label="Filtrer les scenarios"></label>
+    <nav id="scenarios" aria-label="Scenarios de test"></nav>
+    <div class="sidebar-footer"><span id="scenario-count"></span><span>Metadonnees uniquement</span></div>
+  </aside>
+  <main>
+    <header class="collection-header">
+      <div class="eyebrow"><span id="source-mark" class="source-mark"></span><span id="collection-type"></span><span id="result-status"></span></div>
+      <div class="heading-row"><h1 id="collection-title"></h1><div class="actions"><a id="source-link" class="icon-button" target="_blank" rel="noopener noreferrer" title="Ouvrir sur la plateforme" aria-label="Ouvrir sur la plateforme"><span data-icon="ExternalLink"></span></a><button id="export" class="icon-button" title="Exporter le JSON" aria-label="Exporter le JSON"><span data-icon="Download"></span></button></div></div>
+      <div id="collection-meta" class="collection-meta"></div>
+    </header>
+    <section class="toolbar" aria-label="Filtres des morceaux">
+      <label class="search track-search"><span data-icon="Search"></span><input id="track-search" type="search" placeholder="Titre, artiste, album..." aria-label="Rechercher un morceau"></label>
+      <div class="filters" role="group" aria-label="Etat des morceaux"><button data-filter="all" aria-pressed="true">Tous <span></span></button><button data-filter="direct" aria-pressed="false">Directs <span></span></button><button data-filter="pending" aria-pressed="false">A apparier <span></span></button><button data-filter="unavailable" aria-pressed="false">Indisponibles <span></span></button></div>
+    </section>
+    <div id="table-region" class="table-region" tabindex="0" aria-label="Liste des morceaux">
+      <table><thead><tr><th scope="col" class="number" aria-sort="ascending"><button data-sort="number">#</button></th><th scope="col" aria-sort="none"><button data-sort="title">Titre</button></th><th scope="col" aria-sort="none"><button data-sort="artist">Artiste</button></th><th scope="col" class="duration" aria-sort="none"><button data-sort="duration_seconds">Duree</button></th><th scope="col" class="state">Cible</th><th scope="col" class="link-column"><span class="sr-only">Lien</span></th></tr></thead><tbody id="tracks"></tbody></table>
+      <div id="empty" class="empty" role="status" hidden></div>
+    </div>
+    <footer class="main-footer"><span id="visible-count" role="status" aria-live="polite"></span><span id="source-note"></span></footer>
+  </main>
+  <script id="viewer-data" type="application/json"><!-- VIEWER_DATA --></script>
+  <script>/* VIEWER_JS */</script>
+</body>
+</html>

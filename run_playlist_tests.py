@@ -93,6 +93,8 @@ def run_tests(directory, reader):
     export_playlist.write_output(directory / "report.json", json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     export_playlist.write_output(directory / "inputs.json", json.dumps(
         {"schema_version": 1, "collections": collections}, ensure_ascii=False, indent=2) + "\n")
+    from build_test_viewer import build_viewer
+    build_viewer(directory)
     return report
 
 
@@ -109,7 +111,7 @@ def main(argv=None):
         directory = Path(tempfile.mkdtemp(prefix=prefix, dir=args.output_dir))
         reader = (lambda url: export_playlist.read_with_docker(url, args.container)) if args.docker else export_playlist.read_playlist
         report = run_tests(directory, reader)
-        print(f"\nBilan : {report['passed']}/{report['tested']} tests reussis.\nResultats : {directory}")
+        print(f"\nBilan : {report['passed']}/{report['tested']} tests reussis.\nResultats : {directory}\nVisualisation : {directory / 'viewer.html'}")
         return int(report["passed"] != report["tested"])
     except KeyboardInterrupt:
         print("Tests interrompus.", file=sys.stderr)

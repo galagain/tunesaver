@@ -28,7 +28,7 @@ class PlaylistTestRunnerTests(unittest.TestCase):
             result = runner.run_tests(Path(root), reader)
             self.assertEqual(result["passed"], len(runner.CASES))
             self.assertEqual(reader.call_args_list, [mock.call(url) for _, _, url in runner.CASES])
-            self.assertEqual(len(list(Path(root).iterdir())), 2 * len(runner.CASES) + 2)
+            self.assertEqual(len(list(Path(root).iterdir())), 2 * len(runner.CASES) + 3)
             self.assertEqual([r["kind"] for r in result["results"]], [kind for _, kind, _ in runner.CASES])
             self.assertEqual(len(json.loads((Path(root) / "inputs.json").read_text())["collections"]), len(runner.CASES))
             self.assertEqual(json.loads((Path(root) / "report.json").read_text()), result)

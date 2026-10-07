@@ -8,6 +8,22 @@ From the project directory:
 python3 run_playlist_tests.py --docker
 ```
 
+Each run also generates `viewer.html`, a self-contained web visualization.
+Open it directly in a browser: no web server, account or network connection is
+needed. The left navigation groups all scenarios by type, including failures.
+The track list supports text search, status filters, column sorting, source
+links and JSON export for the selected scenario. There are no audio actions.
+
+To generate it from an existing report, without repeating provider requests:
+
+```sh
+python3 build_test_viewer.py
+python3 build_test_viewer.py data/playlist-tests/RUN_DIRECTORY
+```
+
+Without an argument, the latest report is selected. Generated pages contain
+the public track metadata in the test report; they do not include credentials.
+
 This runs Spotify `57HAIqxdHbi332994xcOKc`, Apple Music Jazz House
 `pl.2e69eda9c8af461e8924dfebbcdf9794` (the supplied link target, not its
 different display label), and SoundCloud `delicieuse-musique/sets/jazz-house`.
