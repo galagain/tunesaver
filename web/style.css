@@ -2358,13 +2358,17 @@ body:has(#app-view:not([hidden])) > .site-header { display: none; }
 .restore-audio svg { width: 16px; height: 16px; }
 #search-view .platform-grid { grid-template-columns: minmax(0, 1fr); }
 #search-view .platform-panel { border-right: 0; }
-#search-view .result-card { grid-template-columns: 40px 32px minmax(100px, 1fr) 54px 176px; align-items: center; gap: 8px; padding: 6px 8px; min-height: 46px; }
+#search-view .result-card { grid-template-columns: 40px 32px minmax(100px, 1fr) 40px 132px; align-items: center; gap: 8px; padding: 6px 8px; min-height: 46px; border-color: #333; }
+#search-view .result-card:nth-child(even) { background: transparent; }
 #search-view .result-cover { width: 32px; height: 32px; align-self: center; }
 #search-view .result-card h4 { display: block; height: auto; white-space: nowrap; text-overflow: ellipsis; line-height: 16px; }
 #search-view .result-artist { margin: 0; }
 #search-view .result-details { grid-column: auto; grid-template-columns: 1fr; border: 0; padding: 0; gap: 6px; }
 #search-view .result-info { flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
-#search-view .result-actions { grid-column: auto; }
+#search-view .result-actions { grid-column: auto; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+#search-view .download-button { height: 28px; min-height: 28px; width: auto; max-width: 98px; padding: 0 4px; font-size: 10px; background: transparent; }
+#search-view .download-button[data-idle="true"] { width: 28px; flex: 0 0 28px; }
+#search-view .download-button[data-idle="true"] .download-label { display: none; }
 #search-view .source-link { width: 30px; flex-shrink: 0; }
-@media(max-width:1100px) { #search-view .result-card { grid-template-columns: 28px 32px minmax(80px, 1fr) 176px; } #search-view .result-details { display: none; } }
-@media(max-width:640px) { #search-view .result-card { grid-template-columns: 28px 32px minmax(0, 1fr); } #search-view .result-actions { grid-column: 3; display: flex; justify-content: flex-end; } #search-view .download-button { width: 138px; } }
+@media(max-width:1100px) { #search-view .result-card { grid-template-columns: 40px 34px minmax(80px, 1fr) 132px; } #search-view .result-details { display: none; } }
+@media(max-width:700px) { #search-view .result-card { grid-template-columns: 40px 34px minmax(0, 1fr); gap: 6px 8px; padding: 8px; } #search-view .result-actions { grid-column: 3; justify-content: flex-start; } }

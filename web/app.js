@@ -624,34 +624,9 @@ function setPlatformError(provider, message) {
   elements.state.textContent = message;
 }
 
-function resultCover(result) {
-  const cover = document.createElement("div");
-  cover.className = "result-cover";
-  const fallback = document.createElement("span");
-  fallback.textContent = (result.title || result.platform || "?").trim().slice(0, 1).toUpperCase() || "?";
-  cover.append(fallback);
-  if (result.cover_url) {
-    const image = document.createElement("img");
-    image.alt = "";
-    image.loading = "lazy";
-    image.src = result.cover_url;
-    image.addEventListener("load", () => { cover.dataset.loaded = "true"; });
-    cover.append(image);
-  }
-  return cover;
-}
-
-function resultInfo(label, value) {
-  const item = document.createElement("span");
-  item.className = "result-info";
-  const name = document.createElement('span'); name.textContent = label;
-  const text = document.createElement('strong'); text.textContent = value || '—';
-  item.title = `${label} : ${value || 'Non renseigné'}`;
-  item.append(name, text);
-  return item;
-}
 
 function setDownloadLabel(button, label) {
+  button.dataset.idle = String(label === 'Télécharger');
   let text = button.querySelector('.download-label');
   if (!text) {
     const icon = document.createElement('span'); icon.setAttribute('aria-hidden', 'true');
@@ -666,43 +641,25 @@ function setDownloadLabel(button, label) {
 
 function makeResultCard(result, index = 0) {
   const card = document.createElement("article");
-  card.className = "result-card";
+  card.className = "library-track result-card";
   const number = document.createElement('span');
   number.className = 'track-number';
   number.textContent = String(index + 1);
-  card.append(number, resultCover(result));
-  const body = document.createElement("div");
-  body.className = "result-body";
-  const title = document.createElement("h4");
-  title.textContent = result.title || "Sans titre";
-  title.title = title.textContent;
-  const artist = document.createElement("p");
-  artist.className = "result-artist";
-  artist.textContent = result.artist || result.platform;
-  artist.title = artist.textContent;
+  const cover = makeLibraryCover(result); cover.classList.add('result-cover');
+  card.append(number, cover);
+  const body = makeTrackBody(result); body.classList.add('result-body');
   const album = document.createElement('p'); album.className = 'result-album';
   album.textContent = result.album || 'Album non renseigné'; album.title = album.textContent;
   const context = document.createElement('p'); context.className = 'result-context';
   context.textContent = [result.label, result.mix, result.quality].filter(Boolean).join(' · ') || '—';
   context.title = ['Label', 'Mix', 'Qualité'].map((label, i) => `${label} : ${[result.label, result.mix, result.quality][i] || 'Non renseigné'}`).join(' · ');
-  const details = document.createElement("p");
-  details.className = "result-details";
-  details.append(
-    resultInfo("Durée", result.duration)
-  );
-  body.append(title, artist);
+  const details = makeTrackMetrics({duration: result.duration})[2];
+  details.classList.add('result-details');
   body.title = [album.textContent, context.textContent].filter(Boolean).join(' · ');
 
   const actions = document.createElement("div");
-  actions.className = "result-actions";
-  const source = document.createElement("a");
-  source.className = "source-link";
-  source.href = result.source_url;
-  source.target = "_blank";
-  source.rel = "noopener noreferrer";
-  source.title = `Ouvrir sur ${providerLabels[result.provider] || result.platform}`;
-  source.setAttribute('aria-label', source.title);
-  appendUIIcon(source, 'ExternalLink');
+  actions.className = "library-track-actions result-actions";
+  const source = makeSourceBadge(result);
   const download = document.createElement("button");
   download.className = "download-button";
   download.type = "button";
@@ -1102,7 +1059,7 @@ function makeLibraryCover(track) {
   const initial = document.createElement('span'); initial.textContent = (track.title || '?').trim().slice(0, 1).toUpperCase();
   cover.append(initial);
   const url = track.cover_url;
-  if (url && (url.startsWith('/api/') || url.startsWith('https://'))) {
+  if (url && ((url.startsWith('/') && !url.startsWith('//')) || url.startsWith('https://'))) {
     const image = document.createElement('img'); image.alt = ''; image.loading = 'lazy';
     image.addEventListener('load', () => cover.dataset.loaded = 'true');
     if (coverUrlCache.has(url)) cover.dataset.loaded = 'true';
@@ -1110,6 +1067,37 @@ function makeLibraryCover(track) {
     if (url.startsWith('/api/')) loadPrivateImage(image, url); else image.src = url;
   }
   return cover;
+}
+
+function makeTrackBody(track) {
+  const body = document.createElement('div'); body.className = 'library-track-body';
+  const title = document.createElement('strong');
+  title.textContent = track.title || track.file_name || 'Sans titre'; title.title = title.textContent;
+  const artist = document.createElement('span');
+  artist.textContent = track.artist || 'Artiste inconnu'; artist.title = artist.textContent;
+  body.append(title, artist);
+  return body;
+}
+
+function makeTrackMetrics(analysis = {}) {
+  const bpm = document.createElement('span'); bpm.className = 'track-bpm';
+  const tempo = parseFloat(analysis.bpm);
+  bpm.textContent = Number.isFinite(tempo) && tempo > 0 ? tempo.toFixed(2) : '—';
+  const key = document.createElement('span'); key.className = 'track-key';
+  key.textContent = analysis.camelot || analysis.key || '—';
+  const duration = document.createElement('span'); duration.className = 'track-duration';
+  const seconds = Number(analysis.duration);
+  duration.textContent = Number.isFinite(seconds) && seconds > 0
+    ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+    : /^\d+:\d{2}$/.test(String(analysis.duration || '')) ? analysis.duration : '—';
+  return [bpm, key, duration];
+}
+
+function makeTrackStatus(label, detail = '') {
+  const button = document.createElement('button'); button.type = 'button';
+  button.className = 'download-status-button'; button.disabled = true;
+  button.textContent = label; button.title = detail || label;
+  return button;
 }
 
 
@@ -1591,13 +1579,7 @@ function renderLibrary() {
       renderLibrary();
     });
     const cover = makeLibraryCover(track);
-    const body = document.createElement("div");
-    body.className = "library-track-body";
-    const title = document.createElement("strong");
-    title.textContent = track.title || track.file_name || track.job_id;
-    const meta = document.createElement("span");
-    meta.textContent = track.artist || "Artiste inconnu";
-    body.append(title, meta);
+    const body = makeTrackBody(track);
     const actions = document.createElement("div");
     actions.className = "library-track-actions";
     const menu = document.createElement('details'); menu.className = 'workspace-menu track-menu';
@@ -1623,11 +1605,8 @@ function renderLibrary() {
     }
     actions.append(makeSourceBadge(track));
     if (track.is_live || track.state === "failed") {
-      const statusButton = document.createElement("button");
-      statusButton.className = `download-status-button ${track.state || "pending"}`;
-      statusButton.type = "button";
-      statusButton.disabled = true;
-      statusButton.textContent = stateLabels[track.state || "pending"] || "En file";
+      const statusButton = makeTrackStatus(stateLabels[track.state || 'pending'] || 'En file', track.error || '');
+      statusButton.classList.add(track.state || 'pending');
       actions.append(statusButton);
     } else if (track.expired) {
       const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'restore-audio';
@@ -1672,12 +1651,7 @@ function renderLibrary() {
       remove.append(document.createTextNode(remove.title));
       extraActions.append(remove);
     }
-    const analysis = track.mix_analysis || {};
-    const bpm = document.createElement('span'); bpm.className = 'track-bpm';
-    bpm.textContent = analysis.bpm ? Number(analysis.bpm).toFixed(2) : '—';
-    const key = document.createElement('span'); key.className = 'track-key'; key.textContent = analysis.camelot || analysis.key || '—';
-    const duration = document.createElement('span'); duration.className = 'track-duration';
-    duration.textContent = analysis.duration ? `${Math.floor(analysis.duration / 60)}:${String(Math.floor(analysis.duration % 60)).padStart(2, '0')}` : '—';
+    const [bpm, key, duration] = makeTrackMetrics(track.mix_analysis);
     if (extraActions.childElementCount) actions.insertBefore(menu, actions.querySelector('.track-delete'));
     const number = document.createElement('button');
     number.type = 'button'; number.className = 'track-number';
@@ -1718,13 +1692,14 @@ const importLimits = new Map();
 
 function renderImportPreview(item) {
   renderedTracks = [];
+  const jobs = new Map([...liveTracksForLibrary(), ...libraryState.tracks].map(track => [track.job_id, track]));
   const query = document.querySelector('#library-search').value.trim().toLocaleLowerCase();
   const sort = currentLibrarySort();
   document.querySelectorAll('[data-track-sort]').forEach(button => {
     button.setAttribute('aria-pressed', String(button.dataset.trackSort === sort.by));
     button.dataset.direction = button.dataset.trackSort === sort.by ? String(sort.direction) : '';
   });
-  const renderKey = JSON.stringify(['preview', item.id, item.state, item.processed, item.activity, importPreviews.has(item.id), query, sort]);
+  const renderKey = JSON.stringify(['preview', item.id, item.state, item.processed, item.activity, importPreviews.has(item.id), query, sort, [...jobs.values()]]);
   if (libraryTracks.renderKey === renderKey) return;
   libraryTracks.renderKey = renderKey;
   document.querySelector("#library-title").textContent = currentLibraryTitle();
@@ -1762,33 +1737,22 @@ function renderImportPreview(item) {
     row.className = "library-track import-preview-track";
     const candidate = track.matching?.candidate || track;
     const number = document.createElement('span'); number.className = 'track-number'; number.textContent = track.number;
-    const cover = makeLibraryCover({...track, cover_url: candidate.cover_url});
-    const body = document.createElement('div'); body.className = 'library-track-body';
-    const title = document.createElement('strong'); title.textContent = track.title;
-    const artist = document.createElement('span'); artist.textContent = track.artist || 'Artiste inconnu';
-    body.append(title, artist);
-    const bpm = document.createElement('span'); bpm.className = 'track-bpm'; bpm.textContent = candidate.bpm || '—';
-    const key = document.createElement('span'); key.className = 'track-key'; key.textContent = candidate.key || '—';
-    const duration = document.createElement('span'); duration.className = 'track-duration';
-    duration.textContent = Number.isFinite(track.duration) && track.duration > 0
-      ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, '0')}` : '—';
+    const cover = makeLibraryCover({...track, cover_url: candidate.cover_url || track.cover_url});
+    const body = makeTrackBody(track);
+    const [bpm, key, duration] = makeTrackMetrics({...candidate, duration: track.duration || candidate.duration});
     const actions = document.createElement('div'); actions.className = 'library-track-actions';
     row.append(number, cover, body, bpm, key, duration, actions);
     const matching = track.matching;
     if (matching) {
-      const info = document.createElement('small');
-      const states = { searching: 'Recherche', matched: 'Trouvé', not_found: 'Introuvable', ambiguous: 'À vérifier', unavailable: 'Indisponible', error: 'Erreur' };
-      info.className = 'import-track-status';
-      info.textContent = `${matching.job_id ? 'En téléchargement' : states[matching.status] || 'En attente'}${matching.target?.provider || matching.provider ? ' · ' + (matching.target?.provider || matching.provider).toUpperCase() : ''}${matching.error ? ' · ' + matching.error : ''}`;
-      body.append(info);
       if (matching.target?.url?.startsWith('https://')) {
         actions.append(makeSourceBadge({provider: matching.target.provider === 'tidal' ? 'tiddl' : matching.target.provider, source_url: matching.target.url}));
       }
+      const job = jobs.get(matching.job_id);
+      const states = { searching: 'Recherche', not_found: 'Introuvable', ambiguous: 'À vérifier', unavailable: 'Indisponible', error: 'Erreur' };
+      const label = matching.job_id ? (job?.state === 'done' ? '' : stateLabels[job?.state || 'pending']) : states[matching.status];
+      if (label) actions.append(makeTrackStatus(label, matching.error));
     } else if (item.state !== 'ready' && track.number > item.total) {
-      const info = document.createElement('small');
-      info.className = 'import-track-status';
-      info.textContent = 'Hors limite sélectionnée';
-      body.append(info);
+      actions.append(makeTrackStatus('Non sélectionné', 'Hors limite sélectionnée'));
     }
     fragment.append(row);
   }

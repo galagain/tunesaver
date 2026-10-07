@@ -38,8 +38,9 @@ const fs = require('node:fs');
       await page.locator('#search-input').fill('Odymel');
       await page.locator('#search-input').press('Enter');
       await expect(page.locator('.result-card')).toHaveCount(9);
-      await expect(page.locator('.result-details .result-info')).toHaveCount(9);
-      for (const label of await page.locator('.result-details .result-info > span').allTextContents()) expect(label).toBe('Durée');
+      await expect(page.locator('.result-details')).toHaveCount(9);
+      for (const duration of await page.locator('.result-details').allTextContents()) expect(duration).toBe('3:20');
+      await expect(page.locator('.result-card .source-badge')).toHaveCount(9);
       await expect(page.locator('#search-button svg')).toHaveCount(1);
       await expect(page.locator('.download-button svg')).toHaveCount(9);
       for (const cover of await page.locator('.result-cover:has(img)').all()) {
@@ -56,7 +57,7 @@ const fs = require('node:fs');
           overflow: document.documentElement.scrollWidth > innerWidth,
           actionsFit: [...document.querySelectorAll('.result-card')].every(card => {
             const bounds = card.getBoundingClientRect();
-            return [...card.querySelectorAll('button, a, h4, .result-details')].every(el => {
+            return [...card.querySelectorAll('button, a, .library-track-body strong, .result-details')].every(el => {
               if (!el.getClientRects().length) return true;
               const box = el.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.right;
             });
