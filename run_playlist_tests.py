@@ -16,6 +16,9 @@ PLAYLISTS = [
     ("spotify", "https://open.spotify.com/playlist/57HAIqxdHbi332994xcOKc"),
     ("applemusic", "https://music.apple.com/sn/playlist/jazz-house/pl.2e69eda9c8af461e8924dfebbcdf9794?l=fr-FR"),
     ("soundcloud", "https://soundcloud.com/delicieuse-musique/sets/jazz-house"),
+    ("beatport", "https://www.beatport.com/fr/chart/best-of-classics-techno/820196"),
+    ("tiddl", "https://tidal.com/playlist/0bfac8e5-4ff8-44e4-b112-5fb71d39bcc1"),
+    ("qobuz", "https://www.qobuz.com/fr-fr/playlists/jazz-n-electro/1270781"),
 ]
 ALBUMS = [
     ("spotify", "https://open.spotify.com/album/4m2880jivSbbyEGAKfITCa"),

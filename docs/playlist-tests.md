@@ -1,6 +1,6 @@
 # Playlist import checks
 
-## Complete input matrix (16 cases)
+## Complete input matrix (19 cases)
 
 From the project directory:
 
@@ -13,6 +13,15 @@ This runs Spotify `57HAIqxdHbi332994xcOKc`, Apple Music Jazz House
 different display label), and SoundCloud `delicieuse-musique/sets/jazz-house`.
 Spotify uses HTTP only. No audio is downloaded and no user playlist is created.
 
+The native playlist cases are:
+
+- Beatport chart: https://www.beatport.com/fr/chart/best-of-classics-techno/820196
+- TIDAL: https://tidal.com/playlist/0bfac8e5-4ff8-44e4-b112-5fb71d39bcc1
+- Qobuz: https://www.qobuz.com/fr-fr/playlists/jazz-n-electro/1270781
+
+The Beatport chart is treated like a playlist. Every native track must retain
+its direct target, with `requires_matching: false`.
+
 The same run also reads these albums, using the same ordered track-list format:
 
 - Spotify: https://open.spotify.com/album/4m2880jivSbbyEGAKfITCa
@@ -24,7 +33,7 @@ The same run also reads these albums, using the same ordered track-list format:
 
 `TRACKS` in `run_playlist_tests.py` also lists one verified direct song URL for
 each of these six services. A manual `Artist - Title` entry completes the matrix:
-3 playlists, 6 albums/releases, 6 tracks, 1 manual entry. Beatport calls albums
+6 playlists/charts, 6 albums/releases, 6 tracks, 1 manual entry. Beatport calls albums
 and EPs releases (`/release/`); these are read as ordered album track lists.
 
 The first two are Random Access Memories; the SoundCloud case is its 10th
@@ -37,7 +46,7 @@ Each execution creates a unique directory under `data/playlist-tests/`, containi
 TXT and JSON exports for successful reads and a `report.json` with counts,
 timings and failures. `inputs.json` groups all successful collections using the
 same versioned schema. A failed case is listed in the report, never silently
-included as a partial collection. All 16 cases are attempted even if one fails.
+included as a partial collection. All 19 cases are attempted even if one fails.
 Exit code is 0 only when all cases succeed, otherwise 1 (130 on interruption).
 Use `--output-dir PATH` for a different parent directory, or omit `--docker`
 when running inside the configured Python environment. Counts are checked
