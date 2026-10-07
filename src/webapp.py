@@ -1688,7 +1688,8 @@ def normalize_beatport_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if seconds is None and isinstance(track.get("length_ms"), (int, float)):
             seconds = playlist_sources.matching_duration(track["length_ms"] / 1000)
         duration = format_duration(seconds) if seconds else ""
-        cover_url = first_image_url(track.get("image")) or first_image_url(release.get("image")) or first_image_url(track.get("images")) or first_image_url(release.get("images"))
+        # Beatport's track image is the waveform, not the release artwork.
+        cover_url = first_image_url(release.get("image")) or first_image_url(release.get("images"))
 
         safe_slug = quote(slug, safe="-")
         download_url = f"https://www.beatport.com/track/{safe_slug}/{track_id}"
