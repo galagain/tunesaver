@@ -164,6 +164,8 @@ document.addEventListener('keydown', event => {
 });
 let renderedTracks = [];
 let currentTrackId = "";
+let playbackQueue = [];
+let playbackScope = '';
 const coverUrlCache = new Map();
 let historyWarningShown = false;
 let lastHistoryFingerprint = "";
@@ -392,6 +394,8 @@ function resetPlayer() {
   playerArtist.textContent = '';
   playerCover.replaceChildren();
   currentTrackId = "";
+  playbackQueue = [];
+  playbackScope = '';
 }
 
 function clearCoverCache() {
@@ -971,16 +975,26 @@ async function downloadReadyJob(jobId) {
   window.setTimeout(refreshQueue, 2500);
 }
 
-async function streamTrack(track) {
+async function streamTrack(track, { advance = false } = {}) {
   const fullTrack = typeof track === "string"
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
     : track;
   const version = ++playerVersion;
-  if (fullTrack.job_id === currentTrackId && playerAudio.src && !playerAudio.error) return playerAudio.play();
+  const sourceScope = libraryScope();
+  const sourceTracks = advance ? playbackQueue : sortedLibraryTracks(manualLibraryTracks());
+  const queue = sourceTracks.some(item => item.job_id === fullTrack.job_id) ? [...sourceTracks] : [fullTrack];
+  const bindQueue = () => {
+    if (!advance) { playbackQueue = queue; playbackScope = sourceScope; }
+  };
+  if (fullTrack.job_id === currentTrackId && playerAudio.src && !playerAudio.error) {
+    bindQueue();
+    return playerAudio.play();
+  }
   const { url } = await requestJson('/api/stream-ticket', {
     method: 'POST', body: JSON.stringify({ job_id: fullTrack.job_id }),
   });
   if (version !== playerVersion) return;
+  bindQueue();
   playerAudio.src = url;
   currentTrackId = fullTrack.job_id;
   playerTitle.textContent = fullTrack.title || fullTrack.file_name || 'Sans titre';
@@ -994,14 +1008,24 @@ async function streamTrack(track) {
   await playerAudio.play();
 }
 
+function adjacentPlaybackTrack(direction) {
+  const index = playbackQueue.findIndex(track => track.job_id === currentTrackId);
+  if (index < 0) return null;
+  const playlistId = playbackScope.startsWith('playlist:') ? playbackScope.slice(9) : '';
+  const members = playlistId ? new Set(libraryState.playlists.find(p => p.id === playlistId)?.track_ids || []) : null;
+  for (let i = index + direction; i >= 0 && i < playbackQueue.length; i += direction) {
+    const id = playbackQueue[i].job_id;
+    const track = libraryState.tracks.find(item => item.job_id === id);
+    if (track?.streamable && !deletedJobIds.has(id) && (!members || members.has(id))) return track;
+  }
+  return null;
+}
+
 async function playNextTrack() {
-  const currentIndex = renderedTracks.findIndex((track) => track.job_id === currentTrackId);
-  const next = renderedTracks
-    .slice(Math.max(0, currentIndex + 1))
-    .find((track) => track.streamable);
+  const next = adjacentPlaybackTrack(1);
   if (!next) return;
   try {
-    await streamTrack(next);
+    await streamTrack(next, { advance: true });
   } catch (error) {
     showToast(error.message, "error");
   }
@@ -1009,9 +1033,8 @@ async function playNextTrack() {
 
 async function playPreviousTrack() {
   if (playerAudio.currentTime > 3) { playerAudio.currentTime = 0; return; }
-  const index = renderedTracks.findIndex(track => track.job_id === currentTrackId);
-  const previous = renderedTracks.slice(0, Math.max(0, index)).reverse().find(track => track.streamable);
-  if (previous) await streamTrack(previous);
+  const previous = adjacentPlaybackTrack(-1);
+  if (previous) await streamTrack(previous, { advance: true });
 }
 
 async function fetchLibrary() {
