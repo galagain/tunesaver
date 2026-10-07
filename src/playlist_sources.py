@@ -360,7 +360,7 @@ def normalized_words(value):
     return " ".join(re.findall(r"[a-z0-9]+", value))
 
 
-def split_featured_artists(value):
+def split_featured_artists(value, aliases=None):
     guests = set()
 
     def extract(match):
@@ -368,7 +368,10 @@ def split_featured_artists(value):
         # Ambiguous credits containing version words must not erase a remix label.
         if re.search(r"\b(remix|edit|dub|mix|live|instrumental|acoustic|extended)\b", credit, re.I):
             return match.group(0)
-        guests.update(normalized_words(credit).split())
+        normalized = normalized_words(credit)
+        guests.update(normalized.split())
+        if aliases is not None:
+            aliases[normalized.replace(' ', '')] = normalized
         return " "
 
     marker = r"(?:feat\.?|ft\.?|featuring)\s+"
@@ -379,11 +382,22 @@ def split_featured_artists(value):
 
 
 def matching_metadata(track):
-    title, guests = split_featured_artists(track.get("title", ""))
-    artist, artist_guests = split_featured_artists(track.get("artist", ""))
+    aliases = {}
+    title, guests = split_featured_artists(track.get("title", ""), aliases)
     mix = normalized_words(track.get("mix", ""))
     if mix and mix not in {"original mix", "original"} and mix not in title:
         title += " " + mix
+    # Spotify also credits remixers as artists; other catalogs keep them only
+    # in the version label. The full remix title is still compared below.
+    credits = []
+    for index, credit in enumerate(track.get('artist', '').split(',')):
+        name = normalized_words(credit)
+        if index and name and re.search(r'\b' + re.escape(name) + r' (?:remix|edit|dub)\b', title):
+            continue
+        credits.append(credit)
+    artist, artist_guests = split_featured_artists(', '.join(credits), aliases)
+    for compact, expanded in aliases.items():
+        artist = re.sub(r'\b' + re.escape(compact) + r'\b', lambda _: expanded, artist)
     title = " ".join(re.sub(r"\b(original mix|original version)\b", "", title).split())
     return title, set(artist.split()), guests | artist_guests
 

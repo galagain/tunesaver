@@ -22,6 +22,24 @@ def collection(kind="playlist", tracks=None):
 
 
 class CatalogMatcherTests(unittest.TestCase):
+    def test_spotify_liem_remix_matches_across_credit_formats(self):
+        wanted = track('If Only I Could (feat. Steve Lucas) - Liem Remix',
+                       'Fusion Groove Orchestra, stevelucas, Liem', duration=426.945)
+        candidate = track('If Only I Could', 'Fusion Groove Orchestra, Steve Lucas',
+                          mix='Liem Remix', duration='7:07')
+        self.assertIs(match_track(wanted, [candidate])[0], candidate)
+        for changes in ({'mix': 'Boston Bun Remix'}, {'mix': ''}, {'duration': '4:39'},
+                        {'artist': 'Different Orchestra, Steve Lucas'},
+                        {'artist': 'Fusion Groove Orchestra, Unknown Artist'}):
+            with self.subTest(changes=changes):
+                self.assertIsNone(match_track(wanted, [{**candidate, **changes}])[0])
+        catalog = mock.Mock()
+        catalog.search_tracks.side_effect = lambda p, q: [candidate] if q == 'Fusion Groove Orchestra if only i could liem remix' else []
+        result = match_collection(collection(tracks=[wanted]), catalog)
+        self.assertEqual(result['matched'], 1)
+        self.assertEqual(result['tracks'][0]['match']['provider'], 'tidal')
+        self.assertEqual(catalog.search_tracks.call_count, 3)
+
     def test_soundcloud_decorations_are_normalized_for_cached_inputs(self):
         original = track('PREMIERE: Kareem Ali - On My Heart [Noire & Blanche]', 'Kareem Ali')
         catalog = mock.Mock()

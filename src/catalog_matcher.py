@@ -81,7 +81,9 @@ def queries(track):
     lead = ", ".join(a.strip() for a in track.get("artist", "").split(",")
                      if not set(sources.normalized_words(a).split()) <= guests)
     simplified = f"{lead} {title}".strip()
-    return list(dict.fromkeys([full, simplified]))
+    primary = track.get('artist', '').split(',')[0].strip()
+    primary_query = f'{primary} {title}'.strip()
+    return list(dict.fromkeys([full, simplified, primary_query]))
 
 
 def match_collection(collection, catalog, progress=None, on_event=None, max_tracks=0):
