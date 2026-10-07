@@ -5,7 +5,10 @@ import argparse
 import contextlib
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -13,6 +16,13 @@ import time
 
 import export_playlist
 from run_playlist_tests import CASES, validate
+
+EVENTS = False
+
+
+def emit(event):
+    if EVENTS:
+        print("TUNESAVER_EVENT:" + json.dumps(event, ensure_ascii=True), file=sys.stderr, flush=True)
 
 
 def case_id(source, kind):
@@ -32,7 +42,8 @@ def match_payload(payload, catalog):
                 raise ValueError("Cible native invalide dans le fichier source.")
         tracks.append(track)
     collection = {"name": payload["name"], "source": payload["url"], "kind": payload["kind"], "tracks": tracks}
-    result = match_collection(collection, catalog, progress=lambda message: print(message, file=sys.stderr, flush=True))
+    result = match_collection(collection, catalog, progress=lambda message: print(message, file=sys.stderr, flush=True),
+                              on_event=lambda event: emit({**event, "case": case_id(payload["source"], payload["kind"])}))
     output = []
     for original, row in zip(payload["tracks"], result["tracks"]):
         match = row["match"]
@@ -53,10 +64,22 @@ def match_payload(payload, catalog):
 
 
 def docker_match(payload, image, container):
-    command = ["docker", "run", "--rm", "-i", "--volumes-from", container,
-               "-v", f"{export_playlist.ROOT}:/repo:ro", "-w", "/repo", "--entrypoint", "python", image,
-               "run_matching_tests.py", "--worker"]
-    result = subprocess.run(command, input=json.dumps(payload), stdout=subprocess.PIPE, text=True)
+    with tempfile.TemporaryDirectory(prefix="matching-container-") as temp:
+        cidfile = Path(temp) / "cid"
+        command = ["docker", "run", "--rm", "-i", "--cidfile", str(cidfile), "--volumes-from", container]
+        job = os.environ.get("TUNESAVER_MATCHING_JOB", "")
+        if job:
+            command += ["--label", f"tunesaver.matching-job={job}"]
+        command += ["-v", f"{export_playlist.ROOT}:/repo:ro", "-w", "/repo", "--entrypoint", "python", image,
+                    "run_matching_tests.py", "--worker", *(["--events"] if EVENTS else [])]
+        try:
+            result = subprocess.run(command, input=json.dumps(payload), stdout=subprocess.PIPE, text=True)
+        finally:
+            if cidfile.exists():
+                cid = cidfile.read_text().strip()
+                if re.fullmatch(r"[0-9a-f]{64}", cid):
+                    subprocess.run(["docker", "rm", "--force", cid], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=20, check=False)
     if result.returncode or not result.stdout.strip():
         raise ValueError("Appariement Docker interrompu ou indisponible.")
     return json.loads(result.stdout)
@@ -86,6 +109,7 @@ def run_cases(manifest, directory, matcher, cases=CASES):
         identifier = case_id(source, kind)
         print(f"[{identifier}] Appariement...", flush=True)
         started = time.monotonic()
+        emit({"type": "case_started", "case": identifier})
         result = {"source": source, "kind": kind, "url": url, "complete": False}
         try:
             original = indexed.get((source, kind))
@@ -109,12 +133,14 @@ def run_cases(manifest, directory, matcher, cases=CASES):
         results.append(result)
         report.update(tested=len(results), passed=sum(r["complete"] for r in results))
         save()
+        emit({"type": "case_finished", "case": identifier, "result": result})
     if not cases:
         save()
     return report
 
 
 def main(argv=None):
+    global EVENTS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, help="inputs.json du test de lecture (dernier par defaut)")
     parser.add_argument("--case", action="append", dest="cases", help="Scenario, ex. spotify-album ; option repetable")
@@ -122,7 +148,9 @@ def main(argv=None):
     parser.add_argument("--container", default="tunesaver-web-1")
     parser.add_argument("--output-dir", type=Path, help="Dossier parent des resultats (matching/ a cote de l'entree par defaut)")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--events", action="store_true", help="Emettre la progression JSON sur stderr")
     args = parser.parse_args(argv)
+    EVENTS = args.events
     try:
         if args.worker:
             from catalog_matcher import Catalog
@@ -147,6 +175,7 @@ def main(argv=None):
         root = args.output_dir or source.parent / "matching"
         root.mkdir(parents=True, exist_ok=True)
         directory = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ-"), dir=root))
+        emit({"type": "run_started", "directory": str(directory.resolve()), "planned": len(cases)})
         if args.docker:
             inspected = subprocess.run(["docker", "inspect", "--format", "{{.Image}}", args.container], capture_output=True, text=True, timeout=15)
             if inspected.returncode:
@@ -169,4 +198,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    def terminate(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminate)
     sys.exit(main())

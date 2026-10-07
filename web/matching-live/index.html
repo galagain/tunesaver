@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><meta name="matching-token" content="MATCHING_TOKEN"><title>TuneSaver | Appariements en direct</title><link rel="stylesheet" href="/base.css"><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">ts</span><div>TuneSaver<small>APPARIEMENTS EN DIRECT</small></div></div>
+    <div class="selection"><label><input id="select-all" type="checkbox" checked> Tout selectionner</label><span id="selected-count"></span></div>
+    <nav id="scenarios" aria-label="Scenarios"></nav>
+    <div class="sidebar-footer"><span>TIDAL / Beatport / Qobuz</span><span>Aucun audio telecharge</span></div>
+  </aside>
+  <main>
+    <section class="run-panel" aria-label="Execution">
+      <div class="run-controls"><div><span class="live-indicator" id="indicator"></span><strong id="run-state">Connexion...</strong><span id="elapsed"></span></div><div class="actions"><button id="start" class="primary command"><span data-control="Play"></span>Lancer</button><button id="stop" class="command" disabled><span data-control="Square"></span>Arreter</button><button id="open-result" class="icon-button" disabled title="Ouvrir le resultat" aria-label="Ouvrir le resultat"><span data-icon="ExternalLink"></span></button><button id="download" class="icon-button" disabled title="Exporter les resultats JSON" aria-label="Exporter les resultats JSON"><span data-icon="Download"></span></button></div></div>
+      <progress id="progress" value="0" max="1" aria-label="Morceaux traites"></progress>
+      <div class="metrics"><span><strong id="done">0 / 0</strong> traites</span><span><strong id="matched">0</strong> trouves</span><span class="error-count"><strong id="errors">0</strong> erreurs rencontrees</span><span id="activity">En attente</span></div>
+      <div id="notice" role="alert" hidden></div>
+    </section>
+    <header class="collection-header"><div class="eyebrow"><span id="collection-source"></span><span id="collection-status"></span></div><div class="heading-row"><h1 id="collection-title">Scenarios</h1></div></header>
+    <section class="toolbar"><label class="search track-search"><span data-icon="Search"></span><input id="search" type="search" aria-label="Rechercher un morceau" placeholder="Titre, artiste..."></label><select id="filter" aria-label="Filtrer les morceaux"><option value="all">Tous les morceaux</option><option value="searching">En cours</option><option value="matched">Trouves</option><option value="unresolved">A verifier</option><option value="error">Erreurs</option></select><button id="logs-toggle" class="command" aria-expanded="true">Journal</button></section>
+    <div id="table-region" class="table-region" tabindex="0" aria-label="Morceaux"><table><thead><tr><th class="number">#</th><th>Titre / Artiste</th><th class="live-state-column">Etat</th><th class="state">Plateforme</th><th class="link-column"><span class="sr-only">Lien</span></th></tr></thead><tbody id="tracks"></tbody></table><div class="empty" id="empty" hidden>Aucun morceau</div></div>
+    <section id="logs-panel" class="logs-panel" aria-label="Journal d'execution"><div class="logs-heading"><strong>Journal</strong><label><input id="errors-only" type="checkbox"> Erreurs uniquement</label><label><input id="follow" type="checkbox" checked> Suivre</label></div><div id="logs" role="log" aria-live="off"></div></section>
+    <footer class="main-footer"><span id="row-count"></span><span id="connection" role="status" aria-live="polite">Connexion...</span></footer>
+  </main>
+</body></html>

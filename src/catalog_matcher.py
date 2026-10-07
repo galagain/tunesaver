@@ -84,7 +84,17 @@ def queries(track):
     return list(dict.fromkeys([full, simplified]))
 
 
-def match_collection(collection, catalog, progress=None):
+def match_collection(collection, catalog, progress=None, on_event=None):
+    def event(kind, **values):
+        if on_event:
+            on_event({"type": kind, **values})
+
+    def update(row, final=False):
+        match = row["match"]
+        errors = [a.get("error") for a in row["attempts"] if a.get("error")]
+        event("track_updated", number=row["number"], status=row["status"], final=final,
+              target=direct_target(match) if match else None,
+              method=match.get("method") if match else None, error="; ".join(errors))
     rows = [{"number": n, "input": track, "status": "unavailable" if track.get("unavailable") else "not_found",
              "match": None, "attempts": []} for n, track in enumerate(collection["tracks"], 1)]
     album_attempts = []
@@ -94,13 +104,18 @@ def match_collection(collection, catalog, progress=None):
             row.update(status="matched", match={**row["input"], "provider": target["provider"],
                                                "source_url": target["url"], "download_url": target["url"],
                                                "method": "direct"})
+            update(row, final=True)
+        elif row["status"] == "unavailable":
+            update(row, final=True)
     for provider in PROVIDERS:
         pending = [row for row in rows if row["match"] is None and row["status"] != "unavailable"]
         if not pending:
             break
         if progress:
             progress(f"  {provider}: {len(pending)} titres restants")
+        event("provider", provider=provider)
         if collection["kind"] == "album":
+            event("album_started", provider=provider)
             attempt = {"provider": provider, "status": "not_found"}
             album_attempts.append(attempt)
             try:
@@ -111,12 +126,15 @@ def match_collection(collection, catalog, progress=None):
                         for row in pending:
                             row.update(status="matched", match={**matches[row["number"] - 1],
                                        "provider": provider, "method": "album", "album_url": album["url"]})
+                            update(row, final=True)
                         break
             except Exception as exc:
                 attempt.update(status="error", error=safe_error(exc))
+            event("album_updated", **attempt)
             if attempt["status"] == "matched":
                 continue
         for row in pending:
+            event("track_started", number=row["number"], provider=provider)
             attempt = {"provider": provider, "status": "not_found", "queries": []}
             row["attempts"].append(attempt)
             candidates = []
@@ -134,9 +152,11 @@ def match_collection(collection, catalog, progress=None):
                         attempt["candidates"] = candidates
             except Exception as exc:
                 attempt.update(status="error", error=safe_error(exc))
+            update(row, final=row["match"] is not None)
     for row in rows:
         if row["status"] == "not_found" and any(a["status"] == "error" for a in row["attempts"]):
             row["status"] = "error"
+        update(row, final=True)
     return {"name": collection["name"], "kind": collection["kind"], "source": collection.get("source", ""),
             "total": len(rows), "matched": sum(r["status"] == "matched" for r in rows),
             "album_attempts": album_attempts, "tracks": rows}
