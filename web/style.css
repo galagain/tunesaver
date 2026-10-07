@@ -2083,7 +2083,7 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 .workspace .library-layout { flex: 1; min-height: 0; }
 .workspace .library-main, #library-content { height: 100%; min-height: 0; }
 #library-content { display: flex; flex-direction: column; }
-#library-tracks { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scroll-behavior: auto; padding-bottom: 4px; }
+#library-tracks { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; scroll-behavior: auto; padding-bottom: 4px; }
 .workspace #playlist-imports { max-height: 25%; overflow-y: auto; flex-shrink: 0; }
 .workspace #queue-section { max-height: 40%; overflow-y: auto; flex-shrink: 0; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 18px; }
@@ -2134,7 +2134,11 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 .workspace .library-track[data-reorder="before"] { box-shadow: inset 0 2px #00d79d; }
 .workspace .library-track[data-reorder="after"] { box-shadow: inset 0 -2px #00d79d; }
 .workspace .library-table-head, .workspace .library-track { grid-template-columns: 40px 32px minmax(140px, 1fr) 54px 40px 40px 132px; gap: 8px; padding: 6px 8px; }
-.workspace .library-table-head { display: grid; font-size: 10px; font-weight: 400; min-height: 30px; background: transparent; }
+.workspace .library-table-head { display: grid; font-size: 10px; font-weight: 400; min-height: 30px; background: transparent; overflow-y: hidden; scrollbar-gutter: stable; scrollbar-width: thin; }
+.workspace .library-table-head > :is(.track-bpm, .track-key, .track-duration),
+.workspace .library-track > :is(.track-bpm, .track-key, .track-duration) { text-align: center; justify-self: stretch; min-width: 0; white-space: nowrap; }
+.workspace .library-table-head > button { position: relative; text-align: center; }
+.workspace .library-table-head > button::after { position: absolute; right: 0; }
 .workspace .library-track { min-height: 46px; background: transparent; border-bottom: 1px solid #333; }
 .workspace .library-track:nth-child(even) { background: transparent; }
 .workspace .library-track[data-selected="true"] { background: #2d2d2d; box-shadow: inset 2px 0 #00d79d; }
@@ -2193,7 +2197,8 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
   .workspace .library-table-head button { min-height: 32px; }
   .workspace .library-table-head > [data-track-sort="number"] { width: 40px; flex-shrink: 0; }
   .workspace .library-track { grid-template-columns: 40px 34px minmax(0, 1fr); gap: 6px 8px; padding: 8px; }
-  .workspace .library-track > .track-bpm, .workspace .library-track > .track-key { display: none; }
+  .workspace .library-track > .track-bpm, .workspace .library-track > .track-key,
+  .workspace .library-table-head > .track-bpm, .workspace .library-table-head > .track-key { display: none; }
   .workspace .library-track-actions { grid-column: 3; justify-content: flex-start; flex-wrap: wrap; }
   .workspace .workspace-menu-items { max-width: calc(100vw - 36px); }
 }
