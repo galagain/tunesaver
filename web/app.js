@@ -1706,16 +1706,19 @@ function renderLibrary() {
       download.type = "button";
       download.title = "Télécharger le fichier";
       download.setAttribute('aria-label', `Télécharger ${track.title || 'ce son'}`);
-      appendUIIcon(download, 'LogOut');
+      appendUIIcon(download, selectedPlaylistId ? 'Download' : 'LogOut');
       download.addEventListener("click", async () => {
         download.disabled = true;
         try { await downloadReadyJob(track.job_id); }
         catch (error) { showToast(error.message, "error"); download.disabled = false; }
       });
-      download.append(document.createTextNode('Télécharger le fichier'));
-      extraActions.append(download);
+      if (selectedPlaylistId) actions.append(download);
+      else {
+        download.append(document.createTextNode('Télécharger le fichier'));
+        extraActions.append(download);
+      }
     }
-    actions.append(makeTrackDeleteButton(track));
+    if (!selectedPlaylistId) actions.append(makeTrackDeleteButton(track));
     if (selectedPlaylistId || selectedTagId) {
       const remove = document.createElement("button");
       remove.className = "playlist-remove-track";
@@ -1724,14 +1727,23 @@ function renderLibrary() {
       remove.setAttribute('aria-label', `${remove.title} : ${track.title || 'ce son'}`);
       appendUIIcon(remove, 'Minus');
       remove.addEventListener("click", async () => {
+        remove.disabled = true;
         const url = selectedPlaylistId
           ? `/api/playlists/${selectedPlaylistId}/tracks/${track.job_id}`
           : `/api/tags/${selectedTagId}/tracks/${track.job_id}`;
-        await requestJson(url, { method: "DELETE" });
-        await refreshLibrary();
+        try {
+          await requestJson(url, { method: "DELETE" });
+          await refreshLibrary();
+        } catch (error) {
+          showToast(error.message, 'error');
+          remove.disabled = false;
+        }
       });
-      remove.append(document.createTextNode(remove.title));
-      extraActions.append(remove);
+      if (selectedPlaylistId) actions.append(remove);
+      else {
+        remove.append(document.createTextNode(remove.title));
+        extraActions.append(remove);
+      }
     }
     const [bpm, key, duration] = makeTrackMetrics(track.mix_analysis);
     if (extraActions.childElementCount) actions.insertBefore(menu, actions.querySelector('.track-delete'));
