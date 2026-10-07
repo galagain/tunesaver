@@ -9,12 +9,15 @@ import os
 import sys
 from pathlib import Path
 
+import playlist_sources
+
 
 PREFIX = "MUSICDL_JSON:"
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or not sys.argv[1].strip():
+    playlist = len(sys.argv) == 3 and sys.argv[1] == "--playlist" and sys.argv[2].isdigit()
+    if not playlist and (len(sys.argv) != 2 or not sys.argv[1].strip()):
         print("qobuz-search: une recherche est requise", file=sys.stderr)
         return 2
     config_path = Path(
@@ -36,7 +39,11 @@ def main() -> int:
             values["app_id"],
             [secret for secret in values["secrets"].split(",") if secret],
         )
-        result = client.search_tracks(sys.argv[1].strip(), 8)
+        if playlist:
+            result = playlist_sources.native_playlist("qobuz", sys.argv[2],
+                lambda offset: client.api_call("playlist/get", id=sys.argv[2], offset=offset))
+        else:
+            result = client.search_tracks(sys.argv[1].strip(), 8)
     except Exception as exc:
         print(f"qobuz-search: {type(exc).__name__}", file=sys.stderr)
         return 1

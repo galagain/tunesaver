@@ -970,9 +970,26 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 record = dict(db.execute("select * from playlist_imports where id = ?", (result["id"],)).fetchone())
             with mock.patch.object(webapp.playlist_sources, source_reader, return_value={"name": "Favorites", "tracks": tracks}), \
                  mock.patch.object(webapp, "worker_is_active", return_value=True), \
-                 mock.patch.object(webapp, "search_tidal", return_value=[candidate]), \
+                 mock.patch.object(webapp, "search_tidal", return_value=[candidate]) as search, \
                  mock.patch.object(webapp, "search_qobuz", return_value=[]), \
                  mock.patch.object(webapp, "search_beatport", return_value=[]):
+                await webapp.process_playlist_import(app, record)
+                search.assert_not_called()
+                self.assertEqual(webapp.local_imports(user["id"])[0]["state"], "ready")
+                self.assertEqual(webapp.local_playlists(user["id"])[0]["track_ids"], [])
+                preview = await client.get(f"/api/playlist-imports/{result['id']}", headers=headers)
+                self.assertEqual((await preview.json())["tracks"], tracks)
+                foreign = FakeRequest(match_info={"import_id": result["id"]})
+                with self.assertRaises(webapp.PublicError) as denied:
+                    await webapp.playlist_import_start_handler(foreign)
+                self.assertEqual(denied.exception.status, 404)
+                with self.assertRaises(webapp.PublicError):
+                    await webapp.playlist_import_preview_handler(foreign)
+                for _ in range(2):
+                    started = await client.post(f"/api/playlist-imports/{result['id']}/start", json={}, headers=headers)
+                    self.assertEqual(started.status, 202)
+                with webapp.local_db() as db:
+                    record = dict(db.execute("select * from playlist_imports where id = ?", (result["id"],)).fetchone())
                 await webapp.process_playlist_import(app, record)
                 status = webapp.local_imports(user["id"])[0]
                 self.assertEqual(status["state"], "partial")

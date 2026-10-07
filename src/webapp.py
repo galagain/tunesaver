@@ -2047,16 +2047,16 @@ def search_beatport(query: str) -> list[dict[str, Any]]:
     return normalize_beatport_results(payload)
 
 
-def search_qobuz(query: str) -> list[dict[str, Any]]:
+def qobuz_metadata(query: str, *, playlist: bool = False) -> dict[str, Any]:
     try:
         with musicdl.provider_lock("qobuz", "operation", blocking=False):
             process = subprocess.run(
-                [os.environ.get("PYTHON", "python"), QOBUZ_SEARCH_SCRIPT, query],
+                [os.environ.get("PYTHON", "python"), QOBUZ_SEARCH_SCRIPT, *(["--playlist"] if playlist else []), query],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=75,
+                timeout=600 if playlist else 75,
                 check=False,
                 env=musicdl.runtime_environment("qobuz"),
             )
@@ -2089,7 +2089,38 @@ def search_qobuz(query: str) -> list[dict[str, Any]]:
         raise SourceError("La réponse Qobuz est invalide.") from exc
     if not isinstance(payload, dict):
         raise SourceError("La réponse Qobuz est invalide.")
-    return normalize_qobuz_results(payload)
+    return payload
+
+
+def search_qobuz(query: str) -> list[dict[str, Any]]:
+    return normalize_qobuz_results(qobuz_metadata(query))
+
+
+def tidal_playlist(identifier: str) -> dict[str, Any]:
+    auth = current_tidal_auth()
+    base = f"https://api.tidal.com/v1/playlists/{identifier}"
+
+    def get(url, **params):
+        nonlocal auth
+        for attempt in range(2):
+            try:
+                response = requests.get(url, params={"countryCode": auth["country_code"], **params},
+                    headers={"Authorization": f"Bearer {auth['token']}"}, timeout=(5, 25), allow_redirects=False)
+                if response.status_code == 401 and attempt == 0:
+                    auth = refresh_tidal_auth(force=True, rejected_token=str(auth["token"]))
+                    continue
+                if response.status_code != 200:
+                    raise playlist_sources.PlaylistError(f"Lecture TIDAL indisponible (HTTP {response.status_code}).")
+                return response.json()
+            except (requests.RequestException, ValueError) as exc:
+                raise playlist_sources.PlaylistError("Lecture TIDAL indisponible.") from exc
+
+    meta = get(base)
+    result = playlist_sources.native_playlist("tiddl", identifier,
+        lambda offset: {**meta, **get(f"{base}/items", limit=100, offset=offset)})
+    if get(base).get("lastUpdated") != meta.get("lastUpdated"):
+        raise playlist_sources.PlaylistError("La playlist TIDAL a change pendant la lecture.")
+    return result
 
 
 async def execute_search(request: web.Request, provider: str, query: str) -> list[dict[str, Any]]:
@@ -2631,17 +2662,25 @@ def read_import_source(url: str) -> dict[str, Any]:
         payload = playlist_sources.soundcloud_playlist(canonical)
     elif provider == "applemusic":
         payload = playlist_sources.apple_music_playlist(canonical)
+    elif provider == "tiddl":
+        payload = tidal_playlist(identifier)
+    elif provider == "qobuz":
+        payload = qobuz_metadata(identifier, playlist=True)
     else:
         kind, resource_id = identifier.split(":")
         source = beatport_helper_search(resource_id, proxy=configured_beatport_proxy(), collection=kind)
         payload = {"name": source.get("name", "Beatport"), "tracks": []}
+        if "total" in source:
+            payload["total"] = source["total"]
         for item in source.get("tracks", []):
             normalized = normalize_beatport_results({"tracks": [item]})
             if not normalized:
                 raise playlist_sources.PlaylistError("Un titre Beatport est inaccessible.")
             payload["tracks"].append(normalized[0])
-    if not payload["tracks"] or len(payload["tracks"]) > playlist_sources.MAX_TRACKS:
-        raise playlist_sources.PlaylistError("La playlist doit contenir entre 1 et 500 titres accessibles.")
+    if "total" in payload and payload["total"] != len(payload["tracks"]):
+        raise playlist_sources.PlaylistError("La liste recue est incomplete. Aucun telechargement lance.")
+    if not payload["tracks"]:
+        raise playlist_sources.PlaylistError("La playlist ne contient aucun titre accessible.")
     return payload
 
 
@@ -2649,7 +2688,7 @@ def local_imports(user_id: str) -> list[dict[str, Any]]:
     with local_db() as db:
         rows = db.execute(
             "select i.*, p.name from playlist_imports i join playlists p on p.id = i.playlist_id "
-            "where i.user_id = ? order by i.created_at desc limit 20", (user_id,)
+            "where i.user_id = ? order by i.created_at desc", (user_id,)
         ).fetchall()
     return [{"id": r["id"], "playlist_id": r["playlist_id"], "name": r["name"], "state": r["state"],
              "total": len(json.loads(r["tracks"])), "processed": r["processed"], "queued": r["queued"],
@@ -2665,7 +2704,7 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
     user_id = request["user"]["id"]
     with local_db() as db:
         existing = db.execute("select id, playlist_id from playlist_imports where user_id = ? "
-                              "and source_url = ? and state in ('pending', 'running')", (user_id, url)).fetchone()
+                              "and source_url = ? and state in ('pending', 'ready', 'running')", (user_id, url)).fetchone()
         if existing:
             return web.json_response(dict(existing), status=202)
         count = db.execute("select count(*) from playlist_imports where user_id = ? "
@@ -2678,6 +2717,28 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
         db.execute("insert into playlist_imports (id, user_id, playlist_id, source_url, created_at) "
                    "values (?, ?, ?, ?, ?)", (import_id, user_id, playlist_id, url, utc_timestamp()))
     return web.json_response({"id": import_id, "playlist_id": playlist_id}, status=202)
+
+
+async def playlist_import_preview_handler(request: web.Request) -> web.Response:
+    with local_db() as db:
+        row = db.execute("select tracks, state from playlist_imports where id = ? and user_id = ?",
+                         (request.match_info["import_id"], request["user"]["id"])).fetchone()
+    if not row:
+        raise PublicError("Import introuvable.", status=404)
+    return web.json_response({"tracks": json.loads(row["tracks"]), "state": row["state"]})
+
+
+async def playlist_import_start_handler(request: web.Request) -> web.Response:
+    with local_db() as db:
+        row = db.execute("select state from playlist_imports where id = ? and user_id = ?",
+                         (request.match_info["import_id"], request["user"]["id"])).fetchone()
+        if not row:
+            raise PublicError("Import introuvable.", status=404)
+        if row["state"] not in {"ready", "running", "done", "partial"}:
+            raise PublicError("La lecture de la playlist doit etre terminee.", status=409)
+        db.execute("update playlist_imports set state = 'running' where id = ? and user_id = ? and state = 'ready'",
+                   (request.match_info["import_id"], request["user"]["id"]))
+    return web.json_response({"started": True}, status=202)
 
 
 def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
@@ -2710,6 +2771,8 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
 
 
 async def process_playlist_import(app: web.Application, record: dict[str, Any]) -> None:
+    if record["state"] not in {"pending", "running"}:
+        return
     tracks = json.loads(record["tracks"])
     source_warning = record["error"]
     if not tracks:
@@ -2720,8 +2783,13 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
             provider = playlist_sources.playlist_source(record["source_url"])[0]
             db.execute("update playlists set name = ? where id = ? and name = ?",
                        (payload["name"][:80], record["playlist_id"], f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}"))
-            db.execute("update playlist_imports set tracks = ?, error = ?, state = 'running' where id = ?",
+            db.execute("update playlist_imports set tracks = ?, error = ?, state = 'ready' where id = ?",
                        (json.dumps(tracks), source_warning, record["id"]))
+        return
+    if record["state"] == "pending":
+        with local_db() as db:
+            db.execute("update playlist_imports set state = 'ready' where id = ?", (record["id"],))
+        return
     failures = json.loads(record["failures"])
     queued = record["queued"]
     for index in range(record["processed"], len(tracks)):
@@ -2729,9 +2797,11 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
             if not db.execute("select 1 from playlist_imports where id = ?", (record["id"],)).fetchone():
                 return
         track = tracks[index]
-        result = track if track.get("provider") == "beatport" else None
+        result = track if track.get("provider") in {"beatport", "tiddl", "qobuz"} else None
         errors = []
-        if result is None:
+        if track.get("unavailable"):
+            errors.append("Titre indisponible sur la playlist source.")
+        elif result is None:
             for provider, search in (("tiddl", search_tidal), ("qobuz", search_qobuz), ("beatport", search_beatport)):
                 if not worker_is_active(provider):
                     continue
@@ -2772,7 +2842,7 @@ async def playlist_import_worker(app: web.Application) -> None:
             try:
                 await process_playlist_import(app, dict(row))
             except Exception as exc:
-                message = str(exc) if isinstance(exc, (PublicError, playlist_sources.PlaylistError)) else "Import interrompu par une erreur interne."
+                message = str(exc) if isinstance(exc, (PublicError, SourceError, playlist_sources.PlaylistError)) else "Import interrompu par une erreur interne."
                 LOGGER.warning("playlist import failed: %s", type(exc).__name__)
                 with local_db() as db:
                     db.execute("update playlist_imports set state = 'failed', error = ? where id = ?",
@@ -3616,6 +3686,8 @@ def create_app() -> web.Application:
     app.router.add_delete("/api/playlist-folders/{folder_id}", playlist_folder_handler)
     app.router.add_patch("/api/playlists/{playlist_id}/folder", playlist_move_handler)
     app.router.add_post("/api/playlist-imports", playlist_import_handler)
+    app.router.add_get("/api/playlist-imports/{import_id}", playlist_import_preview_handler)
+    app.router.add_post("/api/playlist-imports/{import_id}/start", playlist_import_start_handler)
     app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)
     app.router.add_patch("/api/playlists/{playlist_id}", collection_rename_handler)
     app.router.add_post("/api/tags", tag_create_handler)

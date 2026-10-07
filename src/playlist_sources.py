@@ -14,8 +14,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-MAX_TRACKS = 500
-SOURCE_LABELS = {"applemusic": "Apple Music"}
+SOURCE_LABELS = {"applemusic": "Apple Music", "tiddl": "TIDAL", "qobuz": "Qobuz"}
 
 
 class PlaylistError(Exception):
@@ -30,6 +29,14 @@ def playlist_source(value):
         raise PlaylistError("Utilisez un lien HTTPS de playlist.")
     host = (parsed.hostname or "").lower()
     path = parsed.path.rstrip("/")
+    if host in {"tidal.com", "www.tidal.com", "listen.tidal.com"}:
+        match = re.fullmatch(r"/(?:browse/)?playlist/([0-9a-fA-F-]{36})", path)
+        if match:
+            return "tiddl", match[1], f"https://tidal.com/playlist/{match[1]}"
+    if host in {"qobuz.com", "www.qobuz.com", "play.qobuz.com", "open.qobuz.com"}:
+        match = re.fullmatch(r"/(?:[a-z]{2}-[a-z]{2}/)?playlists?/(?:[^/]+/)?([0-9]+)", path)
+        if match:
+            return "qobuz", match[1], f"https://play.qobuz.com/playlist/{match[1]}"
     if host == "open.spotify.com":
         match = re.fullmatch(r"/(?:intl-[a-z]+/)?(?:embed/)?playlist/([A-Za-z0-9]{22})", path)
         if match:
@@ -45,7 +52,42 @@ def playlist_source(value):
         if match:
             kind = "chart" if match[1].startswith("chart") else "playlist"
             return "beatport", f"{kind}:{match[2]}", f"https://www.beatport.com{path}"
-    raise PlaylistError("Collez un lien complet de playlist Apple Music, Spotify, SoundCloud ou Beatport.")
+    raise PlaylistError("Collez un lien complet de playlist Apple Music, Spotify, SoundCloud, Beatport, TIDAL ou Qobuz.")
+
+
+def native_playlist(provider, identifier, fetch):
+    """Read all native playlist pages; fetch performs authenticated metadata requests only."""
+    tracks, offset, total, name = [], 0, None, ""
+    while True:
+        page = fetch(offset)
+        count = page.get("numberOfTracks") if provider == "tiddl" else page.get("tracks_count")
+        if type(count) is not int or count < 0 or (total is not None and count != total):
+            raise PlaylistError("Le nombre de titres a change ou est invalide. Relancez la lecture.")
+        total = count
+        name = name or page.get("title") or page.get("name") or SOURCE_LABELS[provider]
+        entries = page.get("items", []) if provider == "tiddl" else page.get("tracks", {}).get("items", [])
+        for entry in entries:
+            track = entry.get("item", entry) if provider == "tiddl" else entry
+            track_id = str(track.get("id", ""))
+            title = track.get("title")
+            if not track_id.isdigit() or not title:
+                raise PlaylistError("Un titre de la playlist est inaccessible. Liste incomplete.")
+            if provider == "tiddl":
+                artist = ", ".join(a["name"] for a in track.get("artists", []))
+                url = f"https://listen.tidal.com/track/{track_id}"
+            else:
+                artist = (track.get("performer") or {}).get("name", "")
+                url = f"https://play.qobuz.com/track/{track_id}"
+            version = track.get("version")
+            if version and version.casefold() not in title.casefold():
+                title = f"{title} ({version})"
+            tracks.append({"title": title, "artist": artist, "duration": track.get("duration", 0),
+                           "provider": provider, "download_url": url, "source_url": url})
+        offset += len(entries)
+        if offset == total:
+            return {"name": name, "total": total, "tracks": tracks}
+        if not entries or offset > total:
+            raise PlaylistError(f"Lecture incomplete ({offset}/{total} titres).")
 
 
 def apple_music_playlist(url):
@@ -86,8 +128,6 @@ def apple_music_metadata(html, identifier):
         total = header["trackCount"]
         if type(total) is not int or total < 1:
             raise PlaylistError("La playlist Apple Music ne contient aucun titre accessible.")
-        if total > MAX_TRACKS:
-            raise PlaylistError("La playlist depasse la limite de 500 titres.")
         entries = [item for section in sections
                    if section.get("itemKind") == "trackLockup" and section.get("id") == f"track-list - {identifier}"
                    for item in section["items"]]
@@ -135,19 +175,29 @@ def spotify_playlist(playlist_id):
             meta = get_page(base, headers=headers).json()
             tracks = []
             offset = 0
+            total = None
             while True:
                 page = get_page(f"{base}/items", headers=headers, params={"limit": 50, "offset": offset}).json()
-                if page.get("total", 0) > MAX_TRACKS:
-                    raise PlaylistError("La playlist depasse la limite de 500 titres.")
+                count = page.get("total")
+                if type(count) is not int or count < 0 or (total is not None and count != total):
+                    raise PlaylistError("Le nombre de titres Spotify a change ou est invalide.")
+                total = count
                 for item in page["items"]:
                     track = item.get("track") or item.get("item") or {}
                     if track.get("type") == "track" and not item.get("is_local"):
                         tracks.append({"title": track["name"], "artist": ", ".join(a["name"] for a in track["artists"]),
                                        "duration": track.get("duration_ms", 0) / 1000})
+                    else:
+                        tracks.append({"title": track.get("name") or f"Titre Spotify indisponible (position {len(tracks) + 1})",
+                                       "artist": "", "duration": 0, "unavailable": True})
                 offset += len(page["items"])
+                if offset > total:
+                    raise PlaylistError("Pagination Spotify incoherente.")
                 if not page.get("next"):
-                    return {"name": meta["name"], "tracks": tracks}
-                if not page["items"] or offset >= MAX_TRACKS:
+                    if offset != total:
+                        raise PlaylistError(f"Lecture Spotify incomplete ({offset}/{total} titres).")
+                    return {"name": meta["name"], "total": total, "tracks": tracks}
+                if not page["items"]:
                     raise PlaylistError("La playlist n'a pas pu etre recuperee integralement.")
         except (requests.RequestException, KeyError, ValueError) as exc:
             raise PlaylistError("Connexion Spotify indisponible. Verifiez la configuration Spotify du serveur.") from exc
@@ -199,8 +249,9 @@ def spotify_browser_playlist(playlist_id):
 
 def soundcloud_metadata(playlist, fetch_missing):
     entries = playlist.get("tracks") or []
-    if max(len(entries), playlist.get("track_count") or 0) > MAX_TRACKS:
-        raise PlaylistError("La playlist depasse la limite de 500 titres.")
+    total = playlist.get("track_count", len(entries))
+    if len(entries) != total:
+        raise PlaylistError(f"Lecture SoundCloud incomplete ({len(entries)}/{total} titres).")
     missing = [str(t["id"]) for t in entries if not t.get("title")]
     hydrated = {}
     for offset in range(0, len(missing), 50):
@@ -216,7 +267,7 @@ def soundcloud_metadata(playlist, fetch_missing):
         if not publisher.get("artist") and " - " in title:
             artist, title = title.split(" - ", 1)
         tracks.append({"title": title, "artist": artist, "duration": (entry.get("duration") or 0) / 1000})
-    return {"name": playlist.get("title") or "SoundCloud", "tracks": tracks}
+    return {"name": playlist.get("title") or "SoundCloud", "tracks": tracks, "total": total}
 
 
 def soundcloud_playlist(url):

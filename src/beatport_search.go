@@ -60,8 +60,10 @@ func run() error {
 			return fmt.Errorf("identifiant invalide")
 		}
 		var name string
+		var total int
 		tracks := []beatport.Track{}
 		for page := 1; ; page++ {
+			previousCount := len(tracks)
 			var next *string
 			if *collection == "playlist" {
 				if page == 1 {
@@ -70,6 +72,7 @@ func run() error {
 						return e
 					}
 					name = meta.Name
+					total = meta.TrackCount
 				}
 				items, e := client.GetPlaylistItems(id, page, "per_page=100")
 				if e != nil {
@@ -86,6 +89,7 @@ func run() error {
 						return e
 					}
 					name = meta.Name
+					total = meta.TrackCount
 				}
 				items, e := client.GetChartTracks(id, page, "per_page=100")
 				if e != nil {
@@ -96,14 +100,17 @@ func run() error {
 			} else {
 				return fmt.Errorf("collection inconnue")
 			}
-			if len(tracks) > 500 || (page >= 5 && next != nil) {
-				return fmt.Errorf("playlist limitee a 500 titres")
+			if len(tracks) == previousCount && next != nil {
+				return fmt.Errorf("pagination Beatport incomplete")
 			}
 			if next == nil {
 				break
 			}
 		}
-		results = map[string]interface{}{"name": name, "tracks": tracks}
+		if len(tracks) != total {
+			return fmt.Errorf("lecture Beatport incomplete (%d/%d titres)", len(tracks), total)
+		}
+		results = map[string]interface{}{"name": name, "total": total, "tracks": tracks}
 	} else {
 		results, err = client.Search(query)
 	}

@@ -116,7 +116,7 @@
           <textarea id="import-links" rows="7" spellcheck="false" placeholder="Playlist Apple Music, Spotify, SoundCloud, Beatport ou liens TIDAL / Qobuz"></textarea>
           <div class="import-actions">
             <button id="import-cancel" class="text-button compact" type="button">Annuler</button>
-            <button id="import-submit" class="primary-button" type="button">Importer et télécharger</button>
+            <button id="import-submit" class="primary-button" type="button">Importer</button>
           </div>
         </div>
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
@@ -198,6 +198,12 @@
         <div class="library-layout">
           <div class="library-main">
             <div id="library-content">
+            <div class="import-preview-head">
+              <button type="button" data-import-sort="number" aria-label="Trier par numéro">#</button>
+              <button type="button" data-import-sort="title">Titre</button>
+              <button type="button" data-import-sort="artist">Artiste</button>
+              <span>Durée</span>
+            </div>
             <div class="library-table-head">
               <button type="button" data-track-sort="number" aria-label="Trier par numéro">#</button>
               <span></span>

@@ -50,12 +50,16 @@ class SpotifyBrowserTests(unittest.TestCase):
         self.pages.add({**self.request, "operationName": "recommendations"}, page(0, 25))
         self.assertEqual(self.pages.items, {})
 
-    def test_rejects_playlist_changes_and_oversize(self):
+    def test_rejects_playlist_changes(self):
         self.pages.add(self.request, page(0, 25))
         with self.assertRaisesRegex(ValueError, "change"):
             self.pages.add(self.request, page(25, 50, total=149))
-        with self.assertRaisesRegex(ValueError, "500"):
-            self.pages.add(self.request, page(25, 50, total=501))
+
+    def test_more_than_500_tracks_without_truncation(self):
+        for offset in range(0, 1200, 50):
+            self.pages.add(self.request, page(offset, 50, total=1200))
+        self.assertEqual(len(self.pages.result()["tracks"]), 1200)
+        self.assertEqual(self.pages.result()["tracks"][-1]["title"], "Song 1199")
 
     def test_unavailable_entries_are_not_silently_dropped(self):
         payload = page(0, 1, total=1)

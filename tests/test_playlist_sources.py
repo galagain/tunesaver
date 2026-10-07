@@ -12,6 +12,47 @@ class PlaylistSourceTests(unittest.TestCase):
     apple_id = "pl.u-EdAVz8eCqqRzE2b"
     apple_url = "https://music.apple.com/fr/playlist/melodic-techno/pl.u-EdAVz8eCqqRzE2b"
 
+    def test_native_playlist_pagination_preserves_all_1201_entries(self):
+        for provider in ("tiddl", "qobuz"):
+            with self.subTest(provider=provider):
+                offsets = []
+                def fetch(offset):
+                    offsets.append(offset)
+                    items = [{"id": n, "title": f"Track {n}", "duration": 123,
+                              "artists": [{"name": "Artist"}], "performer": {"name": "Artist"}}
+                             for n in range(offset, min(offset + 500, 1201))]
+                    return {"title": "Playlist", "numberOfTracks": 1201, "items": items} if provider == "tiddl" else {
+                        "name": "Playlist", "tracks_count": 1201, "tracks": {"items": items}}
+                result = sources.native_playlist(provider, "123", fetch)
+                self.assertEqual(offsets, [0, 500, 1000])
+                self.assertEqual(len(result["tracks"]), 1201)
+                self.assertEqual(result["tracks"][-1]["title"], "Track 1200")
+                self.assertEqual(result["tracks"][0]["provider"], provider)
+        with self.assertRaisesRegex(sources.PlaylistError, "incomplete"):
+            sources.native_playlist("qobuz", "123", lambda offset: {"tracks_count": 3, "tracks": {"items": []}})
+
+    def test_native_urls(self):
+        self.assertEqual(sources.playlist_source("https://tidal.com/browse/playlist/2f33fe55-ca90-4777-87e0-3ba5dfdb5a9d")[0], "tiddl")
+        self.assertEqual(sources.playlist_source("https://www.qobuz.com/be-fr/playlists/example/5624923")[2],
+                         "https://play.qobuz.com/playlist/5624923")
+
+    @mock.patch.dict(sources.os.environ, {"TUNESAVER_SPOTIFY_CLIENT_ID": "id", "TUNESAVER_SPOTIFY_CLIENT_SECRET": "secret"})
+    def test_spotify_api_paginates_above_500_and_keeps_unavailable_entries(self):
+        def get(url, **kwargs):
+            if not url.endswith("/items"):
+                return mock.Mock(json=lambda: {"name": "Large"})
+            offset = kwargs["params"]["offset"]
+            items = [{"track": {"type": "track", "name": str(n), "artists": []}} for n in range(offset, min(offset + 50, 601))]
+            if offset == 0:
+                items[0] = {"track": None}
+            return mock.Mock(json=lambda: {"total": 601, "items": items, "next": offset < 600})
+        with mock.patch.object(sources, "get_page", side_effect=get), mock.patch.object(sources.requests, "post") as post:
+            post.return_value.json.return_value = {"access_token": "token"}
+            result = sources.spotify_playlist("57HAIqxdHbi332994xcOKc")
+        self.assertEqual(len(result["tracks"]), 601)
+        self.assertTrue(result["tracks"][0]["unavailable"])
+        self.assertEqual(result["tracks"][-1]["title"], "600")
+
     def apple_page(self, count=2, total=None):
         header = {"title": "Melodic techno", "trackCount": count if total is None else total,
                   "contentDescriptor": {"identifiers": {"storeAdamID": self.apple_id}}}
@@ -38,20 +79,30 @@ class PlaylistSourceTests(unittest.TestCase):
                 sources.playlist_source(url)
 
     def test_apple_metadata_preserves_versions_durations_order_and_duplicates(self):
-        result = sources.apple_music_metadata(self.apple_page(150), self.apple_id)
-        self.assertEqual(result["total"], 150)
-        self.assertEqual(len(result["tracks"]), 150)
+        result = sources.apple_music_metadata(self.apple_page(1200), self.apple_id)
+        self.assertEqual(result["total"], 1200)
+        self.assertEqual(len(result["tracks"]), 1200)
         self.assertEqual(result["name"], "Melodic techno")
         self.assertEqual(result["tracks"][0], {"title": "Sarabande (Christian Löffler Remix)",
                          "artist": "Christian Prommer", "duration": 463.389})
 
-    def test_apple_rejects_partial_empty_oversized_or_invalid_pages(self):
+    def test_apple_rejects_partial_empty_or_invalid_pages(self):
         for page in (self.apple_page(2, 5), self.apple_page(0), self.apple_page(1, 501),
                      self.apple_page().replace('"artistName": "Christian Prommer"', '"artistName": ""'),
                      self.apple_page().replace('"kind": "song"', '"kind": "music-video"'),
                      "<html>Private playlist</html>", '<script id="serialized-server-data">broken</script>'):
             with self.subTest(page=page[:80]), self.assertRaises(sources.PlaylistError):
                 sources.apple_music_metadata(page, self.apple_id)
+
+    def test_soundcloud_large_playlist_and_incomplete_response(self):
+        entries = [{"id": n, "title": f"Song {n}", "duration": 180000,
+                    "user": {"username": "Artist"}} for n in range(1200)]
+        fetch = mock.Mock()
+        result = sources.soundcloud_metadata({"tracks": entries, "track_count": 1200}, fetch)
+        self.assertEqual(len(result["tracks"]), 1200)
+        fetch.assert_not_called()
+        with self.assertRaisesRegex(sources.PlaylistError, "incomplete"):
+            sources.soundcloud_metadata({"tracks": entries, "track_count": 1201}, fetch)
 
     def test_apple_redirects_are_validated_before_fetch_and_accents_preserved(self):
         response = sources.requests.Response()

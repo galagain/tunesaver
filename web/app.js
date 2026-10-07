@@ -317,6 +317,7 @@ function saveSession(value) {
   if (value) {
     localStorage.setItem("tunesaver.session", JSON.stringify(value));
   } else {
+    importPreviews.clear();
     selectedLibraryTrackId = '';
     document.querySelector('#library-search').value = '';
     localStorage.removeItem("tunesaver.session");
@@ -831,11 +832,14 @@ async function searchDirect(query) {
 }
 
 async function enqueueList(links) {
-  if (!await siteDialogs.confirm(`Ajouter ${links.length} liens à la file de téléchargement ?`)) return;
   const playlists = links.filter(isImportPlaylist);
   const direct = links.filter((link) => !isImportPlaylist(link));
+  if (direct.length && !await siteDialogs.confirm(`Ajouter ${direct.length} liens à la file de téléchargement ?`)) return;
   for (const url of playlists) {
-    await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
+    const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
+    selectedPlaylistId = imported.playlist_id;
+    selectedTagId = "";
+    selectedFolderId = "";
   }
   if (direct.length) {
     await requestJson("/api/downloads", {
@@ -843,10 +847,11 @@ async function enqueueList(links) {
       body: JSON.stringify({ links: direct, confirm_complete: true }),
     });
   }
-  showToast(playlists.length ? "Import de playlist lancé." : "Téléchargements ajoutés.");
+  showToast(playlists.length ? "Lecture de la playlist lancée." : "Téléchargements ajoutés.");
   resultsSection.hidden = true;
   await refreshQueue();
   await refreshLibrary();
+  if (playlists.length) setWorkspaceView('library');
 }
 
 function playlistLinksFromText(value) {
@@ -857,6 +862,8 @@ function isImportPlaylist(value) {
   try {
     const url = new URL(value);
     return (url.hostname === "open.spotify.com" && url.pathname.includes("/playlist/"))
+      || (["tidal.com", "www.tidal.com", "listen.tidal.com"].includes(url.hostname) && url.pathname.includes("/playlist/"))
+      || (["qobuz.com", "www.qobuz.com", "play.qobuz.com", "open.qobuz.com"].includes(url.hostname) && /\/playlists?\//.test(url.pathname))
       || (url.hostname === "music.apple.com" && url.pathname.includes("/playlist/"))
       || (["soundcloud.com", "www.soundcloud.com"].includes(url.hostname) && url.pathname.includes("/sets/"))
       || (["beatport.com", "www.beatport.com"].includes(url.hostname) && /\/(playlists?|charts?)\//.test(url.pathname));
@@ -1375,7 +1382,8 @@ function renderPlaylists() {
     button.dataset.playlistId = playlist.id;
     button.dataset.collection = `playlists:${playlist.id}`;
     button.dataset.selected = playlist.id === selectedPlaylistId ? "true" : "false";
-    collectionRowLabel(button, playlist.name, playlist.track_ids.length);
+    const readyImport = (libraryState.imports || []).find(item => item.playlist_id === playlist.id && item.state === 'ready');
+    collectionRowLabel(button, playlist.name, readyImport ? readyImport.total : playlist.track_ids.length);
     button.draggable = true;
     button.addEventListener("dragstart", (event) => {
       draggedPlaylist = true;
@@ -1523,6 +1531,7 @@ function changeLibrarySort(by, toggle = false) {
   renderLibrary();
 }
 document.querySelectorAll('[data-track-sort]').forEach(button => button.addEventListener('click', () => changeLibrarySort(button.dataset.trackSort, true)));
+document.querySelectorAll('[data-import-sort]').forEach(button => button.addEventListener('click', () => changeLibrarySort(button.dataset.importSort, true)));
 
 async function moveLibraryTrack(id, targetId, after) {
   if (savingTrackOrder || id === targetId) return;
@@ -1615,6 +1624,13 @@ function renderLibrary() {
   renderTags();
   updateWorkspaceNavigation();
   renderCollectionActions();
+  const preview = (libraryState.imports || []).find(item => item.playlist_id === selectedPlaylistId
+    && ["pending", "ready"].includes(item.state));
+  document.querySelector('#library-content').classList.toggle('is-import-preview', Boolean(preview));
+  if (preview) {
+    renderImportPreview(preview);
+    return;
+  }
   const manualTracks = manualLibraryTracks();
   const numbers = new Map(manualTracks.map((track, index) => [track.job_id, index + 1]));
   const query = document.querySelector('#library-search').value.trim().toLocaleLowerCase();
@@ -1843,6 +1859,67 @@ const dismissedImports = new Set((() => {
   } catch (_) { return []; }
 })());
 
+const importPreviews = new Map();
+const loadingImportPreviews = new Set();
+
+function renderImportPreview(item) {
+  renderedTracks = [];
+  const query = document.querySelector('#library-search').value.trim().toLocaleLowerCase();
+  const sort = currentLibrarySort();
+  document.querySelectorAll('[data-import-sort]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.importSort === sort.by));
+    button.dataset.direction = button.dataset.importSort === sort.by ? String(sort.direction) : '';
+  });
+  const renderKey = JSON.stringify(['preview', item.id, item.state, importPreviews.has(item.id), query, sort]);
+  if (libraryTracks.renderKey === renderKey) return;
+  libraryTracks.renderKey = renderKey;
+  document.querySelector("#library-title").textContent = currentLibraryTitle();
+  libraryCount.textContent = `${item.total} sons`;
+  libraryTracks.replaceChildren();
+  if (item.state === "pending") {
+    const message = document.createElement("p");
+    message.className = "empty-copy";
+    message.textContent = "Lecture de la playlist…";
+    libraryTracks.append(message);
+    return;
+  }
+  const tracks = importPreviews.get(item.id);
+  if (!tracks) {
+    if (!loadingImportPreviews.has(item.id)) {
+      loadingImportPreviews.add(item.id);
+      const account = session;
+      requestJson(`/api/playlist-imports/${item.id}`).then(payload => {
+        if (session !== account) return;
+        importPreviews.set(item.id, payload.tracks);
+        if (selectedPlaylistId === item.playlist_id) renderLibrary();
+      }).catch(error => {
+        libraryTracks.renderKey = null;
+        showToast(error.message);
+      }).finally(() => loadingImportPreviews.delete(item.id));
+    }
+    return;
+  }
+  const rows = tracks.map((track, index) => ({ ...track, number: index + 1 }))
+    .filter(track => `${track.title} ${track.artist}`.toLocaleLowerCase().includes(query));
+  if (["title", "artist"].includes(sort.by)) {
+    rows.sort((a, b) => String(a[sort.by] || "").localeCompare(String(b[sort.by] || "")) * sort.direction);
+  } else if (sort.direction < 0) rows.reverse();
+  const fragment = document.createDocumentFragment();
+  for (const track of rows) {
+    const row = document.createElement("article");
+    row.className = "import-preview-track";
+    for (const value of [track.number, track.title, track.artist || "—",
+      Number.isFinite(track.duration) && track.duration > 0
+        ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, "0")}` : "—"]) {
+      const cell = document.createElement("span");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    fragment.append(row);
+  }
+  libraryTracks.append(fragment);
+}
+
 function renderImports() {
   const area = document.querySelector("#playlist-imports");
   const imports = (libraryState.imports || []).filter(item => !dismissedImports.has(item.id)
@@ -1850,7 +1927,7 @@ function renderImports() {
   area.hidden = !imports.length;
   const expanded = new Set(Array.from(area.querySelectorAll("details[open]")).map(el => el.dataset.id));
   area.replaceChildren();
-  const labels = { pending: "Lecture de la playlist", running: "Recherche des titres", done: "Titres mis en téléchargement", partial: "Import partiel", failed: "Import impossible" };
+  const labels = { pending: "Lecture de la playlist", ready: "Prête", running: "Recherche des titres", done: "Titres mis en téléchargement", partial: "Import partiel", failed: "Import impossible" };
   for (const item of imports) {
     const row = document.createElement("details");
     row.className = "playlist-import";
@@ -1860,8 +1937,27 @@ function renderImports() {
     const name = document.createElement("strong");
     name.textContent = item.name;
     const status = document.createElement("span");
-    status.textContent = `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.queued} en file` : ""}`;
+    status.textContent = item.state === "ready" ? `${item.total} titres · Aucun téléchargement lancé`
+      : `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.queued} en file` : ""}`;
     summary.append(name, status);
+    if (item.state === "ready") {
+      row.open = true;
+      row.classList.add('import-ready');
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = "primary-button";
+      start.textContent = "Rechercher et télécharger";
+      start.addEventListener("click", async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        start.disabled = true;
+        try {
+          await requestJson(`/api/playlist-imports/${item.id}/start`, { method: "POST", body: "{}" });
+          await refreshLibrary();
+        } catch (error) { showToast(error.message); start.disabled = false; }
+      });
+      summary.append(start);
+    }
     if (["done", "partial", "failed"].includes(item.state)) {
       const close = document.createElement("button");
       close.type = "button";
@@ -1886,7 +1982,8 @@ function renderImports() {
     progress.max = item.total || 1;
     if (item.total || !["pending", "running"].includes(item.state)) progress.value = item.processed;
     progress.setAttribute("aria-label", `Import ${item.name}`);
-    row.append(summary, progress);
+    row.append(summary);
+    if (item.state !== "ready") row.append(progress);
     if (item.error) {
       const error = document.createElement("p");
       error.textContent = item.error;

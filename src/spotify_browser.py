@@ -9,9 +9,8 @@ from urllib.parse import urlparse
 
 
 class PlaylistPages:
-    def __init__(self, playlist_id, max_tracks=500):
+    def __init__(self, playlist_id):
         self.uri = f"spotify:playlist:{playlist_id}"
-        self.max_tracks = max_tracks
         self.total = None
         self.name = ""
         self.items = {}
@@ -27,8 +26,8 @@ class PlaylistPages:
             raise ValueError("Spotify n'a pas fourni le contenu de cette playlist publique.")
         total = content["totalCount"]
         offset = content["pagingInfo"]["offset"]
-        if not isinstance(total, int) or not 0 <= total <= self.max_tracks:
-            raise ValueError(f"La playlist depasse la limite de {self.max_tracks} titres.")
+        if type(total) is not int or total < 0:
+            raise ValueError("Nombre de titres Spotify invalide.")
         if self.total is not None and total != self.total:
             raise ValueError("La playlist a change pendant sa lecture. Relancez l'import.")
         self.total = total
@@ -55,7 +54,7 @@ class PlaylistPages:
         for index in range(self.total):
             data = (self.items[index].get("itemV2") or {}).get("data") or {}
             if data.get("__typename") != "Track":
-                tracks.append({"title": f"Titre Spotify indisponible (position {index + 1})", "artist": "", "duration": 0})
+                tracks.append({"title": f"Titre Spotify indisponible (position {index + 1})", "artist": "", "duration": 0, "unavailable": True})
                 continue
             tracks.append({
                 "title": data["name"],

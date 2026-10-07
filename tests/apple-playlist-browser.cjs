@@ -31,24 +31,18 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await expect(page.locator('#import-links')).toHaveAttribute('placeholder', /Apple Music/);
       await page.locator('#import-links').fill(url);
       await page.locator('#import-submit').click();
-      await page.locator('#action-dialog-cancel').click();
-      expect(imports).toHaveLength(0);
-      await page.locator('#import-playlist-button').click();
-      await page.locator('#import-links').fill(url);
-      await page.locator('#import-submit').click();
-      await page.locator('#action-dialog-submit').click();
       await expect.poll(() => imports.length).toBe(1);
       await expect(page.locator('#import-panel')).toBeHidden();
+      await page.locator('#search-nav').click();
       await page.locator('#search-input').fill(url);
       await page.locator('#search-input').press('Enter');
-      await page.locator('#action-dialog-submit').click();
       await expect.poll(() => imports.length).toBe(2);
       expect(imports).toEqual([{ url }, { url }]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `/work/apple-import-${engine.name()}-${width}.png` });
       expect(errors).toEqual([]);
       await page.close();
-      console.log(`${engine.name()} ${width}: Apple Music import, cancellation and search routing passed`);
+      console.log(`${engine.name()} ${width}: Apple Music metadata import and search routing passed`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
