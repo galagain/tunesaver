@@ -32,7 +32,7 @@ def read_playlist_metadata(url):
     else:
         # Importing webapp does not start its server or access its database.
         import webapp
-        payload = webapp.read_import_source(canonical)
+        payload = webapp.read_native_import_source(canonical)
     return provider, canonical, payload
 
 

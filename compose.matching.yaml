@@ -1,0 +1,6 @@
+services:
+  web:
+    image: tunesaver:matching
+    build:
+      context: .
+      dockerfile: Dockerfile.matching

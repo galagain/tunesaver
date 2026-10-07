@@ -63,7 +63,7 @@ class PlaylistExportTests(unittest.TestCase):
         with mock.patch.object(spotify_http, "read_playlist", return_value=payload) as spotify, \
              mock.patch.object(playlist_sources, "apple_music_playlist", return_value=payload) as apple, \
              mock.patch.object(playlist_sources, "soundcloud_playlist", return_value=payload) as soundcloud, \
-             mock.patch.object(webapp, "read_import_source", return_value=payload) as native:
+             mock.patch.object(webapp, "read_native_import_source", return_value=payload) as native:
             for case in cases:
                 with self.subTest(source=case["source"]):
                     result = export.read_playlist(case["url"])

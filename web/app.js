@@ -832,8 +832,8 @@ async function searchDirect(query) {
 }
 
 async function enqueueList(links) {
-  const playlists = links.filter(isImportPlaylist);
-  const direct = links.filter((link) => !isImportPlaylist(link));
+  const playlists = links;
+  const direct = [];
   if (direct.length && !await siteDialogs.confirm(`Ajouter ${direct.length} liens à la file de téléchargement ?`)) return;
   for (const url of playlists) {
     const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
@@ -1625,7 +1625,7 @@ function renderLibrary() {
   updateWorkspaceNavigation();
   renderCollectionActions();
   const preview = (libraryState.imports || []).find(item => item.playlist_id === selectedPlaylistId
-    && ["pending", "ready"].includes(item.state));
+    && ["pending", "ready", "running", "matched", "cancelled"].includes(item.state));
   document.querySelector('#library-content').classList.toggle('is-import-preview', Boolean(preview));
   if (preview) {
     renderImportPreview(preview);
@@ -1861,6 +1861,7 @@ const dismissedImports = new Set((() => {
 
 const importPreviews = new Map();
 const loadingImportPreviews = new Set();
+const importLimits = new Map();
 
 function renderImportPreview(item) {
   renderedTracks = [];
@@ -1870,7 +1871,7 @@ function renderImportPreview(item) {
     button.setAttribute('aria-pressed', String(button.dataset.importSort === sort.by));
     button.dataset.direction = button.dataset.importSort === sort.by ? String(sort.direction) : '';
   });
-  const renderKey = JSON.stringify(['preview', item.id, item.state, importPreviews.has(item.id), query, sort]);
+  const renderKey = JSON.stringify(['preview', item.id, item.state, item.processed, item.activity, importPreviews.has(item.id), query, sort]);
   if (libraryTracks.renderKey === renderKey) return;
   libraryTracks.renderKey = renderKey;
   document.querySelector("#library-title").textContent = currentLibraryTitle();
@@ -1915,6 +1916,27 @@ function renderImportPreview(item) {
       cell.textContent = value;
       row.append(cell);
     }
+    const matching = track.matching;
+    if (matching) {
+      const info = document.createElement('small');
+      const states = { searching: 'Recherche', matched: 'Trouvé', not_found: 'Introuvable', ambiguous: 'À vérifier', unavailable: 'Indisponible', error: 'Erreur' };
+      info.className = 'import-track-status';
+      info.textContent = `${matching.job_id ? 'En téléchargement' : states[matching.status] || 'En attente'}${matching.target?.provider || matching.provider ? ' · ' + (matching.target?.provider || matching.provider).toUpperCase() : ''}${matching.error ? ' · ' + matching.error : ''}`;
+      row.children[1].append(info);
+      if (matching.target?.url?.startsWith('https://')) {
+        const link = document.createElement('a');
+        link.href = matching.target.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Ouvrir';
+        info.append(' · ', link);
+      }
+    } else if (item.state !== 'ready' && track.number > item.total) {
+      const info = document.createElement('small');
+      info.className = 'import-track-status';
+      info.textContent = 'Hors limite sélectionnée';
+      row.children[1].append(info);
+    }
     fragment.append(row);
   }
   libraryTracks.append(fragment);
@@ -1922,12 +1944,13 @@ function renderImportPreview(item) {
 
 function renderImports() {
   const area = document.querySelector("#playlist-imports");
+  if (area.contains(document.activeElement) && document.activeElement.classList.contains('import-limit')) return;
   const imports = (libraryState.imports || []).filter(item => !dismissedImports.has(item.id)
     && (!selectedPlaylistId || item.playlist_id === selectedPlaylistId));
   area.hidden = !imports.length;
   const expanded = new Set(Array.from(area.querySelectorAll("details[open]")).map(el => el.dataset.id));
   area.replaceChildren();
-  const labels = { pending: "Lecture de la playlist", ready: "Prête", running: "Recherche des titres", done: "Titres mis en téléchargement", partial: "Import partiel", failed: "Import impossible" };
+  const labels = { pending: "Lecture des titres", ready: "Prête", running: "Recherche des titres", matched: "Recherche terminée", cancelled: "Arrêté", done: "Titres mis en téléchargement", partial: "Import partiel", failed: "Import impossible" };
   for (const item of imports) {
     const row = document.createElement("details");
     row.className = "playlist-import";
@@ -1938,27 +1961,87 @@ function renderImports() {
     name.textContent = item.name;
     const status = document.createElement("span");
     status.textContent = item.state === "ready" ? `${item.total} titres · Aucun téléchargement lancé`
-      : `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.queued} en file` : ""}`;
+      : `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.matched || 0} trouvés · ${item.queued} en file` : ""}${item.activity ? ' · ' + item.activity : ''}`;
     summary.append(name, status);
-    if (item.state === "ready") {
+    if (['matched', 'done', 'partial', 'cancelled'].includes(item.state)) {
+      const exportButton = document.createElement('button');
+      exportButton.type = 'button';
+      exportButton.className = 'icon-button';
+      exportButton.title = 'Exporter les correspondances JSON';
+      exportButton.setAttribute('aria-label', exportButton.title);
+      appendUIIcon(exportButton, 'Download');
+      exportButton.addEventListener('click', async event => {
+        event.preventDefault(); event.stopPropagation();
+        try {
+          const payload = await requestJson(`/api/playlist-imports/${item.id}/export`);
+          const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+          const link = document.createElement('a'); link.href = url; link.download = 'appariements.json'; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 30000);
+        } catch (error) { showToast(error.message); }
+      });
+      summary.append(exportButton);
+    }
+    if (["ready", "matched"].includes(item.state)) {
       row.open = true;
       row.classList.add('import-ready');
+      const limit = document.createElement('input');
+      limit.type = 'number';
+      limit.min = '0';
+      limit.step = '1';
+      limit.value = importLimits.get(item.id) || '0';
+      limit.setAttribute('aria-label', 'Titres par playlist ou album, 0 pour tous');
+      limit.title = 'Nombre de titres, 0 = tous';
+      limit.className = 'import-limit';
+      limit.addEventListener('input', () => importLimits.set(item.id, limit.value));
+      limit.addEventListener('click', event => event.stopPropagation());
+      if (item.state === 'ready') {
+        const label = document.createElement('label');
+        label.className = 'import-limit-label';
+        label.append('Titres (0 = tous)', limit);
+        summary.append(label);
+      }
+      const begin = async download => {
+        const maxTracks = limit.valueAsNumber;
+        if (!Number.isSafeInteger(maxTracks) || maxTracks < 0) { showToast('Nombre de titres invalide.'); return; }
+        await requestJson(`/api/playlist-imports/${item.id}/start`, { method: 'POST', body: JSON.stringify({ max_tracks: maxTracks, download }) });
+        importPreviews.delete(item.id);
+        await refreshLibrary();
+      };
+      if (item.state === 'ready') {
+        const match = document.createElement('button');
+        match.type = 'button';
+        match.textContent = 'Rechercher seulement';
+        match.addEventListener('click', async event => {
+          event.preventDefault(); event.stopPropagation(); match.disabled = true;
+          try { await begin(false); } catch (error) { showToast(error.message); match.disabled = false; }
+        });
+        summary.append(match);
+      }
       const start = document.createElement("button");
       start.type = "button";
       start.className = "primary-button";
-      start.textContent = "Rechercher et télécharger";
+      start.textContent = item.state === 'matched' ? 'Télécharger les correspondances' : "Rechercher et télécharger";
       start.addEventListener("click", async event => {
         event.preventDefault();
         event.stopPropagation();
         start.disabled = true;
         try {
-          await requestJson(`/api/playlist-imports/${item.id}/start`, { method: "POST", body: "{}" });
-          await refreshLibrary();
+          await begin(true);
         } catch (error) { showToast(error.message); start.disabled = false; }
       });
       summary.append(start);
     }
-    if (["done", "partial", "failed"].includes(item.state)) {
+    if (['pending', 'running'].includes(item.state)) {
+      const stop = document.createElement('button');
+      stop.type = 'button'; stop.textContent = 'Arrêter';
+      stop.addEventListener('click', async event => {
+        event.preventDefault(); event.stopPropagation(); stop.disabled = true;
+        try { await requestJson(`/api/playlist-imports/${item.id}/stop`, { method: 'POST', body: '{}' }); await refreshLibrary(); }
+        catch (error) { showToast(error.message); stop.disabled = false; }
+      });
+      summary.append(stop);
+    }
+    if (["done", "partial", "failed", "cancelled"].includes(item.state)) {
       const close = document.createElement("button");
       close.type = "button";
       close.className = "import-dismiss";
@@ -2003,6 +2086,9 @@ async function refreshLibrary() {
   refreshLibraryButton.disabled = true;
   try {
     libraryState = await fetchLibrary();
+    for (const item of libraryState.imports || []) {
+      if (['running', 'matched', 'cancelled'].includes(item.state)) importPreviews.delete(item.id);
+    }
     libraryState.tracks = libraryState.tracks.filter(track => !deletedJobIds.has(track.job_id));
     if (selectedFolderId && !libraryState.folders?.some(folder => folder.id === selectedFolderId)) selectedFolderId = '';
     if (selectedPlaylistId && !libraryState.playlists.some((playlist) => playlist.id === selectedPlaylistId)) {

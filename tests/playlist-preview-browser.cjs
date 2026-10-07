@@ -22,7 +22,10 @@ const { chromium, expect } = require('@playwright/test');
         if (path === '/api/playlist-imports') return route.fulfill({ status: 202, json: { id: item.id, playlist_id: item.playlist_id } });
         if (path === '/api/playlist-imports/preview') return route.fulfill({ json: { tracks, state: item.state } });
         if (path === '/api/playlist-imports/preview/start') {
-          starts++; item.state = 'running';
+          const body = route.request().postDataJSON();
+          if (starts === 0) { expect(body.download).toBe(false); expect(body.max_tracks).toBe(2); }
+          else expect(body.download).toBe(true);
+          starts++; item.state = starts === 1 ? 'running' : 'done';
           return route.fulfill({ status: 202, json: { started: true } });
         }
         errors.push(`Unexpected request: ${path}`);
@@ -48,14 +51,23 @@ const { chromium, expect } = require('@playwright/test');
       await page.locator('.import-preview-track').first().scrollIntoViewIfNeeded();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `/work/playlist-preview-${width}.png` });
-      await page.getByRole('button', { name: 'Rechercher et télécharger', exact: true }).click();
+      await page.getByRole('spinbutton').fill('2');
+      await page.getByRole('button', { name: 'Rechercher seulement', exact: true }).click();
       await expect.poll(() => starts).toBe(1);
+      await expect(page.locator('.import-preview-track')).toHaveCount(1201);
+      item.state = 'matched'; item.total = 2; item.processed = 2; item.matched = 2;
+      tracks[0].matching = { status: 'matched', final: true, target: { provider: 'tidal', url: 'https://tidal.com/track/1' } };
+      await page.evaluate(() => refreshLibrary());
+      await expect(page.locator('.import-track-status').first()).toContainText('Trouvé');
+      await page.screenshot({ path: `/work/import-matching-${width}.png` });
+      await page.getByRole('button', { name: 'Télécharger les correspondances', exact: true }).click();
+      await expect.poll(() => starts).toBe(2);
       await expect(page.locator('.import-preview-track')).toHaveCount(0);
       await expect(page.locator('.library-table-head')).toBeVisible();
       await expect(page.locator('.import-preview-head')).toBeHidden();
       expect(errors).toEqual([]);
       await page.close();
-      console.log(`${width}: complete metadata preview, filtering, explicit start, no automatic download`);
+      console.log(`${width}: metadata preview, limit, search-only, live targets, explicit download`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

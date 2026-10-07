@@ -15,6 +15,7 @@ import secrets
 import smtplib
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 import zipfile
@@ -2662,6 +2663,11 @@ async def history_handler(request: web.Request) -> web.Response:
 
 
 def read_import_source(url: str) -> dict[str, Any]:
+    import import_engine
+    return import_engine.read(url)
+
+
+def read_native_import_source(url: str) -> dict[str, Any]:
     provider, identifier, canonical = playlist_sources.playlist_source(url)
     if provider == "spotify":
         payload = (playlist_sources.spotify_album(canonical) if "/album/" in canonical
@@ -2698,15 +2704,25 @@ def local_imports(user_id: str) -> list[dict[str, Any]]:
             "select i.*, p.name from playlist_imports i join playlists p on p.id = i.playlist_id "
             "where i.user_id = ? order by i.created_at desc", (user_id,)
         ).fetchall()
-    return [{"id": r["id"], "playlist_id": r["playlist_id"], "name": r["name"], "state": r["state"],
-             "total": len(json.loads(r["tracks"])), "processed": r["processed"], "queued": r["queued"],
-             "failures": json.loads(r["failures"]), "error": r["error"]} for r in rows]
+    output = []
+    for r in rows:
+        tracks = json.loads(r['tracks'])
+        settings = tracks[0].get('_import', {}) if tracks else {}
+        limit = settings.get('max_tracks', 0)
+        total = min(limit, len(tracks)) if limit and settings.get('kind') != 'track' else len(tracks)
+        output.append({"id": r["id"], "playlist_id": r["playlist_id"], "name": r["name"], "state": r["state"],
+            "total": total, "source_total": len(tracks), "processed": r["processed"], "queued": r["queued"],
+            "matched": sum(t.get('matching', {}).get('status') == 'matched' for t in tracks[:total]),
+            "activity": next((t['title'] for t in tracks if t.get('matching', {}).get('status') == 'searching'), ''),
+            "failures": json.loads(r["failures"]), "error": r["error"]})
+    return output
 
 
 async def playlist_import_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     try:
-        provider, _, url = playlist_sources.playlist_source(payload.get("url"))
+        import import_engine
+        provider, url = import_engine.identify(payload.get("url"))
     except (playlist_sources.PlaylistError, ValueError) as exc:
         raise PublicError(str(exc)) from exc
     user_id = request["user"]["id"]
@@ -2736,17 +2752,49 @@ async def playlist_import_preview_handler(request: web.Request) -> web.Response:
     return web.json_response({"tracks": json.loads(row["tracks"]), "state": row["state"]})
 
 
-async def playlist_import_start_handler(request: web.Request) -> web.Response:
+async def playlist_import_export_handler(request: web.Request) -> web.Response:
+    import import_engine
     with local_db() as db:
-        row = db.execute("select state from playlist_imports where id = ? and user_id = ?",
+        row = db.execute('select tracks, source_url from playlist_imports where id = ? and user_id = ?',
+                         (request.match_info['import_id'], request['user']['id'])).fetchone()
+    if not row:
+        raise PublicError('Import introuvable.', status=404)
+    return web.json_response(import_engine.export_result(dict(row)), headers={'Content-Disposition': 'attachment; filename="appariements.json"'})
+
+
+async def playlist_import_start_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    limit = payload.get('max_tracks', 0)
+    download = payload.get('download', True)
+    if type(limit) is not int or limit < 0 or type(download) is not bool:
+        raise PublicError('Options d\u2019import invalides.')
+    with local_db() as db:
+        row = db.execute("select tracks, state from playlist_imports where id = ? and user_id = ?",
                          (request.match_info["import_id"], request["user"]["id"])).fetchone()
         if not row:
             raise PublicError("Import introuvable.", status=404)
-        if row["state"] not in {"ready", "running", "done", "partial"}:
+        if row["state"] not in {"ready", "running", "done", "partial", "matched"}:
             raise PublicError("La lecture de la playlist doit etre terminee.", status=409)
-        db.execute("update playlist_imports set state = 'running' where id = ? and user_id = ? and state = 'ready'",
-                   (request.match_info["import_id"], request["user"]["id"]))
+        if row['state'] in {'ready', 'matched'}:
+            tracks = json.loads(row['tracks'])
+            settings = tracks[0].setdefault('_import', {})
+            if row['state'] == 'ready':
+                settings['max_tracks'] = limit
+            settings['download'] = download
+            db.execute("update playlist_imports set state = 'running', tracks = ? where id = ? and user_id = ?",
+                       (json.dumps(tracks), request.match_info["import_id"], request["user"]["id"]))
     return web.json_response({"started": True}, status=202)
+
+
+async def playlist_import_stop_handler(request: web.Request) -> web.Response:
+    with local_db() as db:
+        row = db.execute('select state from playlist_imports where id = ? and user_id = ?',
+                         (request.match_info['import_id'], request['user']['id'])).fetchone()
+        if not row:
+            raise PublicError('Import introuvable.', status=404)
+        db.execute("update playlist_imports set state = 'cancelled' where id = ? and user_id = ? and state in ('pending', 'ready', 'running')",
+                   (request.match_info['import_id'], request['user']['id']))
+    return web.json_response({'stopped': True})
 
 
 def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
@@ -2786,59 +2834,22 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
     if not tracks:
         payload = await asyncio.to_thread(read_import_source, record["source_url"])
         tracks = payload["tracks"]
+        tracks[0]['_import'] = {'name': payload['name'], 'kind': payload.get('kind', 'playlist')}
         source_warning = payload.get("warning", "")
         with local_db() as db:
-            provider = playlist_sources.playlist_source(record["source_url"])[0]
+            import import_engine
+            provider = import_engine.identify(record["source_url"])[0]
             db.execute("update playlists set name = ? where id = ? and name = ?",
                        (payload["name"][:80], record["playlist_id"], f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}"))
-            db.execute("update playlist_imports set tracks = ?, error = ?, state = 'ready' where id = ?",
+            db.execute("update playlist_imports set tracks = ?, error = ?, state = 'ready' where id = ? and state = 'pending'",
                        (json.dumps(tracks), source_warning, record["id"]))
         return
     if record["state"] == "pending":
         with local_db() as db:
             db.execute("update playlist_imports set state = 'ready' where id = ?", (record["id"],))
         return
-    failures = json.loads(record["failures"])
-    queued = record["queued"]
-    for index in range(record["processed"], len(tracks)):
-        with local_db() as db:
-            if not db.execute("select 1 from playlist_imports where id = ?", (record["id"],)).fetchone():
-                return
-        track = tracks[index]
-        result = track if track.get("provider") in {"beatport", "tiddl", "qobuz"} else None
-        errors = []
-        if track.get("unavailable"):
-            errors.append("Titre indisponible sur la playlist source.")
-        elif result is None:
-            for provider, search in (("tiddl", search_tidal), ("qobuz", search_qobuz), ("beatport", search_beatport)):
-                if not worker_is_active(provider):
-                    continue
-                try:
-                    async with app[SEARCH_SEMAPHORES_KEY][provider]:
-                        candidates = await asyncio.to_thread(search, f"{track.get('artist', '')} {track['title']}"[:SEARCH_TEXT_LIMIT])
-                    result = playlist_sources.matching_track(track, candidates)
-                    if result:
-                        break
-                except SourceError as exc:
-                    errors.append(str(exc))
-        if result:
-            try:
-                if not worker_is_active(result["provider"]):
-                    raise PublicError("La source de telechargement est arretee.")
-                await asyncio.to_thread(enqueue_import_track, record, result)
-                queued += 1
-            except (PublicError, ValueError) as exc:
-                failures.append({"title": track["title"], "artist": track.get("artist", ""), "reason": str(exc)})
-        else:
-            failures.append({"title": track["title"], "artist": track.get("artist", ""),
-                             "reason": errors[0] if errors else "Aucune correspondance fiable sur les sources disponibles."})
-        with local_db() as db:
-            db.execute("update playlist_imports set processed = ?, queued = ?, failures = ? where id = ?",
-                       (index + 1, queued, json.dumps(failures), record["id"]))
-        await asyncio.sleep(0.3)
-    with local_db() as db:
-        db.execute("update playlist_imports set state = ? where id = ?",
-                   ("partial" if failures or source_warning else "done", record["id"]))
+    import import_engine
+    await asyncio.to_thread(import_engine.process, sys.modules[__name__], record)
 
 
 async def playlist_import_worker(app: web.Application) -> None:
@@ -2853,7 +2864,7 @@ async def playlist_import_worker(app: web.Application) -> None:
                 message = str(exc) if isinstance(exc, (PublicError, SourceError, playlist_sources.PlaylistError)) else "Import interrompu par une erreur interne."
                 LOGGER.warning("playlist import failed: %s", type(exc).__name__)
                 with local_db() as db:
-                    db.execute("update playlist_imports set state = 'failed', error = ? where id = ?",
+                    db.execute("update playlist_imports set state = 'failed', error = ? where id = ? and state in ('pending', 'running')",
                                (message[:400], row["id"]))
         await asyncio.sleep(2)
 
@@ -3695,7 +3706,9 @@ def create_app() -> web.Application:
     app.router.add_patch("/api/playlists/{playlist_id}/folder", playlist_move_handler)
     app.router.add_post("/api/playlist-imports", playlist_import_handler)
     app.router.add_get("/api/playlist-imports/{import_id}", playlist_import_preview_handler)
+    app.router.add_get("/api/playlist-imports/{import_id}/export", playlist_import_export_handler)
     app.router.add_post("/api/playlist-imports/{import_id}/start", playlist_import_start_handler)
+    app.router.add_post("/api/playlist-imports/{import_id}/stop", playlist_import_stop_handler)
     app.router.add_delete("/api/playlists/{playlist_id}", playlist_delete_handler)
     app.router.add_patch("/api/playlists/{playlist_id}", collection_rename_handler)
     app.router.add_post("/api/tags", tag_create_handler)

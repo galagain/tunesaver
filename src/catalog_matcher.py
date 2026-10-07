@@ -97,6 +97,7 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
         match = row["match"]
         errors = [a.get("error") for a in row["attempts"] if a.get("error")]
         event("track_updated", number=row["number"], status=row["status"], final=final,
+              candidate=match,
               target=direct_target(match) if match else None,
               method=match.get("method") if match else None, error="; ".join(errors))
     rows = [{"number": n, "input": track, "status": "unavailable" if track.get("unavailable") else "not_found",

@@ -2351,3 +2351,7 @@ body:has(#app-view:not([hidden])) > .site-header { display: none; }
     animation-iteration-count: 1 !important;
   }
 }
+.import-track-status { display: block; color: var(--muted); font-size: 0.7rem; margin-top: 4px; overflow-wrap: anywhere; }
+.import-track-status a { color: var(--accent); }
+.import-limit-label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; }
+.import-limit { width: 64px; height: 30px; padding: 4px 6px; }
