@@ -162,6 +162,9 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
                     candidates.extend(catalog.search_tracks(provider, query))
                     attempt['candidates_checked'] = len(candidates)
                     found, ambiguous = match_track(row["input"], candidates)
+                    if not found and isinstance(catalog, Catalog):
+                        candidates = catalog.with_verified_credits(provider, row['input'], candidates)
+                        found, ambiguous = match_track(row['input'], candidates)
                     if found:
                         row.update(status="matched", match={**found, "provider": provider, "method": "track"})
                         attempt["status"] = "matched"
@@ -271,6 +274,44 @@ class Catalog:
             data = self.api(provider, "track/search", query=query, limit=50)
             tracks = data["tracks"]["items"]
         return self.normalize(provider, tracks)
+
+    def with_verified_credits(self, provider, source, candidates):
+        if provider != 'tidal':
+            return candidates
+        source_credits = sources.artist_credits(source.get('artist', ''))
+        duration = sources.matching_duration(source.get('duration'))
+        if len(source_credits) < 2 or duration is None:
+            return candidates
+        output = []
+        checked = set()
+        for candidate in candidates:
+            credits = sources.artist_credits(candidate.get('artist', ''))
+            seconds = sources.matching_duration(candidate.get('duration'))
+            # Only investigate an otherwise matching recording with the same lead.
+            # A composer or publisher credit must never stand in for a performer.
+            if (not credits or len(credits) >= len(source_credits) or seconds is None
+                    or abs(duration - seconds) > 2
+                    or sources.normalized_words(source_credits[0]) != sources.normalized_words(credits[0])
+                    or not match_track({**source, 'artist': candidate['artist']}, [candidate])[0]):
+                output.append(candidate)
+                continue
+            url = candidate.get('source_url') or candidate.get('download_url') or ''
+            identifier = re.fullmatch(r'/(?:browse/)?track/([0-9]+)/?', urlparse(url).path)
+            if not identifier or (identifier[1] not in checked and len(checked) >= 5):
+                output.append(candidate)
+                continue
+            checked.add(identifier[1])
+            try:
+                detail = self.api('tidal', f'tracks/{identifier[1]}/contributors', limit=100)
+                guests = [row['name'].strip() for row in detail.get('items', [])
+                          if isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'].strip()
+                          and sources.normalized_words(row.get('role', '')) in {'featured artist', 'main artist'}]
+                if guests:
+                    candidate = {**candidate, 'artist': ', '.join(dict.fromkeys([*credits, *guests]))}
+            except (MatchError, KeyError, TypeError):
+                pass
+            output.append(candidate)
+        return output
 
     def album(self, provider, identifier):
         if provider == "tidal":
