@@ -1,5 +1,9 @@
 # Playlist import checks
 
+The second stage is `run_matching_tests.py --docker`: it reads the exported
+`inputs.json` and matches the same scenarios without downloading audio. See
+[matching-tests.md](matching-tests.md) for case selection and result files.
+
 ## Complete input matrix (19 cases)
 
 From the project directory:

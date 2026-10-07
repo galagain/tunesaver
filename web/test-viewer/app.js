@@ -33,11 +33,11 @@ function drawHeader(){
   const {result:r,payload}=data.scenarios[selected];const tracks=payload?.tracks||[];
   $("source-mark").replaceWith(Object.assign(mark(r.source),{id:"source-mark"}));
   $("collection-type").textContent=`${provider(r.source)[0]} / ${kinds[r.kind]||r.kind}`;
-  $("result-status").textContent=r.status==="ok"?"Lecture validee":"Echec de lecture";
+  $("result-status").textContent=data.phase==="matching"?(r.status!=="ok"?"Erreur":r.complete?"Tous apparies":`${r.matched}/${r.total} apparies`):(r.status==="ok"?"Lecture validee":"Echec de lecture");
   $("result-status").style.color=r.status==="ok"?"#8bd1b3":"#ed959b";
   $("collection-title").textContent=payload?.name||r.name||provider(r.source)[0];
   const direct=tracks.filter(t=>state(t)==="direct").length;
-  const meta=$("collection-meta");meta.replaceChildren();for(const [n,label] of [[tracks.length,"titres"],[direct,"liens directs"],[tracks.filter(t=>state(t)==="pending").length,"a apparier"]]){const span=el("span");span.append(el("strong",String(n)),document.createTextNode(` ${label}`));meta.append(span);}
+  const meta=$("collection-meta");meta.replaceChildren();for(const [n,label] of [[tracks.length,"titres"],[direct,data.phase==="matching"?"liens resolus":"liens directs"],[tracks.filter(t=>state(t)==="pending").length,"a apparier"]]){const span=el("span");span.append(el("strong",String(n)),document.createTextNode(` ${label}`));meta.append(span);}
   if(Number.isFinite(r.seconds))meta.append(el("span",`${r.seconds.toLocaleString("fr")} s`));
   const link=safeURL(r.url);$("source-link").hidden=!link;if(link)$("source-link").href=link;
   $("export").disabled=!payload;$("source-note").textContent="Aucun audio telecharge";
@@ -50,7 +50,7 @@ function drawTracks(){
   document.querySelectorAll("[data-sort]").forEach(button=>button.parentElement.setAttribute("aria-sort",button.dataset.sort===sort?(direction===1?"ascending":"descending"):"none"));
   document.querySelectorAll("[data-filter]").forEach(button=>{button.setAttribute("aria-pressed",String(button.dataset.filter===filter));button.querySelector("span").textContent=button.dataset.filter==="all"?all.length:all.filter(t=>state(t)===button.dataset.filter).length;});
   const fragment=document.createDocumentFragment();for(const t of rows){const row=el("tr");row.append(el("td",String(t.number),"number"),el("td",t.title,"title"),el("td",t.artist||"\u2014","artist"),el("td",duration(t.duration_seconds),"duration"));
-    const status=state(t);const cell=el("td",undefined,"state");cell.append(el("span",status==="direct"?provider(t.target.provider)[0]:status==="pending"?"A apparier":"Indisponible",`track-state ${status}`));row.append(cell);
+    const status=state(t);const cell=el("td",undefined,"state");const unresolved={not_found:"Introuvable",ambiguous:"A verifier",error:"Erreur",unavailable:"Indisponible"};const label=status==="direct"?provider(t.target.provider)[0]+(t.target.method==="album"?" / album":""):unresolved[t.matching?.status]||(status==="pending"?"A apparier":"Indisponible");const badge=el("span",label,`track-state ${status}`);badge.title=t.matching?JSON.stringify(t.matching,null,2):label;cell.append(badge);row.append(cell);
     const target=safeURL(t.target?.url||t.url);const action=el("td",undefined,"link-column");if(target){const a=el("a",undefined,"icon-button");a.href=target;a.target="_blank";a.rel="noopener noreferrer";a.title=`Ouvrir ${t.title}`;a.setAttribute("aria-label",a.title);a.append(icon("ExternalLink"));action.append(a);}row.append(action);fragment.append(row);
   }$("tracks").replaceChildren(fragment);
   $("empty").hidden=rows.length>0;$("empty").textContent=r.status!=="ok"?(r.error||"Lecture impossible."):all.length?"Aucun morceau ne correspond aux filtres.":"Aucun morceau dans ce scenario.";
@@ -60,7 +60,8 @@ $("scenario-search").addEventListener("input",drawNav);$("track-search").addEven
 document.querySelectorAll("[data-filter]").forEach(button=>button.addEventListener("click",()=>{filter=button.dataset.filter;drawTracks();$("table-region").scrollTop=0;}));
 document.querySelectorAll("[data-sort]").forEach(button=>button.addEventListener("click",()=>{if(sort===button.dataset.sort)direction*=-1;else{sort=button.dataset.sort;direction=1;}drawTracks();$("table-region").scrollTop=0;}));
 $("export").addEventListener("click",()=>{const item=data.scenarios[selected];if(!item.payload)return;const blob=new Blob([JSON.stringify(item.payload,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=el("a");a.href=url;a.download=`${item.result.source}-${item.result.kind}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
-$("run-status").textContent=`${data.scenarios.filter(s=>s.result.status==="ok").length}/${data.scenarios.length} valides`;
+$("run-status").textContent=data.phase==="matching"?`${data.scenarios.filter(s=>s.result.complete).length}/${data.scenarios.length} complets`:`${data.scenarios.filter(s=>s.result.status==="ok").length}/${data.scenarios.length} valides`;
+if(data.phase==="matching"){document.title="TuneSaver | Appariements";document.querySelector(".brand small").textContent="APPARIEMENTS";document.querySelector('[data-filter="direct"]').firstChild.textContent="Resolus ";}
 $("run-date").textContent=new Date(data.created_at).toLocaleDateString("fr-FR",{day:"2-digit",month:"short"});
 $("scenario-count").textContent=`${data.scenarios.length} scenarios`;
 if(data.scenarios.length)select(0);else{$("collection-title").textContent="Aucun scenario";$("export").disabled=true;$("source-link").hidden=true;}

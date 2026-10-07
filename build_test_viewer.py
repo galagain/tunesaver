@@ -21,7 +21,7 @@ def build_viewer(directory):
                 raise ValueError("Fichier de scenario hors du dossier de test.")
             payload = json.loads(path.read_text(encoding="utf-8"))
         scenarios.append({"result": result, "payload": payload})
-    data = json.dumps({"created_at": report["created_at"], "scenarios": scenarios}, ensure_ascii=True)
+    data = json.dumps({"created_at": report["created_at"], "phase": report.get("phase", "reading"), "scenarios": scenarios}, ensure_ascii=True)
     data = data.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     assets = ROOT / "web" / "test-viewer"
     html = (assets / "index.html").read_text(encoding="utf-8")
