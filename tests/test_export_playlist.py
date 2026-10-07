@@ -95,6 +95,13 @@ class PlaylistExportTests(unittest.TestCase):
         self.assertNotIn("--docker", command)
         self.assertNotIn("shell", run.call_args.kwargs)
 
+    def test_docker_mode_forwards_only_sanitized_cli_errors(self):
+        with mock.patch.object(export.subprocess, "run", side_effect=[
+                mock.Mock(returncode=0, stdout="sha256:fixture\n"),
+                mock.Mock(returncode=1, stderr="internal diagnostic\nErreur : HTTP 429 from open.spotify.com; no retry\n")]):
+            with self.assertRaisesRegex(ValueError, "^HTTP 429 from open.spotify.com; no retry$"):
+                export.read_with_docker(self.url, "tunesaver-web-1")
+
     def test_http_reader_paginates_without_browser(self):
         state = {"props": {"pageProps": {"state": {
             "settings": {"session": {"accessToken": "anonymous-fixture"}},

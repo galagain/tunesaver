@@ -1,5 +1,26 @@
 # Playlist import checks
 
+## Three reference playlists
+
+From the project directory:
+
+```sh
+python3 run_playlist_tests.py --docker
+```
+
+This runs Spotify `57HAIqxdHbi332994xcOKc`, Apple Music Jazz House
+`pl.2e69eda9c8af461e8924dfebbcdf9794` (the supplied link target, not its
+different display label), and SoundCloud `delicieuse-musique/sets/jazz-house`.
+Spotify uses HTTP only. No audio is downloaded and no user playlist is created.
+
+Each execution creates a unique directory under `data/playlist-tests/`, containing
+TXT and JSON exports for successful reads and a `report.json` with counts,
+timings and failures. All three sources are attempted even if one fails. Exit
+code is 0 only when all three succeed, otherwise 1 (130 on interruption).
+Use `--output-dir PATH` for a different parent directory, or omit `--docker`
+when running inside the configured Python environment. Counts are checked
+against source metadata, not historical hard-coded totals.
+
 Imports have two independent phases:
 
 1. `POST /api/playlist-imports` creates a playlist and reads its source metadata.

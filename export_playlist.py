@@ -59,6 +59,11 @@ def read_with_docker(url, container):
                "export_playlist.py", url, "--format", "json", "-o", "-"]
     result = subprocess.run(command, capture_output=True, text=True, timeout=900, check=False)
     if result.returncode:
+        # Forward only errors already sanitized by our child CLI, never Docker diagnostics.
+        public_error = next((line.removeprefix("Erreur : ") for line in reversed(result.stderr.splitlines())
+                             if line.startswith("Erreur : ")), None)
+        if public_error:
+            raise ValueError(public_error)
         raise ValueError("Export Docker impossible. Verifiez la visibilite de la playlist et la connexion de la source.")
     return json.loads(result.stdout)
 
