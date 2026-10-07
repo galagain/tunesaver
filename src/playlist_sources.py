@@ -287,6 +287,29 @@ def spotify_browser_playlist(playlist_id):
             raise PlaylistError("Lecture Spotify impossible pour le moment. Reessayez l'import.") from exc
 
 
+def normalize_soundcloud_track(track, trusted_artist=True):
+    """Separate upload decorations from musical metadata, preserving editions."""
+    title = track.get("title", "").strip()
+    artist = track.get("artist", "").strip()
+    cleaned = re.sub(r"^(?:premiere|premi[e\u00e8]re|exclusive|premiere exclusive)\s*:\s*", "", title, flags=re.I)
+    promotional = cleaned != title
+    parts = re.split(r"\s+[-\u2013\u2014]\s+", cleaned, maxsplit=1)
+    separated = False
+    if len(parts) == 2 and all(parts):
+        prefix = set(normalized_words(parts[0]).split()) - {"and"}
+        credits = set(normalized_words(artist).split()) - {"and"}
+        if not trusted_artist or not artist or promotional or prefix == credits:
+            artist, cleaned = parts
+            separated = True
+    # Bracketed upload labels are distinct from remix/version annotations.
+    if promotional or separated:
+        suffix = re.search(r"\s+\[([^\[\]]+)\]\s*$", cleaned)
+        edition = r"\b(remix|mix|edit|extended|version|live|acoustic|instrumental|dub|radio|bootleg|vip|remaster(?:ed)?|demo|sped|slowed|rework|vocal|short|cover)\b"
+        if suffix and not re.search(edition, suffix[1], re.I):
+            cleaned = cleaned[:suffix.start()].rstrip()
+    return {**track, "title": cleaned, "artist": artist}
+
+
 def soundcloud_metadata(playlist, fetch_missing):
     entries = playlist.get("tracks") or []
     total = playlist.get("track_count", len(entries))
@@ -304,10 +327,9 @@ def soundcloud_metadata(playlist, fetch_missing):
         title = entry["title"]
         publisher = entry.get("publisher_metadata") or {}
         artist = publisher.get("artist") or (entry.get("user") or {}).get("username", "")
-        if not publisher.get("artist") and " - " in title:
-            artist, title = title.split(" - ", 1)
         duration = entry.get("full_duration") or (0 if entry.get("policy") == "SNIP" else entry.get("duration")) or 0
-        tracks.append({"title": title, "artist": artist, "duration": duration / 1000})
+        tracks.append(normalize_soundcloud_track({"title": title, "artist": artist, "duration": duration / 1000},
+                                                trusted_artist=bool(publisher.get("artist"))))
     kind = "album" if playlist.get("is_album") or playlist.get("set_type") in {"album", "ep", "single", "compilation"} else "playlist"
     return {"name": playlist.get("title") or "SoundCloud", "kind": kind, "tracks": tracks, "total": total}
 

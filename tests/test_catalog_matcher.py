@@ -22,6 +22,40 @@ def collection(kind="playlist", tracks=None):
 
 
 class CatalogMatcherTests(unittest.TestCase):
+    def test_soundcloud_decorations_are_normalized_for_cached_inputs(self):
+        original = track('PREMIERE: Kareem Ali - On My Heart [Noire & Blanche]', 'Kareem Ali')
+        catalog = mock.Mock()
+        catalog.search_tracks.return_value = [track('On My Heart', 'Kareem Ali')]
+        source = {**collection(tracks=[original]), 'source': 'https://soundcloud.com/label/sets/jazz'}
+        result = match_collection(source, catalog)
+        self.assertEqual(result['matched'], 1)
+        self.assertEqual(catalog.search_tracks.call_args.args[1], 'Kareem Ali On My Heart')
+        self.assertEqual(original['title'], 'PREMIERE: Kareem Ali - On My Heart [Noire & Blanche]')
+
+    def test_soundcloud_normalization_is_source_specific(self):
+        catalog = mock.Mock()
+        catalog.search_tracks.return_value = [track('Song')]
+        source = {**collection(tracks=[track('Artist - Song')]), 'source': 'https://open.spotify.com/playlist/id'}
+        self.assertEqual(match_collection(source, catalog)['matched'], 0)
+
+    def test_soundcloud_metadata_cleans_publisher_and_uploader_titles(self):
+        for publisher in ({'artist': 'Flying Moth'}, {}):
+            entry = {'id': 1, 'title': 'Flying Moth - Girl, I Need You', 'publisher_metadata': publisher,
+                     'user': {'username': 'Label'}, 'duration': 274312}
+            result = playlist_sources.soundcloud_metadata({'tracks': [entry]}, mock.Mock())['tracks'][0]
+            self.assertEqual((result['title'], result['artist']), ('Girl, I Need You', 'Flying Moth'))
+            self.assertEqual(result['duration'], 274.312)
+
+    def test_soundcloud_preserves_editions_and_ambiguous_titles(self):
+        normalize = playlist_sources.normalize_soundcloud_track
+        for edition in ('Extended Mix', 'Club Remix', 'Radio Edit', 'Live', 'Dub', 'Remastered', 'Instrumental'):
+            self.assertEqual(normalize(track(f'Artist - Song [{edition}]'))['title'], f'Song [{edition}]')
+            self.assertEqual(normalize(track(f'Artist - Song ({edition}) [Label]'))['title'], f'Song ({edition})')
+        self.assertEqual(normalize(track('Love - Hate'))['title'], 'Love - Hate')
+        self.assertEqual(normalize(track('Song [Part Two]'))['title'], 'Song [Part Two]')
+        self.assertEqual(normalize(track('Artist - Song - Extended Mix'))['title'], 'Song - Extended Mix')
+        self.assertEqual(normalize(track('Tour-Maubourg - Dreams', 'Tour-Maubourg'))['artist'], 'Tour-Maubourg')
+
     def test_native_links_skip_all_matching_for_tracks_and_albums(self):
         for provider, url in [("tiddl", "https://listen.tidal.com/track/20115557"),
                               ("beatport", "https://www.beatport.com/track/give-life-back-to-music/4400239"),

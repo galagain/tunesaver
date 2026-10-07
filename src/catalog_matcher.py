@@ -85,6 +85,10 @@ def queries(track):
 
 
 def match_collection(collection, catalog, progress=None, on_event=None, max_tracks=0):
+    if (collection.get("provider") == "soundcloud"
+            or urlparse(collection.get("source", "")).hostname in {"soundcloud.com", "www.soundcloud.com"}):
+        collection = {**collection, "tracks": [sources.normalize_soundcloud_track(t) for t in collection["tracks"]]}
+
     def event(kind, **values):
         if on_event:
             on_event({"type": kind, **values})
