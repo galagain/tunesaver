@@ -2120,7 +2120,10 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 .collection-count { flex: 0 0 auto; color: #747474; font-size: 10px; font-variant-numeric: tabular-nums; }
 .workspace .tag-filter::before { position: static; transform: none; flex: 0 0 7px; margin: 0; }
 .nav-group { margin-top: 18px; }
-.nav-group > h3 { margin: 0; padding: 7px 8px; font-size: 10px; font-weight: 500; text-transform: uppercase; color: #808080; }
+.playlist-nav-heading { display: flex; align-items: center; justify-content: space-between; min-height: 32px; }
+.playlist-nav-heading h3 { margin: 0; padding: 7px 8px; font-size: 10px; font-weight: 500; text-transform: uppercase; color: #808080; }
+#create-playlist { display: grid; place-items: center; width: 32px; height: 32px; flex: none; padding: 6px; border: 0; border-radius: 0; background: transparent; color: #ccc; }
+#create-playlist svg { display: block; width: 16px; height: 16px; }
 .workspace .search-section { max-width: none; margin: 0 0 22px; padding: 0; }
 .workspace .search-box { min-height: 46px; padding: 3px 5px 3px 12px; border: 1px solid #393939; border-radius: 4px; background: #232323; box-shadow: none; gap: 8px; }
 .workspace .search-box textarea { height: 38px; min-height: 38px; max-height: 38px; padding: 9px 0; font-size: 13px; resize: none; }
@@ -2206,7 +2209,6 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
   .workspace .library-sidebar { position: static; padding: 0 0 10px; border-right: 0; border-bottom: 1px solid #393939; }
   .sidebar-top { margin-bottom: 6px; }
   .library-nav-content { max-height: none; }
-  .workspace #library-menu .workspace-menu-items { right: 0; }
   .nav-group { margin-top: 8px; }
   .workspace .search-box { grid-template-columns: 18px minmax(0, 1fr) auto; }
   .workspace #search-button { grid-column: 3; grid-row: 1; width: auto; }

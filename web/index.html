@@ -64,19 +64,16 @@
         </a>
         <div class="sidebar-top">
           <h2>Bibliothèque</h2>
-          <details id="library-menu" class="workspace-menu">
-            <summary aria-label="Actions de bibliothèque" title="Actions de bibliothèque"><span data-ui-icon="Settings2"></span></summary>
-            <div class="workspace-menu-items">
-              <button id="create-playlist" type="button"><span data-ui-icon="Plus"></span>Nouvelle playlist</button>
-            </div>
-          </details>
         </div>
         <div class="library-nav-content">
           <button id="search-nav" class="playlist-filter" type="button" aria-controls="search-view" data-selected="false">Rechercher des nouveaux sons</button>
           <button class="playlist-filter" data-playlist-id="" data-collection="" data-selected="true" type="button">Tous mes sons</button>
           <button id="history-toggle" class="playlist-filter" type="button" aria-controls="queue-section" data-selected="false">Historique</button>
           <section class="nav-group">
-            <h3 id="playlist-title">Playlists</h3>
+            <div class="playlist-nav-heading">
+              <h3 id="playlist-title">Playlists</h3>
+              <button id="create-playlist" type="button" title="Nouvelle playlist" aria-label="Nouvelle playlist"><span data-ui-icon="Plus"></span></button>
+            </div>
             <div id="playlist-list" class="playlist-list"></div>
           </section>
         </div>
