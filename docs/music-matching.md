@@ -59,6 +59,16 @@ necessitent des durees connues avec deux secondes d'ecart maximum. Les autres
 remixes, reprises, versions live, instrumentales, accelerees ou raccourcies ne
 sont pas assimiles a l'original.
 
+Les suffixes explicites `- Original` et `(Original)` sont reconnus comme des
+etiquettes de version, sans effacer le mot dans un vrai titre comme `The Original`.
+Lorsque cette etiquette est presente et les durees connues, l'ecart admis est
+limite a deux secondes afin de preferer la bonne edition. `Dub` et `Dub Mix`
+designent la meme etiquette. Les noms longs de remixes (par exemple
+`Peggy Gou's Acid Journey Remix`) permettent aussi de reconnaitre leur remixeur.
+Un catalogue qui omet des contributeurs secondaires peut etre accepte seulement
+avec le meme artiste principal, aucun nouvel artiste, une version explicite
+identique et des durees connues a deux secondes pres.
+
 En cas d'echec, le moteur essaie l'artiste principal, le titre sans etiquette
 d'edition standard, puis le titre seul. Le nom d'un remix est conserve et les
 resultats sont toujours verifies contre les metadonnees originales. Les requetes

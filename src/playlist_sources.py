@@ -391,9 +391,18 @@ def split_featured_artists(value, aliases=None):
     return normalized_words(value), guests
 
 
+def version_labels(track):
+    labels = [track.get('mix', '')]
+    labels.extend(re.findall(r'[\(\[]([^()\[\]]+)[\)\]]', track.get('title', '')))
+    labels.extend(re.split(r'\s+[-\u2013\u2014]\s+', track.get('title', ''))[1:])
+    return [normalized_words(label) for label in labels if re.search(
+        r'\b(?:mix|remix|edit|dub|rework|version|original)\b', label, re.I)]
+
+
 def matching_metadata(track, aliases=None):
     aliases = dict(aliases or {})
-    title, guests = split_featured_artists(track.get("title", ""), aliases)
+    raw_title = re.sub(r'\s+(?:[-\u2013\u2014]\s*Original|\(Original\)|\[Original\])\s*$', '', track.get('title', ''), flags=re.I)
+    title, guests = split_featured_artists(raw_title, aliases)
     _, original_artist_guests = split_featured_artists(track.get('artist', ''), aliases)
     mix = normalized_words(track.get("mix", ""))
     if mix and mix not in {"original mix", "original"} and not re.search(r'\b' + re.escape(mix) + r'\b', title):
@@ -402,15 +411,18 @@ def matching_metadata(track, aliases=None):
     # in the version label. The full remix title is still compared below.
     credits = []
     all_credits = artist_credits(track.get('artist', ''))
+    versions = version_labels(track)
     for credit in all_credits:
         name = normalized_words(credit)
-        if name and re.search(r'\b' + re.escape(name) + r' (?:remix|edit|dub)\b', title):
+        if name and any(re.search(r'\b' + re.escape(name) + r's?\b', version)
+                        and re.search(r'\b(?:mix|remix|edit|dub|rework)\b', version) for version in versions):
             continue
         credits.append(credit)
     artist, artist_guests = split_featured_artists(', '.join(credits or all_credits), aliases)
     for compact, expanded in aliases.items():
         artist = re.sub(r'\b' + re.escape(compact) + r'\b', lambda _: expanded, artist)
     title = " ".join(re.sub(r"\b(original mix|original version)\b", "", title).split())
+    title = re.sub(r'\bdub (?:mix|version)$', 'dub', title)
     guest_words = set()
     for guest in guests | artist_guests | original_artist_guests:
         guest_words.update(aliases.get(guest, guest).split())
@@ -454,6 +466,9 @@ def matching_track(track, candidates):
         difference = abs(reference_duration - seconds) if reference_duration and seconds else None
         if difference is not None and difference > 12:
             continue
+        if difference is not None and difference > 2 and any(
+                label in {'original', 'original mix', 'original version'} for label in version_labels(track)):
+            continue
         if title != other_title:
             base, edition = split_release_edition(title)
             other_base, other_edition = split_release_edition(other_title)
@@ -473,7 +488,16 @@ def matching_track(track, candidates):
         other_primary = other_artist - (guests | other_guests)
         if (not primary or not other_primary
                 or len(primary & other_primary) / max(len(primary), len(other_primary)) < 0.8):
-            continue
+            source_credits = artist_credits(track.get('artist', ''))
+            target_credits = artist_credits(candidate.get('artist', ''))
+            # Some releases omit secondary contributors. Require the same lead,
+            # explicit version, near-identical duration and no new target artist.
+            if not (primary and other_primary and other_primary < primary
+                    and difference is not None and difference <= 2
+                    and source_credits and target_credits
+                    and normalized_words(source_credits[0]) == normalized_words(target_credits[0])
+                    and re.search(r'\b(?:dub|remix|mix|edit|rework)\b', title)):
+                continue
         score = difference if difference is not None else (math.inf if reference_duration else 0)
         matches.append((score, index, candidate))
     return min(matches, key=lambda match: match[:2])[2] if matches else None
