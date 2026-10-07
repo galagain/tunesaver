@@ -44,3 +44,23 @@ against the source response when available, never a hard-coded historical count.
 A failure is reported as such, not reclassified as a successful partial import.
 Spotify's anonymous preview boundary at 100 selects the browser reader; it is
 not a maximum playlist length. Beatport follows pagination until the last page.
+
+## Experimental Spotify HTTP-only probe
+
+```sh
+python tests/probe_spotify_http.py
+python tests/probe_spotify_http.py 'https://open.spotify.com/playlist/57HAIqxdHbi332994xcOKc'
+```
+
+This probe starts no browser and requires no personal Spotify credentials. It
+reads the anonymous session supplied in the public embed page, discovers the
+current pagination query in the public player bundle, and requests all pages
+directly. It reuses only `PlaylistPages` validation, not its browser runner.
+It checks totals, positions and the first entries against the public preview.
+Tokens are kept in memory and never printed. HTTP errors stop the probe without
+automatic retries, including rate-limit responses.
+
+On 2026-10-07 the supplied playlist returned 166/166 titles in 2.72 seconds,
+using five HTTP requests and two content pages (100 + 66). This is an observed
+test result, not a speed guarantee. This undocumented protocol remains
+experimental and is not yet used by production imports.
