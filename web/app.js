@@ -65,14 +65,6 @@ const toast = document.querySelector("#toast");
 const searchView = document.querySelector('#search-view');
 const searchNav = document.querySelector('#search-nav');
 
-function ensureLibraryItemVisible(element) {
-  const pane = element?.closest('#library-tracks, .library-nav-content');
-  if (!pane || element.closest('[hidden]')) return;
-  const bounds = pane.getBoundingClientRect(), item = element.getBoundingClientRect();
-  if (item.top < bounds.top + 3) pane.scrollTop += item.top - bounds.top - 3;
-  else if (item.bottom > bounds.bottom - 3) pane.scrollTop += item.bottom - bounds.bottom + 3;
-}
-
 function updateWorkspaceNavigation() {
   document.querySelectorAll('.library-nav-content button').forEach(button => {
     const current = button === searchNav ? !searchView.hidden : button === historyToggle ? !queueSection.hidden
@@ -99,18 +91,16 @@ document.querySelector('.sidebar-brand').addEventListener('click', event => {
   document.querySelector('.library-nav-content [data-collection=""]').click();
 });
 document.querySelector('.library-nav-content').addEventListener('click', event => {
-  if (event.target.closest('[data-collection]')) setWorkspaceView('library');
+  if (event.target.closest('[data-collection]')) {
+    librarySearchScope = null;
+    libraryTracks.renderKey = null;
+    setWorkspaceView('library');
+  }
 }, true);
 const headerObserver = new ResizeObserver(() => {
   document.documentElement.style.setProperty('--header-height', `${document.querySelector('.site-header').getBoundingClientRect().height}px`);
 });
 headerObserver.observe(document.querySelector('.site-header'));
-const libraryViewportObserver = new ResizeObserver(() => {
-  ensureLibraryItemVisible(libraryTracks.querySelector('[data-selected="true"]'));
-  ensureLibraryItemVisible(document.querySelector('.library-nav-content [data-cursor="true"]'));
-});
-libraryViewportObserver.observe(libraryTracks);
-libraryViewportObserver.observe(document.querySelector('.library-nav-content'));
 
 let publicConfig = null;
 let session = null;
@@ -1508,6 +1498,7 @@ function renderLibrary() {
   if (librarySearchScope !== scope) {
     document.querySelector('#library-search').value = '';
     librarySearchScope = scope;
+    selectedLibraryTrackId = '';
     libraryTracks.scrollTop = 0;
   }
   renderImports();
