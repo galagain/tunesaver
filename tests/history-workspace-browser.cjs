@@ -15,6 +15,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/config') return route.continue();
+        if (path === '/api/feedback') return route.fulfill({json: {threads: []}});
         if (path === '/api/status') return route.fulfill({ json: { recent, counts: {}, active: { tiddl: true, beatport: true, qobuz: true } } });
         if (path === '/api/history') return route.fulfill({ json: { history } });
         if (path === '/api/library') return route.fulfill({ json: library });

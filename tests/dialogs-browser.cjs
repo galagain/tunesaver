@@ -18,6 +18,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
         const method = request.method();
         const respond = json => route.fulfill({ json });
         if (path === '/api/config') return route.continue();
+        if (path === '/api/feedback') return route.fulfill({json: {threads: []}});
         if (path === '/api/login') return respond({ access_token: 'fixture', refresh_token: 'fixture-refresh', user: { email: 'buttons@example.com' } });
         if (path === '/api/status') return respond({ counts: {}, active: {}, recent: [] });
         if (path === '/api/library') return respond(library);

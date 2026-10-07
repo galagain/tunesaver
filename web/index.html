@@ -8,6 +8,7 @@
     <link rel="icon" type="image/svg+xml" sizes="any" href="/tunesaver.svg?v=1">
     <link rel="stylesheet" href="/style.css?v=20260918-1">
     <script src="/app.js?v=20260923-1" defer></script>
+    <script src="/feedback.js?v=1" defer></script>
   </head>
   <body>
     <template id="icon-pencil"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></svg></template>
@@ -79,7 +80,9 @@
             <div id="playlist-list" class="playlist-list"></div>
           </section>
         </div>
-        <div class="sidebar-footer"></div>
+        <div class="sidebar-footer">
+          <button id="feedback-open" class="feedback-open" type="button"><span data-ui-icon="Flag"></span>Retours &amp; bugs <span class="feedback-badge" hidden></span></button>
+        </div>
       </aside>
       <div class="workspace-main">
       <div id="search-view" hidden>
@@ -267,9 +270,56 @@
               </div>
             </section>
           </div>
+          <section class="admin-panel feedback-admin-panel">
+            <header class="admin-panel-header"><h2>Retours &amp; bugs</h2>
+              <button id="feedback-admin-open" class="feedback-open" type="button"><span data-ui-icon="Flag"></span>Voir les retours <span class="feedback-badge" hidden></span></button>
+            </header>
+          </section>
         </section>
       </main>
     </div>
+
+    <dialog id="feedback-dialog" aria-labelledby="feedback-title">
+      <header class="feedback-header"><h2 id="feedback-title">Retours &amp; bugs</h2>
+        <button id="feedback-close" class="feedback-icon" type="button" title="Fermer" aria-label="Fermer"><span data-ui-icon="X"></span></button>
+      </header>
+      <div class="feedback-toolbar">
+        <button id="feedback-new" type="button"><span data-ui-icon="Plus"></span>Nouveau retour</button>
+        <select id="feedback-filter" aria-label="Filtrer les retours">
+          <option value="all">Tous les retours</option><option value="unread">Non lus</option>
+          <option value="bugs">Bugs non résolus</option><option value="suggestion">Suggestions</option>
+          <option value="new">Nouveaux</option><option value="in_progress">En cours</option>
+          <option value="resolved">Résolus</option><option value="closed">Classés</option>
+        </select>
+        <button id="feedback-refresh" class="feedback-icon" type="button" title="Actualiser" aria-label="Actualiser"><span data-ui-icon="RefreshCw"></span></button>
+      </div>
+      <p id="feedback-error" role="status" aria-live="polite"></p>
+      <div class="feedback-layout">
+        <nav id="feedback-list" aria-label="Retours"></nav>
+        <section class="feedback-detail">
+          <form id="feedback-create" hidden>
+            <label for="feedback-kind">Type</label>
+            <select id="feedback-kind"><option value="bug">Signaler un bug</option><option value="suggestion">Faire une suggestion</option></select>
+            <label for="feedback-subject">Titre</label><input id="feedback-subject" required maxlength="160">
+            <label for="feedback-body">Description</label><textarea id="feedback-body" required maxlength="8000" rows="6"></textarea>
+            <label for="feedback-file">Capture d'écran (facultative)</label><input id="feedback-file" type="file" accept="image/png,image/jpeg,image/webp">
+            <p class="feedback-privacy">La version, le navigateur et la section ouverte sont joints. Évite les informations confidentielles dans ton message et ta capture.</p>
+            <button type="submit" class="primary-button">Envoyer</button>
+          </form>
+          <div id="feedback-thread" hidden>
+            <h3 id="feedback-thread-title"></h3>
+            <div class="feedback-thread-meta"><span id="feedback-status-label"></span>
+              <select id="feedback-status" aria-label="Statut du retour"><option value="new">Nouveau</option><option value="in_progress">En cours</option><option value="resolved">Résolu</option><option value="closed">Classé</option></select>
+            </div>
+            <p id="feedback-context"></p>
+            <a id="feedback-image-link" target="_blank" rel="noopener" hidden><img id="feedback-image" alt="Capture jointe au retour"></a>
+            <div id="feedback-messages" aria-live="polite"></div>
+            <form id="feedback-reply"><label for="feedback-comment">Commentaire</label><textarea id="feedback-comment" required maxlength="8000" rows="3"></textarea><button type="submit">Envoyer</button></form>
+          </div>
+          <p id="feedback-empty">Sélectionne un retour ou crée un nouveau message.</p>
+        </section>
+      </div>
+    </dialog>
 
     <dialog id="action-dialog" aria-labelledby="action-dialog-title">
       <form id="action-dialog-form">

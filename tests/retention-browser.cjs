@@ -14,6 +14,7 @@ const { chromium, expect } = require('@playwright/test');
       await page.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/config') return route.continue();
+        if (path === '/api/feedback') return route.fulfill({json: {threads: []}});
         if (path.endsWith('/redownload')) {
           expect(route.request().method()).toBe('POST');
           expect(path).toBe(`/api/library/${track.job_id}/redownload`);

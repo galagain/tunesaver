@@ -29,6 +29,7 @@ function audioFixture() {
       await page.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/config') return route.continue();
+        if (path === '/api/feedback') return route.fulfill({json: {threads: []}});
         if (path === '/api/status') return route.fulfill({ json: { active: {}, counts: {}, recent: [] } });
         if (path === '/api/history') return route.fulfill({ json: { history: [] } });
         if (path === '/api/library') return route.fulfill({ json: { tracks, playlists: [], folders: [], tags: [], imports: [] } });

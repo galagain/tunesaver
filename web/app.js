@@ -400,6 +400,7 @@ function clearCoverCache() {
 }
 
 function showAuth(message = "") {
+  window.dispatchEvent(new Event('feedback-reset'));
   searchResultsByProvider.clear(); lastTextSearch = '';
   cancelTrackMove();
   librarySorts.clear();
@@ -441,6 +442,7 @@ function showApp() {
   refreshLibrary();
   window.clearInterval(queueTimer);
   queueTimer = window.setInterval(refreshQueue, 5000);
+  window.dispatchEvent(new Event('feedback-session'));
 }
 
 function showAdmin() {
@@ -461,6 +463,7 @@ function showAdmin() {
   userEmail.textContent = "Admin";
   userEmail.title = 'Admin';
   refreshAdmin();
+  window.dispatchEvent(new Event('feedback-session'));
 }
 
 authToggle.addEventListener("click", () => {

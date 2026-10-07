@@ -32,6 +32,7 @@ from aiohttp import web
 from mutagen import File as MutagenFile, MutagenError
 
 import musicdl
+import feedback
 import mixer_analysis
 import playlist_sources
 
@@ -1369,6 +1370,7 @@ async def api_middleware(
         public_paths = {
             "/",
             "/app.js",
+            "/feedback.js",
             "/style.css",
             "/tunesaver.svg",
             "/vendor/player-icons.js",
@@ -3776,10 +3778,11 @@ def create_app() -> web.Application:
     app.cleanup_ctx.append(audio_retention_context)
     app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
+    feedback.register(app, local_db, read_json_object, PublicError)
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("vendor/mixer-icons.js", "vendor/player-icons.js", "tunesaver.svg"):
+    for asset in ("vendor/mixer-icons.js", "vendor/player-icons.js", "tunesaver.svg", "feedback.js"):
         app.router.add_get(f"/{asset}", icon_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)

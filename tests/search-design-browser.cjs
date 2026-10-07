@@ -15,6 +15,7 @@ const fs = require('node:fs');
       await page.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/config') return route.continue();
+        if (path === '/api/feedback') return route.fulfill({json: {threads: []}});
         if (path === '/api/library') return route.fulfill({ json: { tracks: [], playlists: [], tags: [], folders: [] } });
         if (path === '/api/status') return route.fulfill({ json: { active: { tiddl: true, beatport: true, qobuz: true }, counts: {}, recent: [] } });
         if (path === '/api/history') return route.fulfill({ json: { history: [] } });

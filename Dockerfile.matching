@@ -2,4 +2,4 @@
 FROM tunesaver:appsilo
 COPY src/webapp.py src/playlist_sources.py src/catalog_matcher.py src/import_engine.py src/spotify_http.py export_playlist.py /app/
 COPY web /app/web
-COPY src/audio_retention.py /app/
+COPY src/audio_retention.py src/feedback.py /app/
