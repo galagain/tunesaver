@@ -70,7 +70,6 @@
             <div class="workspace-menu-items">
               <button id="create-playlist" type="button"><span data-ui-icon="Plus"></span>Nouvelle playlist</button>
               <button id="create-folder" type="button"><span data-ui-icon="Plus"></span>Nouveau dossier</button>
-              <button id="create-tag" type="button"><span data-ui-icon="Plus"></span>Nouveau tag</button>
             </div>
           </details>
         </div>
@@ -81,10 +80,6 @@
           <section class="nav-group">
             <h3 id="playlist-title">Playlists</h3>
             <div id="playlist-list" class="playlist-list"></div>
-          </section>
-          <section class="nav-group">
-            <h3>Tags</h3>
-            <div id="tag-list" class="tag-list"></div>
           </section>
         </div>
         <div class="sidebar-footer"></div>
@@ -191,9 +186,9 @@
             <div id="library-content">
             <div class="import-preview-head">
               <button type="button" data-import-sort="number" aria-label="Trier par numéro">#</button>
-              <button type="button" data-import-sort="title">Titre</button>
-              <button type="button" data-import-sort="artist">Artiste</button>
-              <span>Durée</span>
+              <span></span>
+              <span class="track-title-head"><button type="button" data-import-sort="title">Titre</button><button type="button" data-import-sort="artist">Artiste</button></span>
+              <span class="track-bpm">BPM</span><span class="track-key">Clé</span><span class="track-duration">Durée</span><span></span>
             </div>
             <div class="library-table-head">
               <button type="button" data-track-sort="number" aria-label="Trier par numéro">#</button>

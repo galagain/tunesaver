@@ -55,6 +55,7 @@ const fs = require('node:fs');
           actionsFit: [...document.querySelectorAll('.result-card')].every(card => {
             const bounds = card.getBoundingClientRect();
             return [...card.querySelectorAll('button, a, h4, .result-details')].every(el => {
+              if (!el.getClientRects().length) return true;
               const box = el.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.right;
             });
           }) };

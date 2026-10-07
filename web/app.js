@@ -44,9 +44,7 @@ const queueSection = document.querySelector("#queue-section");
 const refreshStatusButton = document.querySelector("#refresh-status");
 const refreshLibraryButton = document.querySelector("#refresh-library");
 const createPlaylistButton = document.querySelector("#create-playlist");
-const createTagButton = document.querySelector("#create-tag");
 const playlistList = document.querySelector("#playlist-list");
-const tagList = document.querySelector("#tag-list");
 const libraryTracks = document.querySelector("#library-tracks");
 const libraryCount = document.querySelector("#library-count");
 const adminRefreshButton = document.querySelector("#admin-refresh");
@@ -174,29 +172,6 @@ document.addEventListener('keydown', event => {
 });
 let renderedTracks = [];
 let currentTrackId = "";
-let draggedTrackTag = null;
-
-document.addEventListener("dragover", (event) => {
-  if (!draggedTrackTag) return;
-  event.preventDefault();
-  event.dataTransfer.dropEffect = "move";
-});
-
-document.addEventListener("drop", async (event) => {
-  if (!draggedTrackTag) return;
-  event.preventDefault();
-  const { tagId, jobId } = draggedTrackTag;
-  draggedTrackTag = null;
-  if (event.target.closest(".library-track")?.dataset.jobId === jobId) return;
-  await removeTrackTag(tagId, jobId);
-});
-
-async function removeTrackTag(tagId, jobId) {
-  try {
-    await requestJson(`/api/tags/${tagId}/tracks/${jobId}`, { method: "DELETE" });
-    await refreshLibrary();
-  } catch (error) { showToast(error.message, "error"); }
-}
 const coverUrlCache = new Map();
 let historyWarningShown = false;
 let lastHistoryFingerprint = "";
@@ -689,10 +664,13 @@ function setDownloadLabel(button, label) {
   button.setAttribute('aria-label', label);
 }
 
-function makeResultCard(result) {
+function makeResultCard(result, index = 0) {
   const card = document.createElement("article");
   card.className = "result-card";
-  card.append(resultCover(result));
+  const number = document.createElement('span');
+  number.className = 'track-number';
+  number.textContent = String(index + 1);
+  card.append(number, resultCover(result));
   const body = document.createElement("div");
   body.className = "result-body";
   const title = document.createElement("h4");
@@ -714,7 +692,8 @@ function makeResultCard(result) {
     resultInfo("Clé", result.key),
     resultInfo("Durée", result.duration)
   );
-  body.append(title, artist, album);
+  body.append(title, artist);
+  body.title = [album.textContent, context.textContent].filter(Boolean).join(' · ');
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -773,7 +752,7 @@ function makeResultCard(result) {
     }
   });
   actions.append(source, download);
-  card.append(body, context, details, actions);
+  card.append(body, details, actions);
   return card;
 }
 
@@ -789,7 +768,7 @@ function renderPlatform(provider, results) {
   elements.state.textContent = "";
   elements.state.className = "panel-state hidden-state";
   const fragment = document.createDocumentFragment();
-  for (const result of results) fragment.append(makeResultCard(result));
+  results.forEach((result, index) => fragment.append(makeResultCard(result, index)));
   elements.results.append(fragment);
 }
 
@@ -1047,7 +1026,7 @@ function makeTrackDeleteButton(track) {
   remove.append(document.getElementById("icon-trash").content.cloneNode(true));
   remove.addEventListener("click", async () => {
     const name = track.title || track.file_name || "ce morceau";
-    if (!await siteDialogs.confirm(`Supprimer définitivement « ${name} » ? Fichier, historique et données de mix seront effacés. Le son sera retiré des playlists et des tags. Tout téléchargement en cours sera annulé.`, { confirmText: "Supprimer" })) return;
+    if (!await siteDialogs.confirm(`Supprimer définitivement « ${name} » ? Le fichier et son lien seront effacés. Le son sera retiré des playlists. Tout téléchargement en cours sera annulé.`, { confirmText: "Supprimer" })) return;
     remove.disabled = true;
     try {
       await requestJson(`/api/library/${jobId}`, { method: "DELETE" });
@@ -1096,9 +1075,6 @@ function liveTracksForLibrary() {
     }));
 }
 
-function applyTagStyle(element, tag) {
-  element.style.setProperty("--tag-color", tag.color || "#665cff");
-}
 
 function providerShortLabel(provider) {
   if (provider === "beatport") return "b";
@@ -1123,14 +1099,21 @@ function makeSourceBadge(track) {
   return element;
 }
 
-async function addTagToTrack(tagId, jobId) {
-  if (!tagId || !jobId) return;
-  await requestJson(`/api/tags/${tagId}/tracks`, {
-    method: "POST",
-    body: JSON.stringify({ job_id: jobId }),
-  });
-  await refreshLibrary();
+function makeLibraryCover(track) {
+  const cover = document.createElement('div'); cover.className = 'library-cover';
+  const initial = document.createElement('span'); initial.textContent = (track.title || '?').trim().slice(0, 1).toUpperCase();
+  cover.append(initial);
+  const url = track.cover_url;
+  if (url && (url.startsWith('/api/') || url.startsWith('https://'))) {
+    const image = document.createElement('img'); image.alt = ''; image.loading = 'lazy';
+    image.addEventListener('load', () => cover.dataset.loaded = 'true');
+    if (coverUrlCache.has(url)) cover.dataset.loaded = 'true';
+    cover.append(image);
+    if (url.startsWith('/api/')) loadPrivateImage(image, url); else image.src = url;
+  }
+  return cover;
 }
+
 
 function makeRenameButton(item, collection) {
   const button = document.createElement("button");
@@ -1387,64 +1370,6 @@ function renderPlaylists() {
   if (all) all.dataset.selected = selectedPlaylistId || selectedTagId || selectedFolderId ? "false" : "true";
 }
 
-function renderTags() {
-  const key = JSON.stringify([libraryState.tags, selectedTagId]);
-  if (tagList.renderKey === key) return;
-  tagList.renderKey = key;
-  tagList.replaceChildren();
-  for (const tag of libraryState.tags) {
-    const row = document.createElement("div");
-    row.className = "tag-row";
-    const button = document.createElement("button");
-    button.className = "tag-filter";
-    button.type = "button";
-    button.draggable = true;
-    applyTagStyle(button, tag);
-    button.dataset.tagId = tag.id;
-    button.dataset.collection = `tags:${tag.id}`;
-    button.dataset.selected = tag.id === selectedTagId ? "true" : "false";
-    collectionRowLabel(button, tag.name, tag.track_ids.length);
-    button.addEventListener("dragstart", (event) => {
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData("application/x-tunesaver-tag", tag.id);
-      button.dataset.dragging = "true";
-    });
-    button.addEventListener("dragend", () => {
-      button.dataset.dragging = "false";
-    });
-    button.addEventListener("dragover", (event) => {
-      if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-job")) return;
-      event.preventDefault();
-      button.dataset.drop = "true";
-    });
-    button.addEventListener("dragleave", () => {
-      button.dataset.drop = "false";
-    });
-    button.addEventListener("drop", async (event) => {
-      event.preventDefault();
-      button.dataset.drop = "false";
-      const jobId = event.dataTransfer.getData("application/x-tunesaver-job");
-      if (!jobId || tag.track_ids.includes(jobId)) return;
-      try {
-        await addTagToTrack(tag.id, jobId);
-        selectedTagId = tag.id;
-        selectedPlaylistId = "";
-        selectedFolderId = "";
-        renderLibrary();
-      } catch (error) {
-        showToast(error.message, "error");
-      }
-    });
-    button.addEventListener("click", () => {
-      selectedFolderId = "";
-      selectedTagId = tag.id;
-      selectedPlaylistId = "";
-      renderLibrary();
-    });
-    row.append(button);
-    tagList.append(row);
-  }
-}
 
 function libraryScope() {
   if (selectedPlaylistId) return `playlist:${selectedPlaylistId}`;
@@ -1575,10 +1500,9 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && tr
 window.addEventListener('blur', cancelTrackMove);
 
 function renderLibrary() {
-  if (draggedTrackTag || draggedPlaylist || draggedLibraryTrack || trackMove || savingTrackOrder) return;
+  if (draggedPlaylist || draggedLibraryTrack || trackMove || savingTrackOrder) return;
   renderImports();
   renderPlaylists();
-  renderTags();
   updateWorkspaceNavigation();
   renderCollectionActions();
   const preview = (libraryState.imports || []).find(item => item.playlist_id === selectedPlaylistId
@@ -1645,73 +1569,18 @@ function renderLibrary() {
       draggedLibraryTrack = false;
       renderLibrary();
     });
-    row.addEventListener("dragover", (event) => {
-      if (track.is_live || track.state === "failed") return;
-      if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-tag")) return;
-      event.preventDefault();
-      row.dataset.drop = "true";
-    });
-    row.addEventListener("dragleave", () => {
-      row.dataset.drop = "false";
-    });
-    row.addEventListener("drop", async (event) => {
-      row.dataset.drop = "false";
-      if (track.is_live || track.state === "failed") return;
-      const tagId = event.dataTransfer.getData("application/x-tunesaver-tag");
-      if (!tagId) return;
-      event.preventDefault();
-      try {
-        await addTagToTrack(tagId, track.job_id);
-      } catch (error) {
-        showToast(error.message, "error");
-      }
-    });
-    const cover = document.createElement("div");
-    cover.className = "library-cover";
-    const coverText = document.createElement("span");
-    coverText.textContent = (track.title || track.file_name || "?").trim().slice(0, 1).toUpperCase() || "?";
-    cover.append(coverText);
-    if (track.cover_url) {
-      const image = document.createElement("img");
-      image.alt = "";
-      image.loading = "lazy";
-      if (coverUrlCache.has(track.cover_url)) cover.dataset.loaded = "true";
-      image.addEventListener("load", () => cover.dataset.loaded = "true");
-      cover.append(image);
-      loadPrivateImage(image, track.cover_url);
-    }
+    const cover = makeLibraryCover(track);
     const body = document.createElement("div");
     body.className = "library-track-body";
     const title = document.createElement("strong");
     title.textContent = track.title || track.file_name || track.job_id;
     const meta = document.createElement("span");
     meta.textContent = track.artist || "Artiste inconnu";
-    const badges = document.createElement("div");
-    badges.className = "track-tags";
-    for (const tag of track.tags || []) {
-      const badge = document.createElement("button");
-      badge.type = "button";
-      badge.className = "track-tag";
-      badge.draggable = true;
-      badge.title = `Retirer le tag ${tag.name}`;
-      badge.setAttribute("aria-label", badge.title);
-      badge.addEventListener("click", () => removeTrackTag(tag.id, track.job_id));
-      badge.addEventListener("dragstart", (event) => {
-        event.stopPropagation();
-        draggedTrackTag = { tagId: tag.id, jobId: track.job_id };
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("application/x-tunesaver-remove-tag", tag.id);
-        badge.dataset.dragging = "true";
-      });
-      badge.addEventListener("dragend", () => {
-        draggedTrackTag = null;
-        badge.dataset.dragging = "false";
-      });
-      applyTagStyle(badge, tag);
-      badge.textContent = tag.name;
-      badges.append(badge);
+    body.append(title, meta);
+    if (track.expired) {
+      const archived = document.createElement('small'); archived.className = 'import-track-status';
+      archived.textContent = 'Fichier expiré · lien conservé'; body.append(archived);
     }
-    body.append(title, meta, badges);
     const actions = document.createElement("div");
     actions.className = "library-track-actions";
     const menu = document.createElement('details'); menu.className = 'workspace-menu track-menu';
@@ -1743,7 +1612,17 @@ function renderLibrary() {
       statusButton.disabled = true;
       statusButton.textContent = stateLabels[track.state || "pending"] || "En file";
       actions.append(statusButton);
-    } else if (!selectedPlaylistId && !selectedTagId) {
+    } else if (track.expired) {
+      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'restore-audio';
+      restore.title = 'Retélécharger depuis la plateforme'; restore.setAttribute('aria-label', `Retélécharger ${track.title || 'ce son'}`);
+      appendUIIcon(restore, 'Download');
+      restore.addEventListener('click', async () => {
+        restore.disabled = true;
+        try { await requestJson(`/api/library/${track.job_id}/redownload`, {method: 'POST', body: '{}'}); await refreshQueue(); }
+        catch (error) { showToast(error.message, 'error'); restore.disabled = false; }
+      });
+      actions.append(restore);
+    } else {
       const download = document.createElement("button");
       download.className = "history-download";
       download.type = "button";
@@ -1865,34 +1744,36 @@ function renderImportPreview(item) {
   const fragment = document.createDocumentFragment();
   for (const track of rows) {
     const row = document.createElement("article");
-    row.className = "import-preview-track";
-    for (const value of [track.number, track.title, track.artist || "—",
-      Number.isFinite(track.duration) && track.duration > 0
-        ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, "0")}` : "—"]) {
-      const cell = document.createElement("span");
-      cell.textContent = value;
-      row.append(cell);
-    }
+    row.className = "library-track import-preview-track";
+    const candidate = track.matching?.candidate || track;
+    const number = document.createElement('span'); number.className = 'track-number'; number.textContent = track.number;
+    const cover = makeLibraryCover({...track, cover_url: candidate.cover_url});
+    const body = document.createElement('div'); body.className = 'library-track-body';
+    const title = document.createElement('strong'); title.textContent = track.title;
+    const artist = document.createElement('span'); artist.textContent = track.artist || 'Artiste inconnu';
+    body.append(title, artist);
+    const bpm = document.createElement('span'); bpm.className = 'track-bpm'; bpm.textContent = candidate.bpm || '—';
+    const key = document.createElement('span'); key.className = 'track-key'; key.textContent = candidate.key || '—';
+    const duration = document.createElement('span'); duration.className = 'track-duration';
+    duration.textContent = Number.isFinite(track.duration) && track.duration > 0
+      ? `${Math.floor(track.duration / 60)}:${String(Math.floor(track.duration % 60)).padStart(2, '0')}` : '—';
+    const actions = document.createElement('div'); actions.className = 'library-track-actions';
+    row.append(number, cover, body, bpm, key, duration, actions);
     const matching = track.matching;
     if (matching) {
       const info = document.createElement('small');
       const states = { searching: 'Recherche', matched: 'Trouvé', not_found: 'Introuvable', ambiguous: 'À vérifier', unavailable: 'Indisponible', error: 'Erreur' };
       info.className = 'import-track-status';
       info.textContent = `${matching.job_id ? 'En téléchargement' : states[matching.status] || 'En attente'}${matching.target?.provider || matching.provider ? ' · ' + (matching.target?.provider || matching.provider).toUpperCase() : ''}${matching.error ? ' · ' + matching.error : ''}`;
-      row.children[1].append(info);
+      body.append(info);
       if (matching.target?.url?.startsWith('https://')) {
-        const link = document.createElement('a');
-        link.href = matching.target.url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.textContent = 'Ouvrir';
-        info.append(' · ', link);
+        actions.append(makeSourceBadge({provider: matching.target.provider === 'tidal' ? 'tiddl' : matching.target.provider, source_url: matching.target.url}));
       }
     } else if (item.state !== 'ready' && track.number > item.total) {
       const info = document.createElement('small');
       info.className = 'import-track-status';
       info.textContent = 'Hors limite sélectionnée';
-      row.children[1].append(info);
+      body.append(info);
     }
     fragment.append(row);
   }
@@ -2101,26 +1982,6 @@ createPlaylistButton.addEventListener("click", async () => {
   }
 });
 
-createTagButton.addEventListener("click", async () => {
-  const name = await siteDialogs.prompt("Nom du tag", "", { maxLength: 40 });
-  if (!name) return;
-  createTagButton.disabled = true;
-  try {
-    const result = await requestJson("/api/tags", {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    });
-    selectedTagId = result.tag.id;
-    selectedPlaylistId = "";
-    selectedFolderId = '';
-    setWorkspaceView('library');
-    await refreshLibrary();
-  } catch (error) {
-    showToast(error.message, "error");
-  } finally {
-    createTagButton.disabled = false;
-  }
-});
 
 
 let historyItems = [], historyLocalJobs = [], historyFingerprint = '';

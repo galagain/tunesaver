@@ -1005,19 +1005,20 @@ def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
         removed = {row["job_id"] for row in db.execute(
             "select job_id from library_removed where user_id = ?", (user_id,)
         )}
+    with local_db() as db:
+        history = [normalize_history_row(r) for r in db.execute('select * from download_history where user_id=? order by created_at desc', (user_id,))]
     tags_by_job = local_track_tag_map(user_id)
-    for row in local_user_history(user_id, limit=500, offset=0):
+    for row in history:
         if row["state"] != "done" or row["job_id"] in removed:
             continue
         delivery = delivery_for_job(row["job_id"], user_id)
-        if not delivery:
-            continue
         cover = cover_for_job(row["job_id"], user_id)
         tracks.append({
             **row,
-            "file_name": delivery["name"],
-            "file_size": delivery["size"],
-            "streamable": bool(delivery["mime_type"]),
+            "file_name": delivery["name"] if delivery else row['title'],
+            "file_size": delivery["size"] if delivery else 0,
+            "streamable": bool(delivery and delivery["mime_type"]),
+            "expired": not bool(delivery),
             "cover_url": f"/api/covers/{row['job_id']}" if cover else "",
             "tags": tags_by_job.get(row["job_id"], []),
             "mix_analysis": analyses.get(row["job_id"], {"status": "pending"}),
@@ -1255,9 +1256,9 @@ def local_tag_has_owner(db: sqlite3.Connection, tag_id: str, user_id: str) -> bo
 def local_playlist_add_track(user_id: str, playlist_id: str, job_id: str) -> None:
     if not musicdl.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Morceau invalide.", status=404)
-    if not delivery_for_job(job_id, user_id):
-        raise PublicError("Morceau introuvable.", status=404)
     with local_db() as db:
+        if not db.execute('select 1 from download_history where job_id=? and user_id=?', (job_id, user_id)).fetchone() and not delivery_for_job(job_id, user_id):
+            raise PublicError("Morceau introuvable.", status=404)
         if not local_playlist_has_owner(db, playlist_id, user_id):
             raise PublicError("Playlist introuvable.", status=404)
         db.execute(
@@ -3212,6 +3213,18 @@ async def playlist_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"deleted": True})
 
 
+async def library_redownload_handler(request: web.Request) -> web.Response:
+    import audio_retention
+    result = await asyncio.to_thread(audio_retention.requeue, sys.modules[__name__], request['user']['id'], request.match_info['job_id'])
+    return web.json_response(result, status=200 if result['duplicate'] else 202)
+
+
+async def audio_retention_context(app):
+    import audio_retention
+    async with audio_retention.context(sys.modules[__name__]):
+        yield
+
+
 async def tag_create_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     name = payload.get("name")
@@ -3672,6 +3685,7 @@ def create_app() -> web.Application:
     app[PLAYLIST_TICKETS_KEY] = {}
     app[PLAYLIST_ZIP_LOCK_KEY] = asyncio.Lock()
     app.cleanup_ctx.append(playlist_import_context)
+    app.cleanup_ctx.append(audio_retention_context)
     app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
     app.router.add_get("/", index_handler)
@@ -3694,6 +3708,7 @@ def create_app() -> web.Application:
     app.router.add_get("/api/library", library_handler)
     app.router.add_put("/api/library/order", library_order_handler)
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)
+    app.router.add_post("/api/library/{job_id}/redownload", library_redownload_handler)
     app.router.add_get("/api/covers/{job_id}", cover_handler)
     app.router.add_post("/api/playlists", playlist_create_handler)
     app.router.add_get("/api/playlists/{playlist_id}/export", collection_export_handler)
