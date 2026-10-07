@@ -124,9 +124,7 @@ let adminChartMode = "tracks";
 let adminDailyStats = [];
 let selectedPlaylistId = "";
 let selectedTagId = "";
-let selectedFolderId = "";
 let selectedLibraryTrackId = '';
-let draggedPlaylist = false;
 let trackMove = null;
 let draggedLibraryTrack = false;
 let savingTrackOrder = false;
@@ -702,7 +700,6 @@ function makeResultCard(result, index = 0) {
       await refreshQueue();
       selectedPlaylistId = "";
       selectedTagId = "";
-      selectedFolderId = "";
       renderLibrary();
     } catch (error) {
       download.disabled = false;
@@ -770,7 +767,6 @@ async function enqueueList(links) {
     const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url, auto_download: true }) });
     selectedPlaylistId = imported.playlist_id || '';
     selectedTagId = "";
-    selectedFolderId = "";
   }
   showToast(selectedPlaylistId ? 'Lecture des titres lancée.' : 'Morceau ajouté dans Tous mes sons.');
   resultsSection.hidden = true;
@@ -787,7 +783,7 @@ async function groupSearchInPlaylist(lines) {
   if (name === null) return;
   if (!name.trim()) throw new Error('Donne un nom à la playlist.');
   const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ urls: links, name: name.trim(), auto_download: true }) });
-  selectedPlaylistId = imported.playlist_id; selectedTagId = selectedFolderId = '';
+  selectedPlaylistId = imported.playlist_id; selectedTagId = '';
   resultsSection.hidden = true;
   await refreshLibrary(); setWorkspaceView('library');
   showToast('Les titres seront regroupés dans cette playlist.');
@@ -843,7 +839,7 @@ window.addEventListener('drop', async event => {
       if (item.links) await enqueueList(item.links);
       else {
         const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ document: item.document, auto_download: true }) });
-        selectedPlaylistId = imported.playlist_id; selectedTagId = selectedFolderId = '';
+        selectedPlaylistId = imported.playlist_id; selectedTagId = '';
         await refreshLibrary(); setWorkspaceView('library');
       }
     }
@@ -1041,7 +1037,6 @@ function trackInTag(track, tagId) {
 }
 
 function currentLibraryTitle() {
-  if (selectedFolderId) return libraryState.folders?.find(folder => folder.id === selectedFolderId)?.name || 'Dossier';
   if (selectedPlaylistId) {
     const playlist = libraryState.playlists.find((item) => item.id === selectedPlaylistId);
     return playlist ? playlist.name : "Mes playlists";
@@ -1096,7 +1091,6 @@ function liveTracksForLibrary() {
   return liveQueueTracks
     .filter((job) => !existing.has(job.id) && ["pending", "running", "failed"].includes(job.state))
     .filter((job) => !selectedPlaylistId || trackInPlaylist({ job_id: job.id }, selectedPlaylistId))
-    .filter(job => trackInFolder({ job_id: job.id }))
     .map((job) => ({
       job_id: job.id,
       provider: job.provider,
@@ -1187,7 +1181,7 @@ function makeRenameButton(item, collection) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "collection-rename";
-  button.title = collection === "playlists" ? "Renommer la playlist" : collection === "playlist-folders" ? "Renommer le dossier" : "Renommer le tag";
+  button.title = collection === "playlists" ? "Renommer la playlist" : "Renommer le tag";
   button.setAttribute("aria-label", `${button.title} : ${item.name}`);
   button.append(document.getElementById("icon-pencil").content.cloneNode(true));
   button.addEventListener("click", async () => {
@@ -1245,34 +1239,6 @@ function makeCollectionExportButton(item, collection) {
   return button;
 }
 
-async function movePlaylist(playlistId, folderId) {
-  try {
-    await requestJson(`/api/playlists/${playlistId}/folder`, { method: "PATCH", body: JSON.stringify({ folder_id: folderId || null }) });
-    await refreshLibrary();
-  } catch (error) { showToast(error.message, "error"); }
-}
-
-function folderDropTarget(element, folderId) {
-  element.addEventListener("dragover", (event) => {
-    if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-playlist")) return;
-    event.preventDefault();
-    element.dataset.drop = "true";
-  });
-  element.addEventListener("dragleave", () => { element.dataset.drop = "false"; });
-  element.addEventListener("drop", (event) => {
-    element.dataset.drop = "false";
-    const id = event.dataTransfer.getData("application/x-tunesaver-playlist");
-    if (!id) return;
-    event.preventDefault();
-    event.stopPropagation();
-    movePlaylist(id, folderId);
-  });
-}
-
-function trackInFolder(track) {
-  return !selectedFolderId || libraryState.playlists.some(playlist => playlist.folder_id === selectedFolderId && playlist.track_ids.includes(track.job_id));
-}
-
 function collectionRowLabel(button, name, count) {
   button.replaceChildren();
   button.title = name;
@@ -1310,9 +1276,8 @@ document.querySelector('#collection-download').addEventListener('click', async (
 });
 
 function renderCollectionActions() {
-  const collection = selectedFolderId ? 'playlist-folders' : selectedPlaylistId ? 'playlists' : selectedTagId ? 'tags' : '';
-  const item = selectedFolderId ? libraryState.folders?.find(f => f.id === selectedFolderId)
-    : selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
+  const collection = selectedPlaylistId ? 'playlists' : selectedTagId ? 'tags' : '';
+  const item = selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
     : libraryState.tags.find(t => t.id === selectedTagId);
   const menu = document.querySelector('#collection-menu');
   const download = document.querySelector('#collection-download');
@@ -1327,11 +1292,9 @@ function renderCollectionActions() {
   const rename = makeRenameButton(item, collection);
   rename.append(document.createTextNode('Renommer'));
   actions.append(rename);
-  if (collection !== 'playlist-folders') {
-    const download = makeCollectionExportButton(item, collection);
-    download.append(document.createTextNode('Exporter la playlist (.txt)'));
-    actions.append(download);
-  }
+  const exportButton = makeCollectionExportButton(item, collection);
+  exportButton.append(document.createTextNode('Exporter la playlist (.txt)'));
+  actions.append(exportButton);
   if (collection === 'playlists') {
     if (importing?.state === 'ready') {
       const label = document.createElement('label'); label.textContent = 'Titres (0 = tous)';
@@ -1341,21 +1304,14 @@ function renderCollectionActions() {
       limit.addEventListener('input', () => importLimits.set(importing.id, limit.value));
       label.append(limit); actions.append(label);
     }
-    const label = document.createElement('label'); label.textContent = 'Dossier';
-    const select = document.createElement('select'); select.setAttribute('aria-label', 'Déplacer la playlist dans un dossier');
-    select.append(new Option('À la racine', ''));
-    (libraryState.folders || []).forEach(folder => select.append(new Option(folder.name, folder.id)));
-    select.value = item.folder_id || '';
-    select.addEventListener('change', () => movePlaylist(item.id, select.value));
-    label.append(select); actions.append(label);
   }
   const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'collection-delete';
   remove.append(document.getElementById('icon-trash').content.cloneNode(true), document.createTextNode('Supprimer'));
   remove.addEventListener('click', async () => {
-    if (!await siteDialogs.confirm(`Supprimer « ${item.name} » ? ${collection === 'playlist-folders' ? 'Les playlists et les sons seront conservés.' : 'Les sons seront conservés dans Mes sons.'}`, { confirmText: 'Supprimer' })) return;
+    if (!await siteDialogs.confirm(`Supprimer « ${item.name} » ? Les sons seront conservés dans Mes sons.`, { confirmText: 'Supprimer' })) return;
     try {
       await requestJson(`/api/${collection}/${item.id}`, { method: 'DELETE' });
-      selectedPlaylistId = selectedTagId = selectedFolderId = '';
+      selectedPlaylistId = selectedTagId = '';
       await refreshLibrary();
     } catch (error) { showToast(error.message, 'error'); }
   });
@@ -1363,48 +1319,12 @@ function renderCollectionActions() {
 }
 
 function renderPlaylists() {
-  const key = JSON.stringify([libraryState.playlists, libraryState.folders, selectedPlaylistId, selectedTagId, selectedFolderId]);
+  const key = JSON.stringify([libraryState.playlists, selectedPlaylistId, selectedTagId]);
   if (playlistList.renderKey === key) return;
   playlistList.renderKey = key;
   playlistList.replaceChildren();
-  const containers = new Map();
-  for (const folder of libraryState.folders || []) {
-    const group = document.createElement("div");
-    group.className = "playlist-folder";
-    const header = document.createElement("div");
-    header.className = "playlist-row folder-heading";
-    const toggle = document.createElement("button");
-    toggle.className = "playlist-filter folder-toggle";
-    toggle.type = "button";
-    toggle.setAttribute("aria-expanded", String(!folder.collapsed));
-    const count = libraryState.playlists.filter((p) => p.folder_id === folder.id).length;
-    collectionRowLabel(toggle, `${folder.collapsed ? "▸" : "▾"} ${folder.name}`, count);
-    toggle.dataset.selected = String(selectedFolderId === folder.id);
-    toggle.dataset.collection = `folders:${folder.id}`;
-    const children = document.createElement("div");
-    children.className = "folder-playlists";
-    children.hidden = Boolean(folder.collapsed);
-    children.id = `folder-${folder.id}`;
-    toggle.setAttribute("aria-controls", children.id);
-    toggle.addEventListener("click", async () => {
-      selectedFolderId = folder.id;
-      selectedPlaylistId = selectedTagId = '';
-      toggle.disabled = true;
-      try {
-        await requestJson(`/api/playlist-folders/${folder.id}`, { method: "PATCH", body: JSON.stringify({ collapsed: !folder.collapsed }) });
-        await refreshLibrary();
-      } catch (error) { showToast(error.message, "error"); }
-      finally { toggle.disabled = false; }
-    });
-    folderDropTarget(toggle, folder.id);
-    header.append(toggle);
-    group.append(header, children);
-    playlistList.append(group);
-    containers.set(folder.id, children);
-  }
   const root = document.createElement("div");
   root.className = "root-playlists";
-  folderDropTarget(root, null);
   playlistList.append(root);
   for (const playlist of libraryState.playlists) {
     const row = document.createElement("div");
@@ -1417,13 +1337,6 @@ function renderPlaylists() {
     button.dataset.selected = playlist.id === selectedPlaylistId ? "true" : "false";
     const readyImport = (libraryState.imports || []).find(item => item.playlist_id === playlist.id && item.state === 'ready');
     collectionRowLabel(button, playlist.name, readyImport ? readyImport.total : playlist.track_ids.length);
-    button.draggable = true;
-    button.addEventListener("dragstart", (event) => {
-      draggedPlaylist = true;
-      event.dataTransfer.setData("application/x-tunesaver-playlist", playlist.id);
-      event.dataTransfer.effectAllowed = "move";
-    });
-    button.addEventListener("dragend", () => { draggedPlaylist = false; renderLibrary(); });
     button.addEventListener("dragover", (event) => {
       if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-job")) return;
       event.preventDefault();
@@ -1444,30 +1357,27 @@ function renderPlaylists() {
         });
         selectedPlaylistId = playlist.id;
         selectedTagId = "";
-        selectedFolderId = "";
         await refreshLibrary();
       } catch (error) {
         showToast(error.message, "error");
       }
     });
     button.addEventListener("click", () => {
-      selectedFolderId = "";
       selectedPlaylistId = playlist.id;
       selectedTagId = "";
       renderLibrary();
     });
     row.append(button);
-    (containers.get(playlist.folder_id) || root).append(row);
+    root.append(row);
   }
   const all = document.querySelector(".playlist-filter[data-playlist-id='']");
-  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId || selectedFolderId ? "false" : "true";
+  if (all) all.dataset.selected = selectedPlaylistId || selectedTagId ? "false" : "true";
 }
 
 
 function libraryScope() {
   if (selectedPlaylistId) return `playlist:${selectedPlaylistId}`;
   if (selectedTagId) return `tag:${selectedTagId}`;
-  if (selectedFolderId) return `folder:${selectedFolderId}`;
   return 'library:';
 }
 
@@ -1476,7 +1386,7 @@ function currentLibrarySort() {
 }
 
 function manualLibraryTracks() {
-  const stored = libraryState.tracks.filter(trackInFolder)
+  const stored = libraryState.tracks
     .filter(track => trackInPlaylist(track, selectedPlaylistId) && trackInTag(track, selectedTagId));
   const tracks = [...liveTracksForLibrary(), ...stored];
   const collection = selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
@@ -1592,7 +1502,7 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && tr
 window.addEventListener('blur', cancelTrackMove);
 
 function renderLibrary() {
-  if (draggedPlaylist || draggedLibraryTrack || trackMove || savingTrackOrder) return;
+  if (draggedLibraryTrack || trackMove || savingTrackOrder) return;
   renderImports();
   renderPlaylists();
   updateWorkspaceNavigation();
@@ -1617,7 +1527,7 @@ function renderLibrary() {
   if (!tracks.some(track => track.job_id === selectedLibraryTrackId)) selectedLibraryTrackId = tracks[0]?.job_id || '';
   document.querySelector("#library-title").textContent = currentLibraryTitle();
   libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
-  const renderKey = JSON.stringify([tracks, [...numbers], sort, selectedPlaylistId, selectedTagId, selectedFolderId]);
+  const renderKey = JSON.stringify([tracks, [...numbers], sort, selectedPlaylistId, selectedTagId]);
   if (libraryTracks.renderKey === renderKey) return;
   libraryTracks.renderKey = renderKey;
   libraryTracks.replaceChildren();
@@ -1923,7 +1833,6 @@ async function refreshLibrary() {
       if (['running', 'matched', 'cancelled'].includes(item.state)) importPreviews.delete(item.id);
     }
     libraryState.tracks = libraryState.tracks.filter(track => !deletedJobIds.has(track.job_id));
-    if (selectedFolderId && !libraryState.folders?.some(folder => folder.id === selectedFolderId)) selectedFolderId = '';
     if (selectedPlaylistId && !libraryState.playlists.some((playlist) => playlist.id === selectedPlaylistId)) {
       selectedPlaylistId = "";
     }
@@ -1939,23 +1848,11 @@ async function refreshLibrary() {
 }
 
 document.querySelector(".playlist-filter[data-playlist-id='']").addEventListener("click", () => {
-  selectedFolderId = '';
   selectedPlaylistId = "";
   selectedTagId = "";
   renderLibrary();
 });
 
-
-document.querySelector("#create-folder").addEventListener("click", async () => {
-  const name = await siteDialogs.prompt("Nom du dossier", "", { maxLength: 80 });
-  if (!name) return;
-  try {
-    await requestJson("/api/playlist-folders", { method: "POST", body: JSON.stringify({ name }) });
-    await refreshLibrary();
-  } catch (error) { showToast(error.message, "error"); }
-});
-
-folderDropTarget(document.querySelector("#playlist-title"), null);
 
 createPlaylistButton.addEventListener("click", async () => {
   const name = await siteDialogs.prompt("Nom de la playlist", "", { maxLength: 80 });
@@ -1967,7 +1864,7 @@ createPlaylistButton.addEventListener("click", async () => {
       body: JSON.stringify({ name }),
     });
     selectedPlaylistId = result.playlist.id;
-    selectedFolderId = selectedTagId = '';
+    selectedTagId = '';
     setWorkspaceView('library');
     await refreshLibrary();
   } catch (error) {

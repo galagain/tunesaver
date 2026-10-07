@@ -10,7 +10,7 @@ const { chromium, expect } = require('@playwright/test');
         { job_id: 'ready', title: 'Ready song', artist: 'Artist', provider: 'tiddl', state: 'done', streamable: true },
         { job_id: 'failed', title: 'Failed song', artist: 'Artist', provider: 'qobuz', state: 'failed' },
       ];
-      const library = { tracks, playlists: [{ id: 'p', name: 'Set', track_ids: ['ready', 'failed'] }], imports: [], folders: [], tags: [], orders: {} };
+      const library = { tracks, playlists: [{ id: 'p', name: 'Set', folder_id: 'old-folder', track_ids: ['ready', 'failed'] }], imports: [], folders: [{id: 'old-folder', name: 'Old folder', collapsed: true}], tags: [], orders: {} };
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname;
@@ -28,6 +28,11 @@ const { chromium, expect } = require('@playwright/test');
       await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture' }; showApp(); clearInterval(queueTimer); });
       await page.locator('[data-playlist-id="p"]').click();
+      await expect(page.locator('#create-folder, .playlist-folder, .folder-playlists')).toHaveCount(0);
+      await expect(page.locator('.root-playlists [data-playlist-id="p"]')).toBeVisible();
+      await page.locator('#collection-menu > summary').click();
+      await expect(page.getByLabel('Déplacer la playlist dans un dossier')).toHaveCount(0);
+      await page.locator('#collection-menu > summary').click();
       await expect(page.locator('.library-track')).toHaveCount(2);
       await expect(page.locator('.library-track .track-menu')).toHaveCount(0);
       await expect(page.locator('.library-track .track-delete')).toHaveCount(0);

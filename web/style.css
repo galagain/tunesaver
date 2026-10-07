@@ -1204,11 +1204,8 @@ h1 {
 .action-dialog-buttons button { min-height: 40px; padding: 8px 16px; border-radius: 4px; border: 1px solid #606060; background: #303030; color: var(--text); }
 #action-dialog-submit { background: var(--accent); color: #101010; border-color: var(--accent); }
 
-.playlist-folder { min-width: 0; margin-bottom: 6px; }
 .sidebar-heading { gap: 6px; }
 #playlist-title { margin-right: auto; }
-.folder-toggle { font-weight: 650; }
-.folder-playlists { margin-left: 16px; }
 .root-playlists { min-height: 12px; }
 .root-playlists[data-drop="true"],
 #playlist-title[data-drop="true"] { outline: 1px solid var(--accent); }
@@ -2102,8 +2099,6 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 .collection-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .collection-count { flex: 0 0 auto; color: #747474; font-size: 10px; font-variant-numeric: tabular-nums; }
 .workspace .tag-filter::before { position: static; transform: none; flex: 0 0 7px; margin: 0; }
-.workspace .folder-playlists { margin-left: 16px; border-left: 1px solid #323232; padding-left: 3px; }
-.workspace .playlist-folder { margin-bottom: 2px; }
 .nav-group { margin-top: 18px; }
 .nav-group > h3 { margin: 0; padding: 7px 8px; font-size: 10px; font-weight: 500; text-transform: uppercase; color: #808080; }
 .workspace .search-section { max-width: none; margin: 0 0 22px; padding: 0; }
