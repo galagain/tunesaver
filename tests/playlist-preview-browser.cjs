@@ -23,7 +23,7 @@ const { chromium, expect } = require('@playwright/test');
         if (path === '/api/playlist-imports/preview') return route.fulfill({ json: { tracks, state: item.state } });
         if (path === '/api/playlist-imports/preview/start') {
           const body = route.request().postDataJSON();
-          if (starts === 0) { expect(body.download).toBe(false); expect(body.max_tracks).toBe(2); }
+          if (starts === 0) { expect(body.download).toBe(true); expect(body.max_tracks).toBe(2); }
           else expect(body.download).toBe(true);
           starts++; item.state = starts === 1 ? 'running' : 'done';
           return route.fulfill({ status: 202, json: { started: true } });
@@ -38,8 +38,10 @@ const { chromium, expect } = require('@playwright/test');
       await page.locator('#search-input').fill('https://open.spotify.com/playlist/57HAIqxdHbi332994xcOKc');
       await page.locator('#search-input').press('Enter');
       await expect(page.locator('.import-preview-track')).toHaveCount(1201);
-      await expect(page.locator('.library-table-head')).toBeHidden();
-      await expect(page.locator('.import-preview-head')).toBeVisible();
+      await expect(page.locator('.library-table-head')).toBeVisible();
+      await expect(page.locator('.import-preview-head')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Télécharger', exact: true })).toHaveCount(1);
+      await expect(page.getByRole('button', { name: 'Rechercher seulement', exact: true })).toHaveCount(0);
       expect(starts).toBe(0);
       await page.locator('.import-preview-track').last().scrollIntoViewIfNeeded();
       await expect(page.locator('.import-preview-track').last()).toContainText('Song 1201');
@@ -50,23 +52,26 @@ const { chromium, expect } = require('@playwright/test');
       await page.locator('.import-preview-track').first().scrollIntoViewIfNeeded();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: `/work/playlist-preview-${width}.png` });
+      await page.locator('#collection-menu > summary').click();
       await page.getByRole('spinbutton').fill('2');
-      await page.getByRole('button', { name: 'Rechercher seulement', exact: true }).click();
+      await page.locator('#collection-menu > summary').click();
+      await page.getByRole('button', { name: 'Télécharger', exact: true }).click();
       await expect.poll(() => starts).toBe(1);
+      await expect(page.locator('#collection-download')).toBeDisabled();
       await expect(page.locator('.import-preview-track')).toHaveCount(1201);
       item.state = 'matched'; item.total = 2; item.processed = 2; item.matched = 2;
       tracks[0].matching = { status: 'matched', final: true, target: { provider: 'tidal', url: 'https://tidal.com/track/1' } };
       await page.evaluate(() => refreshLibrary());
       await expect(page.locator('.import-track-status').first()).toContainText('Trouvé');
       await page.screenshot({ path: `/work/import-matching-${width}.png` });
-      await page.getByRole('button', { name: 'Télécharger les correspondances', exact: true }).click();
+      await page.getByRole('button', { name: 'Télécharger', exact: true }).click();
       await expect.poll(() => starts).toBe(2);
       await expect(page.locator('.import-preview-track')).toHaveCount(0);
       await expect(page.locator('.library-table-head')).toBeVisible();
-      await expect(page.locator('.import-preview-head')).toBeHidden();
+      await expect(page.locator('.import-preview-head')).toHaveCount(0);
       expect(errors).toEqual([]);
       await page.close();
-      console.log(`${width}: metadata preview, limit, search-only, live targets, explicit download`);
+      console.log(`${width}: shared table, single download, settings limit, running and matched states`);
     }
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

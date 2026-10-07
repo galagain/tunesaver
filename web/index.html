@@ -173,6 +173,7 @@
           </div>
           <div class="library-actions">
             <input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons">
+            <button id="collection-download" type="button" title="Télécharger" aria-label="Télécharger" hidden><span data-ui-icon="Download"></span><span class="download-caption">Télécharger</span></button>
             <details id="collection-menu" class="workspace-menu" hidden>
               <summary aria-label="Actions de la collection" title="Actions de la collection"><span data-ui-icon="Settings2"></span></summary>
               <div id="collection-actions" class="workspace-menu-items"></div>
@@ -184,12 +185,6 @@
         <div class="library-layout">
           <div class="library-main">
             <div id="library-content">
-            <div class="import-preview-head">
-              <button type="button" data-import-sort="number" aria-label="Trier par numéro">#</button>
-              <span></span>
-              <span class="track-title-head"><button type="button" data-import-sort="title">Titre</button><button type="button" data-import-sort="artist">Artiste</button></span>
-              <span class="track-bpm">BPM</span><span class="track-key">Clé</span><span class="track-duration">Durée</span><span></span>
-            </div>
             <div class="library-table-head">
               <button type="button" data-track-sort="number" aria-label="Trier par numéro">#</button>
               <span></span>

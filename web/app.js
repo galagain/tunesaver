@@ -1211,12 +1211,45 @@ function collectionRowLabel(button, name, count) {
   button.append(label, total);
 }
 
+const downloadingCollections = new Set();
+
+document.querySelector('#collection-download').addEventListener('click', async () => {
+  const id = selectedPlaylistId;
+  if (!id || downloadingCollections.has(id)) return;
+  const item = (libraryState.imports || []).find(item => item.playlist_id === id && ['pending', 'ready', 'running', 'matched'].includes(item.state));
+  if (item && ['pending', 'running'].includes(item.state)) return;
+  downloadingCollections.add(id);
+  renderCollectionActions();
+  try {
+    if (item) {
+      const maxTracks = Number(importLimits.get(item.id) || 0);
+      if (!Number.isSafeInteger(maxTracks) || maxTracks < 0) throw new Error('Nombre de titres invalide.');
+      await requestJson(`/api/playlist-imports/${item.id}/start`, { method: 'POST', body: JSON.stringify({ max_tracks: maxTracks, download: true }) });
+      importPreviews.delete(item.id);
+      await refreshLibrary();
+    } else {
+      const result = await requestJson(`/api/playlists/${id}/download-ticket`, { method: 'POST', body: '{}' });
+      if (result.skipped && !await siteDialogs.confirm(`${result.count} fichier(s) disponible(s). ${result.skipped} son(s) en cours, en échec ou indisponible(s) seront exclus. Télécharger les fichiers disponibles ?`)) return;
+      const link = document.createElement('a');
+      link.href = result.url; link.download = '';
+      document.body.append(link); link.click(); link.remove();
+      showToast('Préparation du ZIP. Le téléchargement va démarrer.');
+    }
+  } catch (error) { showToast(error.message, 'error'); }
+  finally { downloadingCollections.delete(id); renderCollectionActions(); }
+});
+
 function renderCollectionActions() {
   const collection = selectedFolderId ? 'playlist-folders' : selectedPlaylistId ? 'playlists' : selectedTagId ? 'tags' : '';
   const item = selectedFolderId ? libraryState.folders?.find(f => f.id === selectedFolderId)
     : selectedPlaylistId ? libraryState.playlists.find(p => p.id === selectedPlaylistId)
     : libraryState.tags.find(t => t.id === selectedTagId);
   const menu = document.querySelector('#collection-menu');
+  const download = document.querySelector('#collection-download');
+  const importing = (libraryState.imports || []).find(entry => entry.playlist_id === selectedPlaylistId && ['pending', 'ready', 'running', 'matched'].includes(entry.state));
+  download.hidden = collection !== 'playlists' || !item;
+  download.disabled = downloadingCollections.has(selectedPlaylistId) || Boolean(importing && ['pending', 'running'].includes(importing.state));
+  download.title = importing ? (download.disabled ? 'Téléchargement en préparation' : 'Télécharger') : 'Télécharger la playlist en ZIP';
   menu.hidden = !item;
   if (!item || menu.open) return;
   const actions = document.querySelector('#collection-actions');
@@ -1230,22 +1263,14 @@ function renderCollectionActions() {
     actions.append(download);
   }
   if (collection === 'playlists') {
-    const archive = document.createElement('button'); archive.type = 'button';
-    appendUIIcon(archive, 'LogOut');
-    archive.append(document.createTextNode('Télécharger toute la playlist'));
-    archive.addEventListener('click', async () => {
-      archive.disabled = true;
-      try {
-        const result = await requestJson(`/api/playlists/${item.id}/download-ticket`, { method: 'POST', body: '{}' });
-        if (result.skipped && !await siteDialogs.confirm(`${result.count} fichier(s) disponible(s). ${result.skipped} son(s) en cours, en échec ou indisponible(s) seront exclus. Télécharger les fichiers disponibles ?`)) return;
-        const link = document.createElement('a');
-        link.href = result.url; link.download = '';
-        document.body.append(link); link.click(); link.remove();
-        showToast('Préparation du ZIP. Le téléchargement va démarrer.');
-      } catch (error) { showToast(error.message, 'error'); }
-      finally { archive.disabled = false; }
-    });
-    actions.append(archive);
+    if (importing?.state === 'ready') {
+      const label = document.createElement('label'); label.textContent = 'Titres (0 = tous)';
+      const limit = document.createElement('input'); limit.type = 'number'; limit.min = '0'; limit.step = '1';
+      limit.className = 'import-limit'; limit.value = importLimits.get(importing.id) || '0';
+      limit.setAttribute('aria-label', 'Titres par playlist ou album, 0 pour tous');
+      limit.addEventListener('input', () => importLimits.set(importing.id, limit.value));
+      label.append(limit); actions.append(label);
+    }
     const label = document.createElement('label'); label.textContent = 'Dossier';
     const select = document.createElement('select'); select.setAttribute('aria-label', 'Déplacer la playlist dans un dossier');
     select.append(new Option('À la racine', ''));
@@ -1411,7 +1436,6 @@ function changeLibrarySort(by, toggle = false) {
   renderLibrary();
 }
 document.querySelectorAll('[data-track-sort]').forEach(button => button.addEventListener('click', () => changeLibrarySort(button.dataset.trackSort, true)));
-document.querySelectorAll('[data-import-sort]').forEach(button => button.addEventListener('click', () => changeLibrarySort(button.dataset.importSort, true)));
 
 async function moveLibraryTrack(id, targetId, after) {
   if (savingTrackOrder || id === targetId) return;
@@ -1505,7 +1529,6 @@ function renderLibrary() {
   renderCollectionActions();
   const preview = (libraryState.imports || []).find(item => item.playlist_id === selectedPlaylistId
     && ["pending", "ready", "running", "matched", "cancelled"].includes(item.state));
-  document.querySelector('#library-content').classList.toggle('is-import-preview', Boolean(preview));
   if (preview) {
     renderImportPreview(preview);
     return;
@@ -1697,9 +1720,9 @@ function renderImportPreview(item) {
   renderedTracks = [];
   const query = document.querySelector('#library-search').value.trim().toLocaleLowerCase();
   const sort = currentLibrarySort();
-  document.querySelectorAll('[data-import-sort]').forEach(button => {
-    button.setAttribute('aria-pressed', String(button.dataset.importSort === sort.by));
-    button.dataset.direction = button.dataset.importSort === sort.by ? String(sort.direction) : '';
+  document.querySelectorAll('[data-track-sort]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.trackSort === sort.by));
+    button.dataset.direction = button.dataset.trackSort === sort.by ? String(sort.direction) : '';
   });
   const renderKey = JSON.stringify(['preview', item.id, item.state, item.processed, item.activity, importPreviews.has(item.id), query, sort]);
   if (libraryTracks.renderKey === renderKey) return;
@@ -1732,11 +1755,9 @@ function renderImportPreview(item) {
   }
   const rows = tracks.map((track, index) => ({ ...track, number: index + 1 }))
     .filter(track => `${track.title} ${track.artist}`.toLocaleLowerCase().includes(query));
-  if (["title", "artist"].includes(sort.by)) {
-    rows.sort((a, b) => String(a[sort.by] || "").localeCompare(String(b[sort.by] || "")) * sort.direction);
-  } else if (sort.direction < 0) rows.reverse();
+  const orderedRows = sortedLibraryTracks(rows.map(track => ({ ...track, mix_analysis: track.matching?.candidate || track })));
   const fragment = document.createDocumentFragment();
-  for (const track of rows) {
+  for (const track of orderedRows) {
     const row = document.createElement("article");
     row.className = "library-track import-preview-track";
     const candidate = track.matching?.candidate || track;
@@ -1777,7 +1798,7 @@ function renderImportPreview(item) {
 function renderImports() {
   const area = document.querySelector("#playlist-imports");
   if (area.contains(document.activeElement) && document.activeElement.classList.contains('import-limit')) return;
-  const imports = (libraryState.imports || []).filter(item => !dismissedImports.has(item.id)
+  const imports = (libraryState.imports || []).filter(item => !dismissedImports.has(item.id) && !['ready', 'matched'].includes(item.state)
     && (!selectedPlaylistId || item.playlist_id === selectedPlaylistId));
   area.hidden = !imports.length;
   const expanded = new Set(Array.from(area.querySelectorAll("details[open]")).map(el => el.dataset.id));
@@ -1795,74 +1816,6 @@ function renderImports() {
     status.textContent = item.state === "ready" ? `${item.total} titres · Aucun téléchargement lancé`
       : `${labels[item.state] || item.state}${item.total ? ` · ${item.processed}/${item.total} · ${item.matched || 0} trouvés · ${item.queued} en file` : ""}${item.activity ? ' · ' + item.activity : ''}`;
     summary.append(name, status);
-    if (['matched', 'done', 'partial', 'cancelled'].includes(item.state)) {
-      const exportButton = document.createElement('button');
-      exportButton.type = 'button';
-      exportButton.className = 'icon-button';
-      exportButton.title = 'Exporter les correspondances JSON';
-      exportButton.setAttribute('aria-label', exportButton.title);
-      appendUIIcon(exportButton, 'Download');
-      exportButton.addEventListener('click', async event => {
-        event.preventDefault(); event.stopPropagation();
-        try {
-          const payload = await requestJson(`/api/playlist-imports/${item.id}/export`);
-          const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-          const link = document.createElement('a'); link.href = url; link.download = 'appariements.json'; link.click();
-          setTimeout(() => URL.revokeObjectURL(url), 30000);
-        } catch (error) { showToast(error.message); }
-      });
-      summary.append(exportButton);
-    }
-    if (["ready", "matched"].includes(item.state)) {
-      row.open = true;
-      row.classList.add('import-ready');
-      const limit = document.createElement('input');
-      limit.type = 'number';
-      limit.min = '0';
-      limit.step = '1';
-      limit.value = importLimits.get(item.id) || '0';
-      limit.setAttribute('aria-label', 'Titres par playlist ou album, 0 pour tous');
-      limit.title = 'Nombre de titres, 0 = tous';
-      limit.className = 'import-limit';
-      limit.addEventListener('input', () => importLimits.set(item.id, limit.value));
-      limit.addEventListener('click', event => event.stopPropagation());
-      if (item.state === 'ready') {
-        const label = document.createElement('label');
-        label.className = 'import-limit-label';
-        label.append('Titres (0 = tous)', limit);
-        summary.append(label);
-      }
-      const begin = async download => {
-        const maxTracks = limit.valueAsNumber;
-        if (!Number.isSafeInteger(maxTracks) || maxTracks < 0) { showToast('Nombre de titres invalide.'); return; }
-        await requestJson(`/api/playlist-imports/${item.id}/start`, { method: 'POST', body: JSON.stringify({ max_tracks: maxTracks, download }) });
-        importPreviews.delete(item.id);
-        await refreshLibrary();
-      };
-      if (item.state === 'ready') {
-        const match = document.createElement('button');
-        match.type = 'button';
-        match.textContent = 'Rechercher seulement';
-        match.addEventListener('click', async event => {
-          event.preventDefault(); event.stopPropagation(); match.disabled = true;
-          try { await begin(false); } catch (error) { showToast(error.message); match.disabled = false; }
-        });
-        summary.append(match);
-      }
-      const start = document.createElement("button");
-      start.type = "button";
-      start.className = "primary-button";
-      start.textContent = item.state === 'matched' ? 'Télécharger les correspondances' : "Rechercher et télécharger";
-      start.addEventListener("click", async event => {
-        event.preventDefault();
-        event.stopPropagation();
-        start.disabled = true;
-        try {
-          await begin(true);
-        } catch (error) { showToast(error.message); start.disabled = false; }
-      });
-      summary.append(start);
-    }
     if (['pending', 'running'].includes(item.state)) {
       const stop = document.createElement('button');
       stop.type = 'button'; stop.textContent = 'Arrêter';
