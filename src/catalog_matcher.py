@@ -81,9 +81,20 @@ def queries(track):
     lead = ", ".join(a.strip() for a in track.get("artist", "").split(",")
                      if not set(sources.normalized_words(a).split()) <= guests)
     simplified = f"{lead} {title}".strip()
-    primary = track.get('artist', '').split(',')[0].strip()
+    credits = sources.artist_credits(track.get('artist', ''))
+    primary = credits[0] if credits else ''
     primary_query = f'{primary} {title}'.strip()
-    return list(dict.fromkeys([full, simplified, primary_query]))
+    variants = [full, simplified, primary_query]
+    base, edition = sources.split_release_edition(title)
+    if edition and primary:
+        variants.append(f'{primary} {base}')
+    if primary:
+        variants.append(title)
+    unique = {}
+    for query in variants:
+        if query.strip():
+            unique.setdefault(sources.normalized_words(query), query)
+    return list(unique.values())
 
 
 def match_collection(collection, catalog, progress=None, on_event=None, max_tracks=0):
@@ -149,6 +160,7 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
                 for query in queries(row["input"]):
                     attempt["queries"].append(query)
                     candidates.extend(catalog.search_tracks(provider, query))
+                    attempt['candidates_checked'] = len(candidates)
                     found, ambiguous = match_track(row["input"], candidates)
                     if found:
                         row.update(status="matched", match={**found, "provider": provider, "method": "track"})

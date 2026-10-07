@@ -50,6 +50,21 @@ tous les titres d'un album natif ou d'une playlist native deja resolue.
 Les credits `feat.` places dans le champ version sont reconnus. Pour SoundCloud,
 la duree complete est utilisee, pas celle de l'extrait gratuit de 30 secondes.
 
+La comparaison gere les accents, apostrophes et caracteres non latins, les
+separateurs de collaborations et les remixeurs credits dans la liste des artistes
+ou seulement dans le nom du remix. Un nom joint comme `janedoe` peut correspondre
+a `Jane Doe` uniquement si un credit explicite permet cette equivalence.
+Les variantes `Radio Version` / `Radio Edit` et `Extended Version` / `Extended Mix`
+necessitent des durees connues avec deux secondes d'ecart maximum. Les autres
+remixes, reprises, versions live, instrumentales, accelerees ou raccourcies ne
+sont pas assimiles a l'original.
+
+En cas d'echec, le moteur essaie l'artiste principal, le titre sans etiquette
+d'edition standard, puis le titre seul. Le nom d'un remix est conserve et les
+resultats sont toujours verifies contre les metadonnees originales. Les requetes
+equivalentes sont dedupliquees et les essais s'arretent au premier appariement.
+Le rapport expose les requetes tentees et `candidates_checked` pour le diagnostic.
+
 Les candidats de recherche proviennent des resultats classes de chaque service,
 pas d'un scan exhaustif du catalogue. `not_found` signifie qu'aucun candidat
 fiable n'a ete trouve, pas une preuve d'absence du morceau sur la plateforme.
@@ -83,4 +98,5 @@ script n'impose pas de plafond au nombre de morceaux de l'entree.
 
 ```sh
 python -m unittest discover -s tests -p test_catalog_matcher.py
+python -m unittest discover -s tests -p test_matching_variations.py
 ```

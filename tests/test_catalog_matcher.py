@@ -141,7 +141,11 @@ class CatalogMatcherTests(unittest.TestCase):
 
     def test_errors_do_not_leak_tokens_or_block_fallback(self):
         catalog = mock.Mock()
-        catalog.search_tracks.side_effect = [RuntimeError("secret-token"), [], [], [track()]]
+        def search(provider, query):
+            if provider == 'tidal':
+                raise RuntimeError('secret-token')
+            return [track()] if provider == 'qobuz' else []
+        catalog.search_tracks.side_effect = search
         result = match_collection(collection(), catalog)
         self.assertNotIn("secret-token", json.dumps(result))
         self.assertEqual(result["matched"], 1)

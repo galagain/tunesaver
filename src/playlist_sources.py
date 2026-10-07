@@ -357,7 +357,12 @@ def soundcloud_playlist(url):
 def normalized_words(value):
     value = unicodedata.normalize("NFKD", value.casefold())
     value = "".join(c for c in value if not unicodedata.combining(c))
-    return " ".join(re.findall(r"[a-z0-9]+", value))
+    value = re.sub(r"(?<=\w)['\u2019\u02bc](?=\w)", '', value)
+    return " ".join(re.findall(r"[^\W_]+", value))
+
+
+def artist_credits(value):
+    return [part.strip() for part in re.split(r'[,;]|\s+(?:&|and|x|vs\.?)\s+', value, flags=re.I) if part.strip()]
 
 
 def split_featured_artists(value, aliases=None):
@@ -368,10 +373,15 @@ def split_featured_artists(value, aliases=None):
         # Ambiguous credits containing version words must not erase a remix label.
         if re.search(r"\b(remix|edit|dub|mix|live|instrumental|acoustic|extended)\b", credit, re.I):
             return match.group(0)
-        normalized = normalized_words(credit)
+        credits = artist_credits(credit)
+        normalized = normalized_words(', '.join(credits))
         guests.update(normalized.split())
         if aliases is not None:
-            aliases[normalized.replace(' ', '')] = normalized
+            for name in credits:
+                expanded = normalized_words(name)
+                compact = expanded.replace(' ', '')
+                if len(expanded.split()) > len(aliases.get(compact, '').split()):
+                    aliases[compact] = expanded
         return " "
 
     marker = r"(?:feat\.?|ft\.?|featuring)\s+"
@@ -381,25 +391,30 @@ def split_featured_artists(value, aliases=None):
     return normalized_words(value), guests
 
 
-def matching_metadata(track):
-    aliases = {}
+def matching_metadata(track, aliases=None):
+    aliases = dict(aliases or {})
     title, guests = split_featured_artists(track.get("title", ""), aliases)
+    _, original_artist_guests = split_featured_artists(track.get('artist', ''), aliases)
     mix = normalized_words(track.get("mix", ""))
-    if mix and mix not in {"original mix", "original"} and mix not in title:
+    if mix and mix not in {"original mix", "original"} and not re.search(r'\b' + re.escape(mix) + r'\b', title):
         title += " " + mix
     # Spotify also credits remixers as artists; other catalogs keep them only
     # in the version label. The full remix title is still compared below.
     credits = []
-    for index, credit in enumerate(track.get('artist', '').split(',')):
+    all_credits = artist_credits(track.get('artist', ''))
+    for credit in all_credits:
         name = normalized_words(credit)
-        if index and name and re.search(r'\b' + re.escape(name) + r' (?:remix|edit|dub)\b', title):
+        if name and re.search(r'\b' + re.escape(name) + r' (?:remix|edit|dub)\b', title):
             continue
         credits.append(credit)
-    artist, artist_guests = split_featured_artists(', '.join(credits), aliases)
+    artist, artist_guests = split_featured_artists(', '.join(credits or all_credits), aliases)
     for compact, expanded in aliases.items():
         artist = re.sub(r'\b' + re.escape(compact) + r'\b', lambda _: expanded, artist)
     title = " ".join(re.sub(r"\b(original mix|original version)\b", "", title).split())
-    return title, set(artist.split()), guests | artist_guests
+    guest_words = set()
+    for guest in guests | artist_guests | original_artist_guests:
+        guest_words.update(aliases.get(guest, guest).split())
+    return title, set(artist.split()), guest_words
 
 
 def matching_duration(value):
@@ -427,7 +442,14 @@ def matching_track(track, candidates):
     reference_duration = matching_duration(track.get("duration"))
     matches = []
     for index, candidate in enumerate(candidates):
-        other_title, other_artist, other_guests = matching_metadata(candidate)
+        # Use only explicit featured credits to equate joined/spaced names on
+        # either side; never infer arbitrary artist aliases from a similar title.
+        aliases = {}
+        for item in (track, candidate):
+            for field in ('title', 'artist'):
+                split_featured_artists(item.get(field, ''), aliases)
+        title, artist, guests = matching_metadata(track, aliases)
+        other_title, other_artist, other_guests = matching_metadata(candidate, aliases)
         seconds = matching_duration(candidate.get("duration"))
         difference = abs(reference_duration - seconds) if reference_duration and seconds else None
         if difference is not None and difference > 12:
@@ -436,8 +458,11 @@ def matching_track(track, candidates):
             base, edition = split_release_edition(title)
             other_base, other_edition = split_release_edition(other_title)
             # Some catalogs omit standard release labels. Accept a missing label
-            # only with near-identical durations; never equate two explicit editions.
-            if (base != other_base or bool(edition) == bool(other_edition)
+            # only with near-identical durations. Explicit editions must be
+            # the same standard label, not e.g. a radio edit versus an extended mix.
+            edition_aliases = {'radio version': 'radio edit', 'extended version': 'extended mix'}
+            equivalent = bool(edition and other_edition) and edition_aliases.get(edition, edition) == edition_aliases.get(other_edition, other_edition)
+            if (base != other_base or (bool(edition) == bool(other_edition) and not equivalent)
                     or difference is None or difference > 2):
                 continue
         if guests and other_guests and len(guests & other_guests) / max(len(guests), len(other_guests)) < 0.8:
