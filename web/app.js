@@ -767,7 +767,7 @@ async function searchDirect(query) {
 
 async function enqueueList(links) {
   for (const url of links) {
-    const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url }) });
+    const imported = await requestJson("/api/playlist-imports", { method: "POST", body: JSON.stringify({ url, auto_download: true }) });
     selectedPlaylistId = imported.playlist_id || '';
     selectedTagId = "";
     selectedFolderId = "";
@@ -797,7 +797,7 @@ async function groupSearchInPlaylist(query, lines) {
   const name = await siteDialogs.prompt('Nom de la playlist', lines.every(isMusicURL) ? 'Nouvelle playlist' : query.slice(0, 80), { maxLength: 80 });
   if (name === null) return;
   if (!name.trim()) throw new Error('Donne un nom à la playlist.');
-  const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ urls: links, name: name.trim() }) });
+  const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ urls: links, name: name.trim(), auto_download: true }) });
   selectedPlaylistId = imported.playlist_id; selectedTagId = selectedFolderId = '';
   resultsSection.hidden = true;
   await refreshLibrary(); setWorkspaceView('library');
@@ -807,6 +807,53 @@ async function groupSearchInPlaylist(query, lines) {
 function isMusicURL(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
+
+function hasDroppedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+window.addEventListener('dragover', event => {
+  if (!hasDroppedFiles(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = appView.hidden ? 'none' : 'copy';
+  document.body.classList.toggle('file-drop-active', !appView.hidden);
+}, true);
+window.addEventListener('dragleave', event => {
+  if (!event.relatedTarget) document.body.classList.remove('file-drop-active');
+});
+window.addEventListener('drop', async event => {
+  if (!hasDroppedFiles(event)) return;
+  event.preventDefault(); event.stopPropagation();
+  document.body.classList.remove('file-drop-active');
+  if (appView.hidden || !session?.access_token) { showToast('Connecte-toi pour importer un fichier.', 'error'); return; }
+  if (searchButton.disabled) { showToast('Un import est déjà en cours.', 'error'); return; }
+  searchButton.disabled = searchPlaylistButton.disabled = true;
+  input.readOnly = true;
+  try {
+    const files = Array.from(event.dataTransfer.files);
+    const documents = [];
+    for (const file of files) {
+      if (!file.name.toLowerCase().endsWith('.txt') || file.size > 1024 * 1024) throw new Error('Dépose un fichier .txt UTF-8 de 1 Mo maximum.');
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer()).trim();
+      if (text.startsWith('{')) documents.push({ document: JSON.parse(text) });
+      else {
+        const links = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        if (!links.length || !links.every(isMusicURL)) throw new Error(`Le fichier ${file.name} doit contenir un lien par ligne ou une playlist TuneSaver.`);
+        documents.push({ links });
+      }
+    }
+    for (const item of documents) {
+      if (item.links) await enqueueList(item.links);
+      else {
+        const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ document: item.document, auto_download: true }) });
+        selectedPlaylistId = imported.playlist_id; selectedTagId = selectedFolderId = '';
+        await refreshLibrary(); setWorkspaceView('library');
+      }
+    }
+    showToast('Import lancé. Les fichiers déjà disponibles seront réutilisés.');
+  } catch (error) { showToast(error.message || 'Fichier texte illisible.', 'error'); }
+  finally { searchButton.disabled = searchPlaylistButton.disabled = false; input.readOnly = false; }
+}, true);
 
 input.addEventListener('paste', event => {
   if (searchButton.disabled) { event.preventDefault(); return; }
@@ -1169,7 +1216,7 @@ function makeCollectionExportButton(item, collection) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "collection-rename collection-export";
-  button.title = "Exporter les liens téléchargés";
+  button.title = "Exporter la playlist (.txt)";
   button.setAttribute("aria-label", `${button.title} : ${item.name}`);
   import("/vendor/mixer-icons.js").then(({ createElement, LogOut }) => {
     const icon = createElement(LogOut);
@@ -1179,12 +1226,12 @@ function makeCollectionExportButton(item, collection) {
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
-      const result = await requestJson(`/api/${collection}/${item.id}/export`);
+      const result = await requestJson(`/api/${collection}/${item.id}/export?format=tunesaver`);
       if (!result.links.length) {
         showToast("Aucun lien de morceau téléchargé à exporter.", "error");
         return;
       }
-      const blob = new Blob([result.links.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
+      const blob = new Blob([result.text || result.links.join("\n") + "\n"], { type: "text/plain;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       const name = result.name.replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, "_").trim().slice(0, 80);
@@ -1284,7 +1331,7 @@ function renderCollectionActions() {
   actions.append(rename);
   if (collection !== 'playlist-folders') {
     const download = makeCollectionExportButton(item, collection);
-    download.append(document.createTextNode('Exporter les liens'));
+    download.append(document.createTextNode('Exporter la playlist (.txt)'));
     actions.append(download);
   }
   if (collection === 'playlists') {

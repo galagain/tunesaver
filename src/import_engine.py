@@ -1,5 +1,6 @@
 """Persistent website imports backed by the same metadata matcher as the CLI."""
 import json
+import math
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -11,7 +12,31 @@ class ImportStopped(BaseException):
     pass
 
 
+def playlist_document(value):
+    if not isinstance(value, dict) or value.get('format') != 'tunesaver-playlist' or value.get('version') != 1:
+        raise ValueError('Format de playlist TuneSaver inconnu.')
+    name, rows = value.get('name'), value.get('tracks')
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80 or not isinstance(rows, list) or not rows:
+        raise ValueError('Nom ou morceaux de playlist invalides.')
+    tracks = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError('Morceau de playlist invalide.')
+        url, title, artist = row.get('url'), row.get('title'), row.get('artist', '')
+        if not isinstance(url, str) or not url.startswith('https://') or not is_single_track(url):
+            raise ValueError('Chaque morceau doit avoir un lien HTTPS de musique valide.')
+        if not isinstance(title, str) or not title.strip() or len(title) > 200 or not isinstance(artist, str) or len(artist) > 200:
+            raise ValueError('Titre ou artiste invalide.')
+        duration = row.get('duration_seconds')
+        if duration is not None and (type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0):
+            raise ValueError('Duree invalide.')
+        tracks.append({'title': title, 'artist': artist, 'duration_seconds': duration, 'url': url})
+    return {'format': 'tunesaver-playlist', 'version': 1, 'name': name.strip(), 'tracks': tracks}
+
+
 def identify(value):
+    if isinstance(value, str) and value.lstrip().startswith('{'):
+        return 'document', json.dumps(playlist_document(json.loads(value)), ensure_ascii=False)
     if isinstance(value, str) and value.lstrip().startswith('['):
         values = json.loads(value)
         if not isinstance(values, list) or not values or not all(isinstance(item, str) and not item.lstrip().startswith('[') for item in values):
@@ -51,6 +76,12 @@ def identify(value):
 
 def read(value):
     provider, canonical = identify(value)
+    if provider == 'document':
+        document = json.loads(canonical)
+        tracks = [{'title': row['title'], 'artist': row['artist'], 'duration': row['duration_seconds'],
+            'provider': identify(row['url'])[0], 'source_url': row['url'], 'download_url': row['url']}
+            for row in document['tracks']]
+        return {'name': document['name'], 'kind': 'playlist', 'provider': provider, 'source': canonical, 'total': len(tracks), 'tracks': tracks}
     if provider == 'group':
         tracks, seen = [], set()
         for source in json.loads(canonical):
@@ -72,7 +103,7 @@ def read(value):
 
 def is_single_track(value):
     provider, canonical = identify(value)
-    if provider == 'group':
+    if provider in {'group', 'document'}:
         return False
     if provider == 'manual':
         return True
@@ -99,8 +130,6 @@ def add_single_track(api, owner, value):
     if not target:
         raise api.PublicError('Correspondance sans lien de telechargement.', status=422)
     provider = 'tiddl' if target['provider'] == 'tidal' else target['provider']
-    if not api.worker_is_active(provider):
-        raise api.PublicError('La source de telechargement est arretee.', status=503)
     job_id = api.enqueue_import_track({'user_id': owner, 'playlist_id': None},
         {**candidate, 'provider': provider, 'download_url': target['url']})
     return {'job_id': job_id, 'kind': 'track', 'playlist_id': None}
@@ -157,8 +186,6 @@ def process(api, record):
         if not target:
             raise ValueError('Correspondance sans lien natif valide.')
         provider = 'tiddl' if target['provider'] == 'tidal' else target['provider']
-        if not api.worker_is_active(provider):
-            raise ValueError('La source de telechargement est arretee.')
         job = api.enqueue_import_track(record, {**candidate, 'provider': provider, 'download_url': target['url']})
         tracks[index]['matching']['job_id'] = job
         queued += 1

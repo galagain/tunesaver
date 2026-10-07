@@ -49,7 +49,7 @@ const { chromium, expect } = require('@playwright/test');
       await page.locator('#action-dialog-input').fill('Mixed links');
       await page.locator('#action-dialog-submit').click();
       await expect(page.locator('#search-view')).toBeHidden();
-      expect(submissions[0]).toEqual({ urls, name: 'Mixed links' });
+      expect(submissions[0]).toEqual({ urls, name: 'Mixed links', auto_download: true });
       await page.locator('#search-nav').click();
       await page.locator('#search-input').fill('Artist');
       await page.locator('#search-button').click();

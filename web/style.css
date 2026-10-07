@@ -2372,5 +2372,6 @@ body:has(#app-view:not([hidden])) > .site-header { display: none; }
 #search-view .source-link { width: 30px; flex-shrink: 0; }
 #search-view .search-box { grid-template-columns: minmax(0, 1fr) 34px 34px; }
 #search-view #search-playlist-button { width: 34px; padding: 0; background: transparent; color: #b4d7ca; border-color: #484848; }
+body.file-drop-active::after { content: ''; position: fixed; inset: 5px; z-index: 1000; pointer-events: none; border: 2px solid #a3dac7; }
 @media(max-width:1100px) { #search-view .result-card { grid-template-columns: 40px 34px minmax(80px, 1fr) 132px; } #search-view .result-details { display: none; } }
 @media(max-width:700px) { #search-view .result-card { grid-template-columns: 40px 34px minmax(0, 1fr); gap: 6px 8px; padding: 8px; } #search-view .result-actions { grid-column: 3; justify-content: flex-start; } }

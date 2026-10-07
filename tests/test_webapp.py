@@ -1083,7 +1083,8 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200)
                 self.assertIn("attachment", response.headers["Content-Disposition"])
                 with zipfile.ZipFile(io.BytesIO(await response.read())) as archive:
-                    self.assertEqual(archive.namelist(), ["001 - same.flac", "002 - same.flac"])
+                    self.assertEqual(archive.namelist(), ["playlist.txt", "001 - same.flac", "002 - same.flac"])
+                    self.assertEqual(json.loads(archive.read('playlist.txt'))['name'], 'Ma playlist')
                     self.assertEqual(archive.read("001 - same.flac"), b"second-audio")
                     self.assertEqual(archive.read("002 - same.flac"), b"first-audio")
                 self.assertTrue(first.exists())

@@ -28,7 +28,7 @@ from urllib.parse import quote, urlparse
 
 import requests
 from aiohttp import web
-from mutagen import File as MutagenFile
+from mutagen import File as MutagenFile, MutagenError
 
 import musicdl
 import mixer_analysis
@@ -60,7 +60,7 @@ BEATPORT_SEARCH_URL = "https://api.beatport.com/v4/catalog/search/"
 RESULT_LIMIT = 8
 SEARCH_TEXT_LIMIT = 200
 DIRECT_LINK_LIMIT = 2048
-JSON_BODY_LIMIT = 131072
+JSON_BODY_LIMIT = 2 * 1024 * 1024
 STATUS_CACHE_SECONDS = 3
 PROVIDER_STATUS_SECONDS = 60
 AUTH_CACHE_SECONDS = 60
@@ -2186,8 +2186,17 @@ async def search_handler(request: web.Request) -> web.Response:
     return web.json_response({"query": query, "results": results, "errors": errors})
 
 
-def existing_job(provider: str, url: str, owner_id: str | None = None) -> str | None:
-    for state in ("pending", "running"):
+def resource_identity(provider: str, value: str) -> tuple[str, str] | None:
+    try:
+        value = musicdl.validate_url(provider, value)
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return resource_kind(provider, value), urlparse(value).path.rstrip('/').rsplit('/', 1)[-1]
+
+
+def existing_job(provider: str, url: str, owner_id: str | None = None, *, completed: bool = False) -> str | None:
+    identity = resource_identity(provider, url)
+    for state in (("pending", "running", "done") if completed else ("pending", "running")):
         directory = musicdl.QUEUE_ROOT / state / provider
         for path in directory.glob("*.json"):
             try:
@@ -2198,8 +2207,11 @@ def existing_job(provider: str, url: str, owner_id: str | None = None) -> str | 
                 if owner_id is not None and payload.get("owner_id") != owner_id:
                     continue
                 urls = payload.get("urls", [])
-                if isinstance(urls, list) and url in urls:
-                    return str(payload.get("id") or path.stem)
+                if isinstance(urls, list) and identity is not None and any(
+                        resource_identity(provider, candidate) == identity for candidate in urls):
+                    job_id = str(payload.get("id") or path.stem)
+                    if state != "done" or (owner_id is not None and delivery_for_job(job_id, owner_id)):
+                        return job_id
     return None
 
 
@@ -2250,18 +2262,15 @@ async def download_handler(request: web.Request) -> web.Response:
         raise PublicError(
             "Confirmez explicitement le téléchargement de cette ressource complète."
         )
-    if not worker_is_active(provider):
-        raise SourceError(
-            f"Le worker {PLATFORM_NAMES[provider]} n'est pas démarré. "
-            f"Lancez ./musicdl start {provider}."
-        )
     metadata = display_metadata(payload, kind)
     owner_id = request["user"]["id"]
 
     with musicdl.provider_lock(provider, "enqueue"):
-        job_id = existing_job(provider, url, owner_id)
+        job_id = existing_job(provider, url, owner_id, completed=True)
         duplicate = job_id is not None
         if job_id is None:
+            if not worker_is_active(provider):
+                raise SourceError(f"Le worker {PLATFORM_NAMES[provider]} n'est pas démarré.")
             job_id = musicdl.enqueue(
                 provider,
                 [url],
@@ -2724,7 +2733,11 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     try:
         import import_engine
-        if 'urls' in payload:
+        if 'document' in payload:
+            document = import_engine.playlist_document(payload['document'])
+            provider, url = import_engine.identify(json.dumps(document))
+            payload['name'] = document['name']
+        elif 'urls' in payload:
             links = payload['urls']
             if not isinstance(links, list) or not links:
                 raise ValueError('Liste de liens invalide.')
@@ -2734,6 +2747,9 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
     except (playlist_sources.PlaylistError, ValueError) as exc:
         raise PublicError(str(exc)) from exc
     name = payload.get('name')
+    automatic = payload.get('auto_download', False)
+    if type(automatic) is not bool:
+        raise PublicError('Option de telechargement invalide.')
     if name is not None and (not isinstance(name, str) or not name.strip() or len(name.strip()) > 80):
         raise PublicError('Nom de playlist invalide (80 caracteres maximum).')
     user_id = request["user"]["id"]
@@ -2749,6 +2765,12 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
         existing = db.execute("select id, playlist_id from playlist_imports where user_id = ? "
                               "and source_url = ? and state in ('pending', 'ready', 'running')", (user_id, url)).fetchone()
         if existing:
+            if automatic:
+                row = db.execute('select tracks, state from playlist_imports where id=?', (existing['id'],)).fetchone()
+                tracks = json.loads(row['tracks']) or [{}]
+                tracks[0].setdefault('_import', {}).update(auto_download=True, download=True)
+                db.execute('update playlist_imports set tracks=?, state=? where id=?',
+                           (json.dumps(tracks), 'running' if row['state'] == 'ready' else row['state'], existing['id']))
             return web.json_response(dict(existing), status=202)
         count = db.execute("select count(*) from playlist_imports where user_id = ? "
                            "and state in ('pending', 'running')", (user_id,)).fetchone()[0]
@@ -2759,6 +2781,9 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
                    (playlist_id, user_id, name.strip() if name else f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}", utc_timestamp()))
         db.execute("insert into playlist_imports (id, user_id, playlist_id, source_url, created_at) "
                    "values (?, ?, ?, ?, ?)", (import_id, user_id, playlist_id, url, utc_timestamp()))
+        if automatic:
+            db.execute('update playlist_imports set tracks=? where id=?',
+                       (json.dumps([{'_import': {'auto_download': True}}]), import_id))
     return web.json_response({"id": import_id, "playlist_id": playlist_id}, status=202)
 
 
@@ -2826,17 +2851,10 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
     with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
         if record.get('playlist_id') and not local_playlist_has_owner(db, record["playlist_id"], owner):
             raise PublicError("La playlist a ete supprimee.")
-        job_id = existing_job(provider, url, owner)
+        job_id = existing_job(provider, url, owner, completed=True)
         if not job_id:
-            for path in (musicdl.QUEUE_ROOT / "done" / provider).glob("*.json"):
-                try:
-                    job = json.loads(path.read_text())
-                    if job.get("owner_id") == owner and url in job.get("urls", []) and delivery_for_job(path.stem, owner):
-                        job_id = path.stem
-                        break
-                except (OSError, ValueError):
-                    continue
-        if not job_id:
+            if not worker_is_active(provider):
+                raise PublicError('La source de telechargement est arretee.', status=503)
             job_id = musicdl.enqueue(provider, [url], owner_id=owner, ephemeral=True,
                                      metadata={"title": result["title"][:200], "artist": result.get("artist", "")[:200], "kind": "track"})
         db.execute("delete from library_removed where user_id = ? and job_id = ?", (owner, job_id))
@@ -2851,22 +2869,24 @@ async def process_playlist_import(app: web.Application, record: dict[str, Any]) 
         return
     tracks = json.loads(record["tracks"])
     source_warning = record["error"]
-    if not tracks:
+    automatic = bool(tracks and tracks[0].get('_import', {}).get('auto_download'))
+    if not tracks or (len(tracks) == 1 and 'title' not in tracks[0]):
         payload = await asyncio.to_thread(read_import_source, record["source_url"])
         tracks = payload["tracks"]
-        tracks[0]['_import'] = {'name': payload['name'], 'kind': payload.get('kind', 'playlist')}
+        tracks[0]['_import'] = {'name': payload['name'], 'kind': payload.get('kind', 'playlist'), 'auto_download': automatic}
         source_warning = payload.get("warning", "")
         with local_db() as db:
             import import_engine
             provider = import_engine.identify(record["source_url"])[0]
             db.execute("update playlists set name = ? where id = ? and name = ?",
                        (payload["name"][:80], record["playlist_id"], f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}"))
-            db.execute("update playlist_imports set tracks = ?, error = ?, state = 'ready' where id = ? and state = 'pending'",
-                       (json.dumps(tracks), source_warning, record["id"]))
+            db.execute("update playlist_imports set tracks = ?, error = ?, state = ? where id = ? and state = 'pending'",
+                       (json.dumps(tracks), source_warning, 'running' if automatic else 'ready', record["id"]))
         return
     if record["state"] == "pending":
         with local_db() as db:
-            db.execute("update playlist_imports set state = 'ready' where id = ?", (record["id"],))
+            db.execute("update playlist_imports set state = ? where id = ?",
+                       ('running' if automatic else 'ready', record["id"]))
         return
     import import_engine
     await asyncio.to_thread(import_engine.process, sys.modules[__name__], record)
@@ -2960,14 +2980,14 @@ async def library_order_handler(request: web.Request) -> web.Response:
     return web.json_response({"saved": True})
 
 
-def local_collection_export(user_id: str, collection_id: str, *, tag: bool = False) -> dict[str, Any]:
+def local_collection_export(user_id: str, collection_id: str, *, tag: bool = False, detailed: bool = False) -> dict[str, Any]:
     table, items, key, label = ("tags", "tag_items", "tag_id", "Tag") if tag else ("playlists", "playlist_items", "playlist_id", "Playlist")
     with local_db() as db:
         collection = db.execute(f"select name from {table} where id=? and user_id=?",
                                 (collection_id, user_id)).fetchone()
         if not collection:
             raise PublicError(f"{label} introuvable.", status=404)
-        rows = db.execute(f"""select p.job_id, h.source_url, h.state from {items} p
+        rows = db.execute(f"""select p.job_id, h.source_url, h.state, h.title, h.artist from {items} p
           left join download_history h on h.job_id=p.job_id and h.user_id=?
           where p.{key}=? order by p.created_at, p.rowid""",
                           (user_id, collection_id)).fetchall()
@@ -2976,24 +2996,43 @@ def local_collection_export(user_id: str, collection_id: str, *, tag: bool = Fal
         if order:
             ranks = {job: i for i, job in enumerate(json.loads(order["track_ids"]))}
             rows.sort(key=lambda row: ranks.get(row["job_id"], len(ranks)))
-    links = []
+    links, tracks = [], []
+    analyses = mixer_analysis.summaries(local_db, user_id) if detailed else {}
     for row in rows:
         url = str(row["source_url"] or "").strip()
-        if row["state"] != "done" or any(c.isspace() for c in url):
+        if (not detailed and row["state"] != "done") or any(c.isspace() for c in url):
             continue
         try:
             parsed = urlparse(url)
             if parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password:
+                if detailed:
+                    import import_engine
+                    if parsed.scheme != 'https' or not import_engine.is_single_track(url):
+                        continue
+                    duration = analyses.get(row['job_id'], {}).get('duration')
+                    if duration is None:
+                        delivery = delivery_for_job(row['job_id'], user_id)
+                        if delivery:
+                            try:
+                                audio = MutagenFile(delivery['path'])
+                                duration = float(audio.info.length) if audio else None
+                            except (OSError, ValueError, AttributeError, MutagenError):
+                                pass
+                    tracks.append({'title': row['title'] or url, 'artist': row['artist'] or '', 'duration_seconds': duration, 'url': url})
                 links.append(url)
         except ValueError:
             continue
-    return {"name": collection["name"], "links": links, "skipped": len(rows) - len(links)}
+    result = {"name": collection["name"], "links": links, "skipped": len(rows) - len(links)}
+    if detailed:
+        result['text'] = json.dumps({'format': 'tunesaver-playlist', 'version': 1, 'name': collection['name'], 'tracks': tracks}, ensure_ascii=False, indent=2) + '\n'
+    return result
 
 
 async def collection_export_handler(request: web.Request) -> web.Response:
     tag = "tag_id" in request.match_info
     result = await asyncio.to_thread(local_collection_export, request["user"]["id"],
-                                     request.match_info["tag_id" if tag else "playlist_id"], tag=tag)
+                                     request.match_info["tag_id" if tag else "playlist_id"], tag=tag,
+                                     detailed=request.query.get('format') == 'tunesaver')
     return web.json_response(result)
 
 
@@ -3060,9 +3099,12 @@ class ZipOutput:
         return data
 
 
-def playlist_zip_chunks(files):
+def playlist_zip_chunks(files, manifest=None):
     target = ZipOutput()
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+        if manifest is not None:
+            archive.writestr('playlist.txt', manifest)
+            yield target.take()
         for item in files:
             member = item["member"]
             filename = Path((member.filename if member else item["name"]).replace("\\", "/")).name
@@ -3100,7 +3142,8 @@ async def playlist_files_handler(request: web.Request) -> web.StreamResponse:
             "Cache-Control": "no-store",
         })
         _security_headers(response, request)
-        chunks = playlist_zip_chunks(result["files"])
+        exported = await asyncio.to_thread(local_collection_export, ticket['user_id'], ticket['playlist_id'], detailed=True)
+        chunks = playlist_zip_chunks(result["files"], exported['text'])
         try:
             await response.prepare(request)
             while True:
