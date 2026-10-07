@@ -2724,9 +2724,18 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     try:
         import import_engine
-        provider, url = import_engine.identify(payload.get("url"))
+        if 'urls' in payload:
+            links = payload['urls']
+            if not isinstance(links, list) or not links:
+                raise ValueError('Liste de liens invalide.')
+            provider, url = import_engine.identify(json.dumps(links))
+        else:
+            provider, url = import_engine.identify(payload.get("url"))
     except (playlist_sources.PlaylistError, ValueError) as exc:
         raise PublicError(str(exc)) from exc
+    name = payload.get('name')
+    if name is not None and (not isinstance(name, str) or not name.strip() or len(name.strip()) > 80):
+        raise PublicError('Nom de playlist invalide (80 caracteres maximum).')
     user_id = request["user"]["id"]
     if import_engine.is_single_track(url):
         semaphore = request.app[SEARCH_SEMAPHORES_KEY].get(provider, request.app[SEARCH_SEMAPHORES_KEY]['tiddl'])
@@ -2747,7 +2756,7 @@ async def playlist_import_handler(request: web.Request) -> web.Response:
             raise PublicError("Trois imports sont deja en cours. Attendez leur fin.", status=429)
         import_id, playlist_id = str(uuid.uuid4()), str(uuid.uuid4())
         db.execute("insert into playlists (id, user_id, name, created_at) values (?, ?, ?, ?)",
-                   (playlist_id, user_id, f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}", utc_timestamp()))
+                   (playlist_id, user_id, name.strip() if name else f"Import {playlist_sources.SOURCE_LABELS.get(provider, provider.title())}", utc_timestamp()))
         db.execute("insert into playlist_imports (id, user_id, playlist_id, source_url, created_at) "
                    "values (?, ?, ?, ?, ?)", (import_id, user_id, playlist_id, url, utc_timestamp()))
     return web.json_response({"id": import_id, "playlist_id": playlist_id}, status=202)

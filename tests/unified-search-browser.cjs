@@ -35,7 +35,7 @@ const {chromium, expect} = require('@playwright/test');
       await page.evaluate(() => {session = {access_token: 'fixture'}; showApp(); clearInterval(queueTimer);});
       await page.locator('#search-nav').click();
       await expect(page.locator('#search-view textarea')).toHaveCount(1);
-      await expect(page.locator('#search-form button')).toHaveCount(1);
+      await expect(page.locator('#search-form button')).toHaveCount(2);
       await page.screenshot({path: `/work/unified-search-${width}.png`});
       const urls = [
         'https://open.spotify.com/playlist/57HAIqxdHbi332994xcOKc',
@@ -71,7 +71,7 @@ const {chromium, expect} = require('@playwright/test');
       expect(await page.locator('#search-input').evaluate(e => e.readOnly)).toBe(false);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       expect(errors).toEqual([]);
-      console.log(`${width}: single field, automatic paste for all link types, duplicate guard, errors OK`);
+      console.log(`${width}: single field, pasted links with explicit submit, duplicate guard, errors OK`);
       await page.close();
     }
   } finally {await browser.close();}

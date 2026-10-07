@@ -12,6 +12,11 @@ class ImportStopped(BaseException):
 
 
 def identify(value):
+    if isinstance(value, str) and value.lstrip().startswith('['):
+        values = json.loads(value)
+        if not isinstance(values, list) or not values or not all(isinstance(item, str) and not item.lstrip().startswith('[') for item in values):
+            raise ValueError('Liste de liens invalide.')
+        return 'group', json.dumps(list(dict.fromkeys(identify(item)[1] for item in values)))
     if not isinstance(value, str) or not value.strip() or len(value) > 2000:
         raise ValueError("Saisissez un lien ou Artiste - Titre.")
     value = value.strip()
@@ -45,7 +50,19 @@ def identify(value):
 
 
 def read(value):
-    identify(value)
+    provider, canonical = identify(value)
+    if provider == 'group':
+        tracks, seen = [], set()
+        for source in json.loads(canonical):
+            collection = read(source)
+            for track in collection['tracks']:
+                key = track.get('download_url') or track.get('source_url') or json.dumps([track.get('artist'), track.get('title'), track.get('duration')])
+                if key not in seen:
+                    seen.add(key)
+                    tracks.append(track)
+        if not tracks:
+            raise ValueError('Aucun morceau dans ces liens.')
+        return {'name': 'Playlist regroupée', 'kind': 'playlist', 'provider': 'group', 'source': canonical, 'total': len(tracks), 'tracks': tracks}
     payload = matcher.read_input(value, matcher.Catalog())
     tracks = payload['tracks']
     if not tracks or payload.get('total', len(tracks)) != len(tracks):
@@ -55,6 +72,8 @@ def read(value):
 
 def is_single_track(value):
     provider, canonical = identify(value)
+    if provider == 'group':
+        return False
     if provider == 'manual':
         return True
     try:

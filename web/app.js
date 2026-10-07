@@ -38,6 +38,9 @@ const userEmail = document.querySelector("#user-email");
 const form = document.querySelector("#search-form");
 const input = document.querySelector("#search-input");
 const searchButton = document.querySelector("#search-button");
+const searchPlaylistButton = document.querySelector('#search-playlist-button');
+const searchResultsByProvider = new Map();
+let lastTextSearch = '';
 const searchMessage = document.querySelector("#search-message");
 const resultsSection = document.querySelector("#results-section");
 const queueSection = document.querySelector("#queue-section");
@@ -408,6 +411,7 @@ function clearCoverCache() {
 }
 
 function showAuth(message = "") {
+  searchResultsByProvider.clear(); lastTextSearch = '';
   cancelTrackMove();
   librarySorts.clear();
   siteDialogs.cancel();
@@ -712,6 +716,7 @@ function makeResultCard(result, index = 0) {
 }
 
 function renderPlatform(provider, results) {
+  searchResultsByProvider.set(provider, results);
   const elements = platformElements(provider);
   elements.results.replaceChildren();
   elements.count.textContent = results.length ? `${results.length} résultat${results.length > 1 ? "s" : ""}` : "";
@@ -774,6 +779,31 @@ async function enqueueList(links) {
   setWorkspaceView('library');
 }
 
+async function groupSearchInPlaylist(query, lines) {
+  let links = lines;
+  if (!lines.every(isMusicURL)) {
+    if (lines.length !== 1) throw new Error('Colle un lien par ligne pour les regrouper.');
+    if (lastTextSearch !== query || !searchResultsByProvider.size) {
+      searchResultsByProvider.clear(); lastTextSearch = query;
+      resultsSection.hidden = false;
+      for (const provider of providers) setPlatformLoading(provider);
+      await Promise.allSettled(providers.map(provider => searchProvider(query, provider)));
+    }
+    if (searchResultsByProvider.size !== providers.length) throw new Error('Une source est inaccessible. Relance la recherche avant de regrouper tous les résultats.');
+    links = [...searchResultsByProvider.values()].flat().map(result => result.download_url).filter(Boolean);
+  }
+  links = [...new Set(links)];
+  if (!links.length) throw new Error('Aucun morceau à regrouper.');
+  const name = await siteDialogs.prompt('Nom de la playlist', lines.every(isMusicURL) ? 'Nouvelle playlist' : query.slice(0, 80), { maxLength: 80 });
+  if (name === null) return;
+  if (!name.trim()) throw new Error('Donne un nom à la playlist.');
+  const imported = await requestJson('/api/playlist-imports', { method: 'POST', body: JSON.stringify({ urls: links, name: name.trim() }) });
+  selectedPlaylistId = imported.playlist_id; selectedTagId = selectedFolderId = '';
+  resultsSection.hidden = true;
+  await refreshLibrary(); setWorkspaceView('library');
+  showToast('Les titres seront regroupés dans cette playlist.');
+}
+
 function isMusicURL(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
@@ -785,7 +815,6 @@ input.addEventListener('paste', event => {
   if (!lines?.length || !lines.every(isMusicURL)) return;
   event.preventDefault();
   input.value = lines.join('\n');
-  form.requestSubmit();
 });
 
 input.addEventListener("keydown", (event) => {
@@ -811,17 +840,24 @@ form.addEventListener("submit", async (event) => {
   }
   searchMessage.textContent = "";
   searchButton.disabled = true;
+  searchPlaylistButton.disabled = true;
   input.readOnly = true;
   searchButton.setAttribute('aria-busy', 'true');
   try {
+    if (event.submitter === searchPlaylistButton) {
+      await groupSearchInPlaylist(query, lines);
+      return;
+    }
     if (lines.length > 1 || isMusicURL(query)) {
       await enqueueList(lines);
       return;
     }
     resultsSection.hidden = false;
     if (looksLikeDirectLink(query)) {
+      searchResultsByProvider.clear(); lastTextSearch = '';
       await searchDirect(query);
     } else {
+      searchResultsByProvider.clear(); lastTextSearch = query;
       for (const provider of providers) setPlatformLoading(provider);
       await Promise.allSettled(providers.map((provider) => searchProvider(query, provider)));
     }
@@ -829,6 +865,7 @@ form.addEventListener("submit", async (event) => {
     searchMessage.textContent = error.message;
   } finally {
     searchButton.disabled = false;
+    searchPlaylistButton.disabled = false;
     input.readOnly = false;
     searchButton.setAttribute('aria-busy', 'false');
   }
