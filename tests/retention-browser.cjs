@@ -35,6 +35,7 @@ const { chromium, expect } = require('@playwright/test');
       await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => { session = { access_token: 'fixture' }; showApp(); });
       await expect(page.locator('.restore-audio')).toBeVisible();
+      await expect(page.getByText('Fichier expiré · lien conservé', { exact: true })).toHaveCount(0);
       await expect(page.locator('#tag-list, #create-tag')).toHaveCount(0);
       await expect(page.getByText('Legacy tag', { exact: true })).toHaveCount(0);
       await page.evaluate(() => { selectedPlaylistId = 'playlist'; renderLibrary(); });

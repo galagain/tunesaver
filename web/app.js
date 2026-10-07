@@ -688,8 +688,6 @@ function makeResultCard(result, index = 0) {
   const details = document.createElement("p");
   details.className = "result-details";
   details.append(
-    resultInfo("BPM", result.bpm),
-    resultInfo("Clé", result.key),
     resultInfo("Durée", result.duration)
   );
   body.append(title, artist);
@@ -1577,10 +1575,6 @@ function renderLibrary() {
     const meta = document.createElement("span");
     meta.textContent = track.artist || "Artiste inconnu";
     body.append(title, meta);
-    if (track.expired) {
-      const archived = document.createElement('small'); archived.className = 'import-track-status';
-      archived.textContent = 'Fichier expiré · lien conservé'; body.append(archived);
-    }
     const actions = document.createElement("div");
     actions.className = "library-track-actions";
     const menu = document.createElement('details'); menu.className = 'workspace-menu track-menu';

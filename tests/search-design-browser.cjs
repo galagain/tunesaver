@@ -38,6 +38,8 @@ const fs = require('node:fs');
       await page.locator('#search-input').fill('Odymel');
       await page.locator('#search-input').press('Enter');
       await expect(page.locator('.result-card')).toHaveCount(9);
+      await expect(page.locator('.result-details .result-info')).toHaveCount(9);
+      for (const label of await page.locator('.result-details .result-info > span').allTextContents()) expect(label).toBe('Durée');
       await expect(page.locator('#search-button svg')).toHaveCount(1);
       await expect(page.locator('.download-button svg')).toHaveCount(9);
       for (const cover of await page.locator('.result-cover:has(img)').all()) {
