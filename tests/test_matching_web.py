@@ -45,6 +45,21 @@ class MatchingWebTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.controller.start(['; rm anything'])
 
+    def test_limit_is_validated_forwarded_and_reflected_in_totals(self):
+        for invalid in (-1, 1.5, True, '2', None):
+            with self.assertRaises(ValueError):
+                self.controller.start(['tiddl-track'], invalid)
+        scenario = self.controller.initial['tiddl-track']
+        scenario['kind'] = 'album'
+        scenario['tracks'] *= 3
+        with mock.patch.object(web.subprocess, 'Popen') as launch, mock.patch.object(web.threading.Thread, 'start'):
+            self.controller.start(['tiddl-track'], 2)
+        command = launch.call_args.args[0]
+        self.assertEqual(command[command.index('--max-tracks') + 1], '2')
+        self.assertEqual(self.controller.snapshot()['total'], 2)
+        self.assertEqual(self.controller.snapshot()['max_tracks'], 2)
+        self.assertEqual(len(self.controller.initial['tiddl-track']['tracks']), 3)
+
     def test_search_events_show_errors_and_provider_fallback(self):
         import catalog_matcher
         catalog = mock.Mock()

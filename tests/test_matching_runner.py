@@ -26,6 +26,46 @@ def candidate():
 
 
 class MatchingRunnerTests(unittest.TestCase):
+    def test_limit_keeps_album_search_complete_and_source_immutable(self):
+        original = payload('spotify', 'album')
+        original['tracks'].append({**original['tracks'][0], 'number': 2, 'title': 'Second'})
+        original['total'] = 2
+        original['_max_tracks'] = 1
+        before = copy.deepcopy(original)
+        catalog = mock.Mock()
+        catalog.search_albums.return_value = [{'name': 'Album', 'url': 'https://tidal.com/album/2',
+            'tracks': [candidate(), {**candidate(), 'title': 'Second', 'source_url': 'https://tidal.com/track/3'}]}]
+        result = runner.match_payload(original, catalog)
+        self.assertEqual(original, before)
+        self.assertEqual((result['total'], result['source_total'], result['max_tracks']), (1, 2, 1))
+        self.assertEqual(result['tracks'][0]['target']['method'], 'album')
+        self.assertNotIn('_max_tracks', result)
+        catalog.search_tracks.assert_not_called()
+        self.assertEqual(len(catalog.search_albums.call_args.args[1]['tracks']), 2)
+
+    def test_playlist_limits_and_zero_mean_all(self):
+        for limit, count in [(0, 3), (1, 1), (2, 2), (20, 3)]:
+            original = payload('spotify', 'playlist')
+            original['tracks'] = [{**original['tracks'][0], 'number': i} for i in range(1, 4)]
+            original.update(total=3, _max_tracks=limit)
+            catalog = mock.Mock()
+            catalog.search_tracks.return_value = [candidate()]
+            result = runner.match_payload(original, catalog)
+            self.assertEqual(result['total'], count)
+            self.assertEqual(catalog.search_tracks.call_count, count)
+
+    def test_tqdm_counts_each_final_track_only_once_and_closes(self):
+        with mock.patch.object(runner, 'PROGRESS', True), mock.patch.object(runner, 'EVENTS', False), mock.patch('tqdm.tqdm') as tqdm:
+            result = runner.match_payload(payload('tiddl', 'track'), mock.Mock())
+        self.assertEqual(result['total'], 1)
+        tqdm.return_value.update.assert_called_once_with(1)
+        tqdm.return_value.close.assert_called_once()
+
+    def test_web_events_do_not_create_tqdm(self):
+        with mock.patch.object(runner, 'PROGRESS', True), mock.patch.object(runner, 'EVENTS', True), mock.patch('tqdm.tqdm') as tqdm, contextlib.redirect_stderr(io.StringIO()):
+            runner.match_payload(payload('tiddl', 'track'), mock.Mock())
+        tqdm.assert_not_called()
+
     def test_all_19_configurations_without_reading_sources_or_audio(self):
         import webapp
         manifest = {"schema_version": 1, "collections": [payload(s, k) for s, k, _ in runner.CASES]}

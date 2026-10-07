@@ -22,6 +22,8 @@ Le dernier `data/playlist-tests/*/inputs.json` est charge au demarrage.
 Les metadonnees sources ne sont pas relues sur les plateformes.
 
 - Cocher les scenarios, puis **Lancer**. Une seule execution simultanee est autorisee.
+- **Titres par playlist / album** limite chaque scenario aux X premiers titres.
+  `0` (par defaut) conserve tous les titres. Les liens individuels ne changent pas.
 - Selectionner un scenario a gauche pour voir ses titres, meme avant le lancement.
 - Le compteur indique les titres definitivement traites, pas une estimation du temps.
 - Une erreur sur une plateforme n'empeche pas les tentatives sur les suivantes.
@@ -39,3 +41,19 @@ Le rapport HTML et le JSON deviennent disponibles apres le premier scenario term
 Un arret conserve ces fichiers, mais pas les resultats partiels du scenario courant.
 Recharger la page retrouve l'execution active ; redemarrer le serveur ne la reprend pas.
 Fermer un onglet ne stoppe pas le traitement. Utiliser **Arreter** ou Ctrl+C sur le serveur.
+
+## Terminal
+
+```sh
+python3 run_matching_tests.py --docker --max-tracks 5
+```
+
+Une barre `tqdm` par scenario affiche les titres definitivement traites, le temps
+et la plateforme courante. Elle est automatique dans un terminal, masquee dans
+les journaux web. `--progress` la force et `--no-progress` la masque.
+Avec Docker, `tqdm` utilise la dependance deja installee dans l'image ; sans Docker,
+elle doit etre presente dans l'environnement Python du projet.
+
+La recherche d'un album complet reste prioritaire, meme avec une limite.
+Seuls les titres selectionnes sont exportes. Les champs `source_total` et
+`max_tracks` du JSON indiquent la taille d'origine et la limite appliquee.

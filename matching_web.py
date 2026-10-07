@@ -49,8 +49,11 @@ class Controller:
         self.directory = None
         self.job = None
         self.exit_code = None
+        self.max_tracks = 0
 
-    def start(self, selected):
+    def start(self, selected, max_tracks=0):
+        if type(max_tracks) is not int or max_tracks < 0:
+            raise ValueError("La limite doit etre un entier positif ou 0 (tous).")
         if not isinstance(selected, list) or not selected or any(not isinstance(x, str) for x in selected):
             raise ValueError("Selectionnez au moins un scenario.")
         if len(set(selected)) != len(selected) or any(x not in self.initial or not self.initial[x]["available"] for x in selected):
@@ -59,14 +62,20 @@ class Controller:
             if self.status in {"running", "stopping", "cleanup_error"}:
                 raise RuntimeError("Un appariement est deja en cours.")
             self.scenarios = copy.deepcopy(self.initial)
+            self.max_tracks = max_tracks
             for identifier in selected:
                 self.scenarios[identifier]["selected"] = True
                 self.scenarios[identifier]["status"] = "queued"
+                scenario = self.scenarios[identifier]
+                scenario["source_total"] = len(scenario["tracks"])
+                if max_tracks and scenario["kind"] in {"playlist", "album"}:
+                    scenario["tracks"] = scenario["tracks"][:max_tracks]
             self.logs.clear()
             self.output.mkdir(parents=True, exist_ok=True)
             self.job = secrets.token_hex(16)
             command = [sys.executable, "-u", str(ROOT / "run_matching_tests.py"), "--docker", "--events",
                        "--input", str(self.source), "--output-dir", str(self.output)]
+            command += ["--max-tracks", str(max_tracks)]
             for identifier in selected:
                 command += ["--case", identifier]
             self.process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -192,7 +201,7 @@ class Controller:
             selected = [s for s in scenarios if s["selected"]]
             artifacts = [name for name in ("viewer.html", "inputs.json", "report.json") if self.directory and (self.directory / name).is_file()]
             return {"revision": self.revision, "status": self.status, "started": self.started, "ended": self.ended,
-                    "exit_code": self.exit_code, "scenarios": scenarios, "logs": list(self.logs), "artifacts": artifacts,
+                    "exit_code": self.exit_code, "max_tracks": self.max_tracks, "scenarios": scenarios, "logs": list(self.logs), "artifacts": artifacts,
                     "total": sum(s["total"] for s in selected), "done": sum(s["done"] for s in selected),
                     "matched": sum(s["matched"] for s in selected), "errors": sum(s["errors"] for s in selected)}
 
@@ -275,7 +284,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("Requete invalide.")
             if self.path == "/api/start":
-                self.server.controller.start(data.get("cases"))
+                self.server.controller.start(data.get("cases"), data.get("max_tracks", 0))
             elif self.path == "/api/stop":
                 self.server.controller.stop()
             else:

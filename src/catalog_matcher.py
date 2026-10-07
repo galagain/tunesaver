@@ -84,7 +84,7 @@ def queries(track):
     return list(dict.fromkeys([full, simplified]))
 
 
-def match_collection(collection, catalog, progress=None, on_event=None):
+def match_collection(collection, catalog, progress=None, on_event=None, max_tracks=0):
     def event(kind, **values):
         if on_event:
             on_event({"type": kind, **values})
@@ -96,7 +96,7 @@ def match_collection(collection, catalog, progress=None, on_event=None):
               target=direct_target(match) if match else None,
               method=match.get("method") if match else None, error="; ".join(errors))
     rows = [{"number": n, "input": track, "status": "unavailable" if track.get("unavailable") else "not_found",
-             "match": None, "attempts": []} for n, track in enumerate(collection["tracks"], 1)]
+             "match": None, "attempts": []} for n, track in enumerate(collection["tracks"][:max_tracks or None], 1)]
     album_attempts = []
     for row in rows:
         target = direct_target(row["input"])

@@ -18,6 +18,17 @@ import export_playlist
 from run_playlist_tests import CASES, validate
 
 EVENTS = False
+PROGRESS = False
+
+
+def track_limit(value):
+    try:
+        number = int(value)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError("La limite doit etre un entier positif ou 0.")
+    if number < 0:
+        raise argparse.ArgumentTypeError("La limite doit etre positive ou 0 (tous).")
+    return number
 
 
 def emit(event):
@@ -42,8 +53,30 @@ def match_payload(payload, catalog):
                 raise ValueError("Cible native invalide dans le fichier source.")
         tracks.append(track)
     collection = {"name": payload["name"], "source": payload["url"], "kind": payload["kind"], "tracks": tracks}
-    result = match_collection(collection, catalog, progress=lambda message: print(message, file=sys.stderr, flush=True),
-                              on_event=lambda event: emit({**event, "case": case_id(payload["source"], payload["kind"])}))
+    limit = payload.get("_max_tracks", 0) if payload["kind"] in {"playlist", "album"} else 0
+    total = min(len(tracks), limit) if limit else len(tracks)
+    bar = None
+    if PROGRESS and not EVENTS:
+        from tqdm import tqdm
+        bar = tqdm(total=total, desc=case_id(payload["source"], payload["kind"]), unit="son", file=sys.stderr, dynamic_ncols=True)
+    completed = set()
+
+    def on_event(event):
+        emit({**event, "case": case_id(payload["source"], payload["kind"])})
+        if bar is not None:
+            if event["type"] == "provider":
+                bar.set_postfix_str(event["provider"])
+            if event["type"] == "track_updated" and event.get("final") and event["number"] not in completed:
+                completed.add(event["number"])
+                bar.update(1)
+
+    try:
+        result = match_collection(collection, catalog,
+            progress=None if bar is not None else lambda message: print(message, file=sys.stderr, flush=True),
+            on_event=on_event, max_tracks=limit)
+    finally:
+        if bar is not None:
+            bar.close()
     output = []
     for original, row in zip(payload["tracks"], result["tracks"]):
         match = row["match"]
@@ -60,7 +93,9 @@ def match_payload(payload, catalog):
                for status in ("matched", "not_found", "ambiguous", "unavailable", "error")}
     summary.update({method: sum(t["target"] is not None and t["target"]["method"] == method for t in output)
                     for method in ("direct", "album", "track")})
-    return {**payload, "tracks": output, "matching": {"summary": summary, "album_attempts": result["album_attempts"]}}
+    return {**{k: v for k, v in payload.items() if k != "_max_tracks"}, "tracks": output, "total": len(output),
+            "source_total": payload["total"], "max_tracks": limit,
+            "matching": {"summary": summary, "album_attempts": result["album_attempts"]}}
 
 
 def docker_match(payload, image, container):
@@ -71,7 +106,8 @@ def docker_match(payload, image, container):
         if job:
             command += ["--label", f"tunesaver.matching-job={job}"]
         command += ["-v", f"{export_playlist.ROOT}:/repo:ro", "-w", "/repo", "--entrypoint", "python", image,
-                    "run_matching_tests.py", "--worker", *(["--events"] if EVENTS else [])]
+                    "run_matching_tests.py", "--worker", *(["--events"] if EVENTS else []),
+                    *(["--progress"] if PROGRESS and not EVENTS else [])]
         try:
             result = subprocess.run(command, input=json.dumps(payload), stdout=subprocess.PIPE, text=True)
         finally:
@@ -85,7 +121,7 @@ def docker_match(payload, image, container):
     return json.loads(result.stdout)
 
 
-def run_cases(manifest, directory, matcher, cases=CASES):
+def run_cases(manifest, directory, matcher, cases=CASES, max_tracks=0):
     from build_test_viewer import build_viewer
     if manifest.get("schema_version") != 1 or not isinstance(manifest.get("collections"), list):
         raise ValueError("Le fichier doit contenir les collections du schema 1.")
@@ -98,7 +134,7 @@ def run_cases(manifest, directory, matcher, cases=CASES):
     results, collections = [], []
     report = {"phase": "matching", "schema_version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
               "providers": ["tidal", "beatport", "qobuz"], "audio_downloaded": False,
-              "planned": len(cases), "tested": 0, "passed": 0, "results": results}
+              "planned": len(cases), "tested": 0, "passed": 0, "results": results, "max_tracks": max_tracks}
 
     def save():
         for filename, content in (("report.json", report), ("inputs.json", {"schema_version": 1, "collections": collections})):
@@ -116,7 +152,7 @@ def run_cases(manifest, directory, matcher, cases=CASES):
             if original is None:
                 raise ValueError("Metadonnees absentes : relancez d'abord ce test de lecture.")
             validate(original, source, kind)
-            payload = matcher(original)
+            payload = matcher({**original, "_max_tracks": max_tracks}) if max_tracks else matcher(original)
             summary = payload["matching"]["summary"]
             for format_name in ("json", "txt"):
                 export_playlist.write_output(directory / f"{identifier}.{format_name}", export_playlist.render(payload, format_name))
@@ -140,7 +176,7 @@ def run_cases(manifest, directory, matcher, cases=CASES):
 
 
 def main(argv=None):
-    global EVENTS
+    global EVENTS, PROGRESS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, help="inputs.json du test de lecture (dernier par defaut)")
     parser.add_argument("--case", action="append", dest="cases", help="Scenario, ex. spotify-album ; option repetable")
@@ -149,8 +185,14 @@ def main(argv=None):
     parser.add_argument("--output-dir", type=Path, help="Dossier parent des resultats (matching/ a cote de l'entree par defaut)")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--events", action="store_true", help="Emettre la progression JSON sur stderr")
+    parser.add_argument("--max-tracks", type=track_limit, default=0, help="Nombre de titres par playlist/album (0 = tous)")
+    progress = parser.add_mutually_exclusive_group()
+    progress.add_argument("--progress", dest="progress", action="store_true", help="Forcer la barre tqdm")
+    progress.add_argument("--no-progress", dest="progress", action="store_false", help="Masquer la barre tqdm")
+    parser.set_defaults(progress=None)
     args = parser.parse_args(argv)
     EVENTS = args.events
+    PROGRESS = args.progress if args.progress is not None else sys.stderr.isatty()
     try:
         if args.worker:
             from catalog_matcher import Catalog
@@ -186,7 +228,7 @@ def main(argv=None):
             catalog = Catalog()
             matcher = lambda payload: match_payload(payload, catalog)
         print(f"Entree : {source}\nResultats : {directory}", flush=True)
-        report = run_cases(manifest, directory, matcher, cases)
+        report = run_cases(manifest, directory, matcher, cases, max_tracks=args.max_tracks)
         print(f"Bilan : {report['passed']}/{report['tested']} scenarios entierement apparies.\nVisualisation : {directory / 'viewer.html'}")
         return int(report["passed"] != report["tested"])
     except KeyboardInterrupt:
