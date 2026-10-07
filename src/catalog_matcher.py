@@ -18,6 +18,31 @@ class MatchError(ValueError):
     pass
 
 
+def qobuz_performing_artists(detail):
+    names = []
+    for artist in detail.get('artists') or []:
+        if isinstance(artist, dict) and isinstance(artist.get('name'), str) and any(
+                sources.normalized_words(role).replace(' ', '') in {'mainartist', 'featuredartist'}
+                for role in artist.get('roles', []) if isinstance(role, str)):
+            names.append(artist['name'].strip())
+    # Qobuz's track-level credits use "Name, Role, Role - Name, Role".
+    # Strip only known trailing role labels, preserving commas in artist names.
+    roles = {'mainartist', 'featuredartist', 'composer', 'lyricist', 'writer',
+             'musicpublisher', 'producer', 'arranger', 'remixer', 'performer',
+             'vocals', 'conductor', 'engineer', 'mixer', 'composerlyricist'}
+    for credit in str(detail.get('performers') or '').split(' - '):
+        parts, found = credit.split(', '), set()
+        while len(parts) > 1:
+            role = sources.normalized_words(parts[-1]).replace(' ', '')
+            if role not in roles:
+                break
+            found.add(role)
+            parts.pop()
+        if found & {'mainartist', 'featuredartist'}:
+            names.append(', '.join(parts).strip())
+    return list(dict.fromkeys(name for name in names if name))
+
+
 def direct_target(track):
     provider = {"tiddl": "tidal"}.get(track.get("provider"), track.get("provider"))
     url = track.get("download_url") or track.get("source_url") or ""
@@ -276,7 +301,7 @@ class Catalog:
         return self.normalize(provider, tracks)
 
     def with_verified_credits(self, provider, source, candidates):
-        if provider != 'tidal':
+        if provider not in PROVIDERS:
             return candidates
         source_credits = sources.artist_credits(source.get('artist', ''))
         duration = sources.matching_duration(source.get('duration'))
@@ -296,22 +321,43 @@ class Catalog:
                 output.append(candidate)
                 continue
             url = candidate.get('source_url') or candidate.get('download_url') or ''
-            identifier = re.fullmatch(r'/(?:browse/)?track/([0-9]+)/?', urlparse(url).path)
+            identifier = re.fullmatch(r'/(?:browse/|[a-z]{2}(?:-[a-z]{2})?/)?track/(?:[^/]+/)?([0-9]+)/?', urlparse(url).path)
             if not identifier or (identifier[1] not in checked and len(checked) >= 5):
                 output.append(candidate)
                 continue
             checked.add(identifier[1])
             try:
-                detail = self.api('tidal', f'tracks/{identifier[1]}/contributors', limit=100)
-                guests = [row['name'].strip() for row in detail.get('items', [])
-                          if isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'].strip()
-                          and sources.normalized_words(row.get('role', '')) in {'featured artist', 'main artist'}]
-                if guests:
-                    candidate = {**candidate, 'artist': ', '.join(dict.fromkeys([*credits, *guests]))}
-            except (MatchError, KeyError, TypeError):
+                verified = self.verified_track(provider, identifier[1], candidate)
+                verified_duration = sources.matching_duration(verified.get('duration'))
+                if verified_duration is not None and abs(duration - verified_duration) <= 2:
+                    candidate = verified
+            except (MatchError, KeyError, TypeError, ValueError):
                 pass
             output.append(candidate)
         return output
+
+    def verified_track(self, provider, identifier, candidate):
+        if provider == 'tidal':
+            detail = self.api(provider, f'tracks/{identifier}/contributors', limit=100)
+            names = [row['name'].strip() for row in detail.get('items', [])
+                     if isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'].strip()
+                     and sources.normalized_words(row.get('role', '')) in {'featured artist', 'main artist'}]
+        else:
+            detail = (self.api(provider, f'tracks/{identifier}/') if provider == 'beatport'
+                      else self.api(provider, 'track/get', track_id=identifier))
+            if str(detail.get('id')) != identifier:
+                return candidate
+            normalized = self.normalize(provider, [detail])
+            if not normalized:
+                return candidate
+            candidate = normalized[0]
+            if provider == 'beatport':
+                names = [row['name'].strip() for row in [*(detail.get('artists') or []), *(detail.get('remixers') or [])]
+                         if isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'].strip()]
+            else:
+                names = qobuz_performing_artists(detail)
+        credits = sources.artist_credits(candidate.get('artist', ''))
+        return {**candidate, 'artist': ', '.join(dict.fromkeys([*credits, *names]))}
 
     def album(self, provider, identifier):
         if provider == "tidal":
