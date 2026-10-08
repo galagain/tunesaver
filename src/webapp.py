@@ -3635,10 +3635,15 @@ async def stream_ticket_handler(request: web.Request) -> web.Response:
     job_id = payload.get("job_id")
     if not isinstance(job_id, str):
         raise PublicError("Morceau invalide.")
+    url = await asyncio.to_thread(create_stream_ticket, job_id, request['user']['id'])
+    return web.json_response({'url': url})
+
+
+def create_stream_ticket(job_id: str, owner_id: str) -> str:
     _path, job = find_done_job(job_id)
-    if job.get("owner_id") != request["user"]["id"]:
+    if job.get("owner_id") != owner_id:
         raise PublicError("Morceau introuvable.", status=404)
-    delivery = delivery_for_job(job_id, request["user"]["id"])
+    delivery = delivery_for_job(job_id, owner_id)
     if not delivery:
         raise PublicError("Morceau introuvable.", status=404)
     if not delivery["mime_type"]:
@@ -3648,9 +3653,9 @@ async def stream_ticket_handler(request: web.Request) -> web.Response:
     with local_db() as db:
         db.execute("delete from stream_tickets where expires_at <= ?", (time.time(),))
         db.execute("insert into stream_tickets (token_hash, user_id, job_id, expires_at) values (?, ?, ?, ?)",
-                   (hashlib.sha256(token.encode()).hexdigest(), request["user"]["id"], job_id,
+                   (hashlib.sha256(token.encode()).hexdigest(), owner_id, job_id,
                     time.time() + STREAM_TICKET_SECONDS))
-    return web.json_response({"url": f"/api/stream/{job_id}?ticket={quote(token)}"})
+    return f"/api/stream/{job_id}?ticket={quote(token)}"
 
 
 async def file_handler(request: web.Request) -> web.StreamResponse:
@@ -3754,9 +3759,7 @@ async def zip_audio_response(
     return response
 
 
-async def stream_handler(request: web.Request) -> web.StreamResponse:
-    job_id = request.match_info.get("job_id", "")
-    ticket = request.query.get("ticket", "")
+def resolve_stream(job_id: str, ticket: str):
     _path, job = find_done_job(job_id)
     expected = str(job.get("stream_ticket_hash", ""))
     expires = int(job.get("stream_ticket_expires", 0))
@@ -3784,9 +3787,17 @@ async def stream_handler(request: web.Request) -> web.StreamResponse:
     if not content_type and candidate.suffix.lower() == ".zip":
         member = single_zip_audio(candidate)
         if member:
-            return await zip_audio_response(request, candidate, member)
+            return candidate, None, member
     if not content_type:
         raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
+    return candidate, content_type, None
+
+
+async def stream_handler(request: web.Request) -> web.StreamResponse:
+    candidate, content_type, member = await asyncio.to_thread(
+        resolve_stream, request.match_info.get('job_id', ''), request.query.get('ticket', ''))
+    if member:
+        return await zip_audio_response(request, candidate, member)
     return web.FileResponse(candidate, headers={"Content-Type": content_type})
 
 

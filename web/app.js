@@ -387,6 +387,7 @@ async function loadPrivateImage(image, url) {
 
 function resetPlayer() {
   playerVersion++;
+  streamLinks.clear();
   playerAudio.pause();
   playerAudio.removeAttribute('src');
   playerAudio.load();
@@ -975,6 +976,22 @@ async function downloadReadyJob(jobId) {
   window.setTimeout(refreshQueue, 2500);
 }
 
+const streamLinks = new Map();
+function prepareStream(jobId) {
+  const cached = streamLinks.get(jobId);
+  if (cached && cached.account === session?.access_token && cached.expires > Date.now()) return cached.promise;
+  const entry = { account: session?.access_token, expires: Date.now() + 10 * 60 * 1000 };
+  entry.promise = requestJson('/api/stream-ticket', {
+    method: 'POST', body: JSON.stringify({ job_id: jobId }), signal: AbortSignal.timeout(15000),
+  }).then(({ url }) => { entry.url = url; return url; }).catch(error => {
+    if (streamLinks.get(jobId) === entry) streamLinks.delete(jobId);
+    throw error;
+  });
+  streamLinks.set(jobId, entry);
+  while (streamLinks.size > 32) streamLinks.delete(streamLinks.keys().next().value);
+  return entry.promise;
+}
+
 async function streamTrack(track, { advance = false } = {}) {
   const fullTrack = typeof track === "string"
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
@@ -990,9 +1007,9 @@ async function streamTrack(track, { advance = false } = {}) {
     bindQueue();
     return playerAudio.play();
   }
-  const { url } = await requestJson('/api/stream-ticket', {
-    method: 'POST', body: JSON.stringify({ job_id: fullTrack.job_id }),
-  });
+  const cached = streamLinks.get(fullTrack.job_id);
+  const url = cached?.url && cached.account === session?.access_token && cached.expires > Date.now()
+    ? cached.url : await prepareStream(fullTrack.job_id);
   if (version !== playerVersion) return;
   bindQueue();
   playerAudio.src = url;
@@ -1005,7 +1022,23 @@ async function streamTrack(track, { advance = false } = {}) {
     playerCover.append(image);
     loadPrivateImage(image, fullTrack.cover_url);
   }
-  await playerAudio.play();
+  let startTimer;
+  try {
+    await Promise.race([playerAudio.play(), new Promise((_, reject) => {
+      startTimer = setTimeout(() => reject(new Error('Le chargement audio ne répond pas. Réessaie la lecture.')), 12000);
+    })]);
+  }
+  catch (error) {
+    if (version !== playerVersion) return;
+    streamLinks.delete(fullTrack.job_id);
+    playerAudio.removeAttribute('src');
+    playerAudio.load();
+    throw error;
+  }
+  finally { clearTimeout(startTimer); }
+  if (version !== playerVersion) return;
+  const next = adjacentPlaybackTrack(1);
+  if (next) prepareStream(next.job_id).catch(() => {});
 }
 
 function adjacentPlaybackTrack(direction) {
@@ -1609,6 +1642,10 @@ function renderLibrary() {
       play.append(document.getElementById("icon-play").content.cloneNode(true));
       play.setAttribute("aria-label", `Lire ${track.title || track.file_name || "ce son"}`);
       play.title = "Lire";
+      const prepare = () => prepareStream(track.job_id).catch(() => {});
+      play.addEventListener('pointerenter', prepare);
+      play.addEventListener('focus', prepare);
+      play.addEventListener('pointerdown', prepare);
       play.addEventListener("click", async () => {
         play.disabled = true;
         try { await streamTrack(track); }

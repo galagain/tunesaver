@@ -17,7 +17,7 @@ function audioFixture() {
   try {
     for (const width of [1440, 768, 390, 320]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
-      const errors = [], requests = [];
+      const errors = [], requests = [], tickets = [];
       page.on('pageerror', error => errors.push(error.message));
       page.on('request', request => requests.push(new URL(request.url()).pathname));
       const tracks = Array.from({ length: 35 }, (_, i) => ({
@@ -35,6 +35,7 @@ function audioFixture() {
         if (path === '/api/library') return route.fulfill({ json: { tracks, playlists: [], folders: [], tags: [], imports: [] } });
         if (path === '/api/stream-ticket') {
           const id = route.request().postDataJSON().job_id;
+          tickets.push(id);
           if (id === 'slow') { slowTicket = route; return; }
           return route.fulfill({ json: { url: '/fixture/audio?id=' + id } });
         }
@@ -57,15 +58,22 @@ function audioFixture() {
       await expect(page.locator('.library-track')).toHaveCount(35);
       await expect(page.locator('#mixer-nav, #mix-connect, .mix-deck')).toHaveCount(0);
       const dock = await page.locator('#playback-dock').boundingBox();
+      await page.locator('.library-track .play-button').first().hover();
+      await page.waitForFunction(() => streamLinks.get('track-0')?.url);
+      const started = Date.now();
       await page.locator('.library-track .play-button').first().click();
       await expect(page.locator('#player-title')).toHaveText('First light');
       await expect.poll(() => page.locator('#player-audio').evaluate(audio => !audio.paused && audio.currentTime > 0)).toBe(true);
+      expect(Date.now() - started).toBeLessThan(1500);
+      expect(tickets.filter(id => id === 'track-0')).toHaveLength(1);
       await expect.poll(() => page.locator('#player-cover img').evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
       expect(await page.locator('#playback-dock').boundingBox()).toEqual(dock);
       await page.locator('#player-next').click();
       await expect.poll(() => page.evaluate(() => currentTrackId)).toBe('track-1');
       await page.locator('#player-previous').click();
       await expect.poll(() => page.evaluate(() => currentTrackId)).toBe('track-0');
+      expect(tickets.filter(id => id === 'track-0')).toHaveLength(1);
+      await expect.poll(() => page.locator('#player-audio').evaluate(audio => Number.isFinite(audio.duration))).toBe(true);
       await page.locator('#player-audio').evaluate(audio => { audio.currentTime = audio.duration - .15; });
       await expect.poll(() => page.evaluate(() => currentTrackId)).toBe('track-1');
       await page.locator('#player-audio').evaluate(audio => audio.pause());
