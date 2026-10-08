@@ -1,7 +1,7 @@
 const {chromium, firefox, expect} = require('@playwright/test');
 
 function audio() {
-  const data = Buffer.alloc(44 + 44100 * 4);
+  const data = Buffer.alloc(44 + 44100 * 20);
   data.write('RIFF'); data.writeUInt32LE(data.length - 8, 4); data.write('WAVEfmt ', 8);
   data.writeUInt32LE(16, 16); data.writeUInt16LE(1, 20); data.writeUInt16LE(1, 22);
   data.writeUInt32LE(44100, 24); data.writeUInt32LE(88200, 28);
@@ -17,6 +17,9 @@ function audio() {
       const page = await browser.newPage({viewport: {width: 1440, height: 900}});
       const errors = [], covers = [];
       let holdCovers = true;
+      let freezeBackground = false;
+      const cancelled = [];
+      page.on('requestfailed', request => cancelled.push(new URL(request.url()).pathname));
       const imageResponse = {contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="green"/></svg>'};
       page.on('pageerror', error => errors.push(error.message));
       const tracks = Array.from({length: 300}, (_, i) => ({job_id: `t${i}`, title: `Track ${i}`, artist: 'Artist',
@@ -24,13 +27,14 @@ function audio() {
       await page.route('**/api/**', route => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/config') return route.continue();
+        if (freezeBackground && ['/api/status', '/api/library'].includes(path)) return;
         if (path.startsWith('/api/covers/')) {
           covers.push(route);
           if (!holdCovers) return route.fulfill(imageResponse);
           return;
         }
         if (path === '/api/library') return route.fulfill({json: {tracks, playlists: [{id: 'p', name: 'Large playlist', track_ids: tracks.map(t => t.job_id)}], tags: [], imports: [], orders: {}}});
-        if (path === '/api/stream-ticket') return route.fulfill({json: {url: '/fixture/audio'}});
+        if (path === '/api/stream-ticket') return new Promise(resolve => setTimeout(resolve, 800)).then(() => route.fulfill({json: {url: '/fixture/audio'}})).catch(() => {});
         return route.fulfill({json: {active: {}, counts: {}, recent: [], history: [], threads: []}});
       });
       await page.route('**/fixture/audio', route => route.fulfill({contentType: 'audio/wav', body: audio()}));
@@ -41,10 +45,18 @@ function audio() {
       await expect.poll(() => page.evaluate(() => activeCoverRequests)).toBe(2);
       await page.waitForTimeout(250);
       expect(covers.length).toBeLessThanOrEqual(6);
+      freezeBackground = true;
+      await page.evaluate(() => { refreshQueue(); refreshLibrary(); });
+      await page.waitForTimeout(100);
       await page.locator('.library-track .play-button').first().click();
+      await expect(page.locator('.library-track .play-button').first()).toBeEnabled();
+      await expect(page.locator('#player-title')).not.toHaveText('Aucun son en lecture');
+      await expect.poll(() => page.evaluate(() => playbackStarting && activeCoverRequests === 0)).toBe(true);
+      expect(cancelled).toContain('/api/status');
+      expect(cancelled).toContain('/api/library');
       await expect.poll(() => page.evaluate(() => !playerAudio.paused && playerAudio.currentTime > 0)).toBe(true);
       expect(await page.evaluate(() => activeCoverRequests)).toBeLessThanOrEqual(2);
-      expect(covers.length).toBeLessThanOrEqual(6);
+      expect(covers.length).toBeLessThanOrEqual(10);
       holdCovers = false;
       for (const cover of [...covers]) await cover.fulfill(imageResponse).catch(() => {});
       await expect.poll(() => page.locator('#player-cover img').evaluate(img => img.naturalWidth)).toBe(32);

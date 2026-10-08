@@ -355,7 +355,14 @@ async function authenticatedFetch(url, options = {}, retry = true) {
   return response;
 }
 
+let playbackStarting = false;
+let backgroundReads = new AbortController();
+
 async function requestJson(path, options = {}) {
+  if (['/api/library', '/api/status', '/api/history'].includes(path.split('?')[0])) {
+    if (playbackStarting) throw new DOMException('Lecture prioritaire', 'AbortError');
+    options = { ...options, signal: backgroundReads.signal };
+  }
   const response = await authenticatedFetch(path, {
     ...options,
     headers: {
@@ -410,6 +417,7 @@ function loadPrivateImage(image, url) {
 }
 
 function pumpCoverRequests() {
+  if (playbackStarting) return;
   for (const [url, entry] of coverRequests) {
     if (![...entry.images].some(image => image.isConnected)) {
       entry.controller.abort();
@@ -447,6 +455,9 @@ function pumpCoverRequests() {
 
 function resetPlayer() {
   playerVersion++;
+  playbackStarting = false;
+  playerAudio.removeAttribute('aria-busy');
+  for (const entry of streamLinks.values()) entry.controller?.abort();
   streamLinks.clear();
   playerAudio.pause();
   playerAudio.removeAttribute('src');
@@ -457,6 +468,7 @@ function resetPlayer() {
   currentTrackId = "";
   playbackQueue = [];
   playbackScope = '';
+  pumpCoverRequests();
 }
 
 function clearCoverCache() {
@@ -1042,16 +1054,33 @@ async function downloadReadyJob(jobId) {
 }
 
 const streamLinks = new Map();
+function prioritizePlayback() {
+  playbackStarting = true;
+  backgroundReads.abort();
+  backgroundReads = new AbortController();
+  for (const [url, entry] of coverRequests) {
+    if (!entry.started) continue;
+    entry.controller.abort();
+    coverRequests.set(url, { ...entry, started: false, controller: new AbortController() });
+  }
+  for (const [id, entry] of streamLinks) {
+    if (entry.url) continue;
+    entry.controller.abort();
+    streamLinks.delete(id);
+  }
+}
+
 function prepareStream(jobId) {
   const cached = streamLinks.get(jobId);
   if (cached && cached.account === session?.access_token && cached.expires > Date.now()) return cached.promise;
-  const entry = { account: session?.access_token, expires: Date.now() + 10 * 60 * 1000 };
+  const entry = { account: session?.access_token, expires: Date.now() + 10 * 60 * 1000, controller: new AbortController() };
+  const timeout = setTimeout(() => entry.controller.abort(), 15000);
   entry.promise = requestJson('/api/stream-ticket', {
-    method: 'POST', body: JSON.stringify({ job_id: jobId }), signal: AbortSignal.timeout(15000),
+    method: 'POST', body: JSON.stringify({ job_id: jobId }), signal: entry.controller.signal,
   }).then(({ url }) => { entry.url = url; return url; }).catch(error => {
     if (streamLinks.get(jobId) === entry) streamLinks.delete(jobId);
     throw error;
-  });
+  }).finally(() => clearTimeout(timeout));
   streamLinks.set(jobId, entry);
   while (streamLinks.size > 32) streamLinks.delete(streamLinks.keys().next().value);
   return entry.promise;
@@ -1062,48 +1091,65 @@ async function streamTrack(track, { advance = false } = {}) {
     ? renderedTracks.find((item) => item.job_id === track) || { job_id: track }
     : track;
   const version = ++playerVersion;
-  const sourceScope = libraryScope();
-  const sourceTracks = advance ? playbackQueue : sortedLibraryTracks(manualLibraryTracks());
-  const queue = sourceTracks.some(item => item.job_id === fullTrack.job_id) ? [...sourceTracks] : [fullTrack];
-  const bindQueue = () => {
-    if (!advance) { playbackQueue = queue; playbackScope = sourceScope; }
-  };
-  if (fullTrack.job_id === currentTrackId && playerAudio.src && !playerAudio.error) {
-    bindQueue();
-    return playerAudio.play();
-  }
-  const cached = streamLinks.get(fullTrack.job_id);
-  const url = cached?.url && cached.account === session?.access_token && cached.expires > Date.now()
-    ? cached.url : await prepareStream(fullTrack.job_id);
-  if (version !== playerVersion) return;
-  bindQueue();
-  playerAudio.src = url;
-  currentTrackId = fullTrack.job_id;
+  prioritizePlayback();
   playerTitle.textContent = fullTrack.title || fullTrack.file_name || 'Sans titre';
   playerArtist.textContent = fullTrack.artist || 'Artiste inconnu';
-  playerCover.replaceChildren();
-  if (fullTrack.cover_url) {
-    const image = document.createElement('img'); image.alt = '';
-    playerCover.append(image);
-    loadPrivateImage(image, fullTrack.cover_url);
-  }
-  let startTimer;
+  playerAudio.setAttribute('aria-busy', 'true');
   try {
-    await Promise.race([playerAudio.play(), new Promise((_, reject) => {
-      startTimer = setTimeout(() => reject(new Error('Le chargement audio ne répond pas. Réessaie la lecture.')), 12000);
-    })]);
-  }
-  catch (error) {
-    if (version !== playerVersion) return;
-    streamLinks.delete(fullTrack.job_id);
+    const sourceScope = libraryScope();
+    const sourceTracks = advance ? playbackQueue : sortedLibraryTracks(manualLibraryTracks());
+    const queue = sourceTracks.some(item => item.job_id === fullTrack.job_id) ? [...sourceTracks] : [fullTrack];
+    const bindQueue = () => {
+      if (!advance) { playbackQueue = queue; playbackScope = sourceScope; }
+    };
+    if (fullTrack.job_id === currentTrackId && playerAudio.src && !playerAudio.error && playerAudio.readyState >= 2) {
+      bindQueue();
+      return await playerAudio.play();
+    }
+    playerAudio.pause();
     playerAudio.removeAttribute('src');
     playerAudio.load();
-    throw error;
+    const cached = streamLinks.get(fullTrack.job_id);
+    const url = cached?.url && cached.account === session?.access_token && cached.expires > Date.now()
+      ? cached.url : await prepareStream(fullTrack.job_id);
+    if (version !== playerVersion) return;
+    bindQueue();
+    playerAudio.src = url;
+    currentTrackId = fullTrack.job_id;
+    playerTitle.textContent = fullTrack.title || fullTrack.file_name || 'Sans titre';
+    playerArtist.textContent = fullTrack.artist || 'Artiste inconnu';
+    playerCover.replaceChildren();
+    if (fullTrack.cover_url) {
+      const image = document.createElement('img'); image.alt = '';
+      playerCover.append(image);
+      loadPrivateImage(image, fullTrack.cover_url);
+    }
+    let startTimer;
+    try {
+      await Promise.race([playerAudio.play(), new Promise((_, reject) => {
+        startTimer = setTimeout(() => reject(new Error('Le chargement audio ne répond pas. Réessaie la lecture.')), 12000);
+      })]);
+    }
+    catch (error) {
+      if (version !== playerVersion) return;
+      streamLinks.delete(fullTrack.job_id);
+      playerAudio.removeAttribute('src');
+      playerAudio.load();
+      throw error;
+    }
+    finally { clearTimeout(startTimer); }
+    if (version !== playerVersion) return;
+    const next = adjacentPlaybackTrack(1);
+    if (next) prepareStream(next.job_id).catch(() => {});
+  } catch (error) {
+    if (version === playerVersion) throw error;
+  } finally {
+    if (version === playerVersion) {
+      playbackStarting = false;
+      playerAudio.removeAttribute('aria-busy');
+      pumpCoverRequests();
+    }
   }
-  finally { clearTimeout(startTimer); }
-  if (version !== playerVersion) return;
-  const next = adjacentPlaybackTrack(1);
-  if (next) prepareStream(next.job_id).catch(() => {});
 }
 
 function adjacentPlaybackTrack(direction) {
@@ -1707,15 +1753,15 @@ function renderLibrary() {
       play.append(document.getElementById("icon-play").content.cloneNode(true));
       play.setAttribute("aria-label", `Lire ${track.title || track.file_name || "ce son"}`);
       play.title = "Lire";
-      const prepare = () => prepareStream(track.job_id).catch(() => {});
+      const prepare = () => { if (!playbackStarting) prepareStream(track.job_id).catch(() => {}); };
       play.addEventListener('pointerenter', prepare);
       play.addEventListener('focus', prepare);
       play.addEventListener('pointerdown', prepare);
       play.addEventListener("click", async () => {
-        play.disabled = true;
+        play.setAttribute('aria-busy', 'true');
         try { await streamTrack(track); }
         catch (error) { showToast(error.message, "error"); }
-        finally { play.disabled = false; }
+        finally { play.removeAttribute('aria-busy'); }
       });
       actions.append(play);
     }
@@ -1940,7 +1986,7 @@ function renderImports() {
 }
 
 async function refreshLibrary() {
-  if (!session) return;
+  if (!session || playbackStarting) return;
   refreshLibraryButton.disabled = true;
   try {
     libraryState = await fetchLibrary();
@@ -1956,7 +2002,7 @@ async function refreshLibrary() {
     }
     renderLibrary();
   } catch (error) {
-    showToast(error.message, "error");
+    if (error.name !== 'AbortError') showToast(error.message, "error");
   } finally {
     refreshLibraryButton.disabled = false;
   }
@@ -2069,7 +2115,7 @@ function renderHistory(history, localJobs) {
 }
 
 async function refreshQueue() {
-  if (!session || queueRefreshPromise) return queueRefreshPromise;
+  if (!session || playbackStarting || queueRefreshPromise) return queueRefreshPromise;
   queueRefreshPromise = refreshQueueOnce().finally(() => { queueRefreshPromise = null; });
   return queueRefreshPromise;
 }
@@ -2101,7 +2147,7 @@ async function refreshQueueOnce() {
       await syncHistory(payload.recent || []);
       history = await fetchHistory();
     } catch (error) {
-      if (session !== account) return;
+      if (session !== account || error.name === 'AbortError') return;
       if (!historyWarningShown) {
         showToast(`Historique local indisponible : ${error.message}`, "error");
         historyWarningShown = true;
@@ -2111,7 +2157,7 @@ async function refreshQueueOnce() {
     renderHistory(history.filter(job => !deletedJobIds.has(job.job_id)), payload.recent || []);
     await refreshLibrary();
   } catch (error) {
-    if (session !== account) return;
+    if (session !== account || error.name === 'AbortError') return;
     for (const provider of providers) {
       activeProviders[provider] = false;
     }

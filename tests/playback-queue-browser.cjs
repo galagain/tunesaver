@@ -39,7 +39,7 @@ const {chromium, expect} = require('@playwright/test');
       await page.locator('#player-next').click();
       await expect.poll(() => page.evaluate(() => currentTrackId)).toBe('c');
       await page.evaluate(() => playNextTrack());
-      expect(requested).toEqual(['a', 'b', 'c']);
+      expect([...new Set(requested)]).toEqual(['a', 'b', 'c']);
       await page.locator('#player-previous').click();
       await expect.poll(() => page.evaluate(() => currentTrackId)).toBe('b');
       await page.locator('[data-playlist-id="second"]').click();
