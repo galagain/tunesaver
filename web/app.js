@@ -366,22 +366,82 @@ async function requestJson(path, options = {}) {
   return parseResponse(response);
 }
 
-async function loadPrivateImage(image, url) {
+const coverRequests = new Map();
+let activeCoverRequests = 0;
+let coverGeneration = 0;
+const observedCovers = new Set();
+let coverPruneScheduled = false;
+const coverObserver = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    coverObserver.unobserve(entry.target);
+    observedCovers.delete(entry.target);
+    loadPrivateImage(entry.target, entry.target.dataset.privateCover);
+  }
+}, { rootMargin: '120px' });
+
+function observePrivateImage(image, url) {
+  image.dataset.privateCover = url;
+  observedCovers.add(image);
+  coverObserver.observe(image);
+  if (coverPruneScheduled) return;
+  coverPruneScheduled = true;
+  queueMicrotask(() => {
+    coverPruneScheduled = false;
+    for (const old of observedCovers) {
+      if (!old.isConnected) { coverObserver.unobserve(old); observedCovers.delete(old); }
+    }
+    pumpCoverRequests();
+  });
+}
+
+function loadPrivateImage(image, url) {
   if (coverUrlCache.has(url)) {
     image.src = coverUrlCache.get(url);
     return;
   }
-  try {
-    const response = await authenticatedFetch(url, {
-      headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8" },
-    });
-    if (!response.ok) return;
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    coverUrlCache.set(url, objectUrl);
-    image.src = objectUrl;
-  } catch (_error) {
-    image.remove();
+  let entry = coverRequests.get(url);
+  if (!entry) {
+    entry = { images: new Set(), started: false, controller: new AbortController(), generation: coverGeneration };
+    coverRequests.set(url, entry);
+  }
+  entry.images.add(image);
+  queueMicrotask(pumpCoverRequests);
+}
+
+function pumpCoverRequests() {
+  for (const [url, entry] of coverRequests) {
+    if (![...entry.images].some(image => image.isConnected)) {
+      entry.controller.abort();
+      coverRequests.delete(url);
+      continue;
+    }
+    if (entry.started) continue;
+    if (activeCoverRequests >= 2) break;
+    entry.started = true;
+    activeCoverRequests++;
+    const timeout = setTimeout(() => entry.controller.abort(), 10000);
+    (async () => {
+      try {
+        const response = await authenticatedFetch(url, {
+          signal: entry.controller.signal,
+          headers: { Accept: 'image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8' },
+        });
+        if (!response.ok) return;
+        const blob = await response.blob();
+        if (entry.generation !== coverGeneration) return;
+        const objectUrl = URL.createObjectURL(blob);
+        coverUrlCache.set(url, objectUrl);
+        for (const image of entry.images) if (image.isConnected) image.src = objectUrl;
+      } catch (_error) {
+        // Artwork is optional: a failed cover must not interrupt playback.
+      } finally {
+        clearTimeout(timeout);
+        activeCoverRequests--;
+        if (coverRequests.get(url) === entry) coverRequests.delete(url);
+        pumpCoverRequests();
+      }
+    })();
   }
 }
 
@@ -400,6 +460,11 @@ function resetPlayer() {
 }
 
 function clearCoverCache() {
+  coverGeneration++;
+  coverObserver.disconnect();
+  observedCovers.clear();
+  for (const entry of coverRequests.values()) entry.controller.abort();
+  coverRequests.clear();
   for (const objectUrl of coverUrlCache.values()) URL.revokeObjectURL(objectUrl);
   coverUrlCache.clear();
 }
@@ -1190,7 +1255,7 @@ function makeLibraryCover(track) {
     image.addEventListener('load', () => cover.dataset.loaded = 'true');
     if (coverUrlCache.has(url)) cover.dataset.loaded = 'true';
     cover.append(image);
-    if (url.startsWith('/api/')) loadPrivateImage(image, url); else image.src = url;
+    if (url.startsWith('/api/')) observePrivateImage(image, url); else image.src = url;
   }
   return cover;
 }
