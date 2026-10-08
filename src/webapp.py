@@ -1655,6 +1655,9 @@ def normalize_tidal_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 source_url=download_url,
             )
         )
+        modes = track.get('audioModes') or []
+        tags = (track.get('mediaMetadata') or {}).get('tags') or []
+        normalized[-1]['audio_modes'] = list(dict.fromkeys([*modes, *tags]))
         seen.add(track_id)
         if len(normalized) >= RESULT_LIMIT:
             break
@@ -2256,6 +2259,23 @@ def display_metadata(payload: dict[str, Any], kind: str) -> dict[str, str]:
     return metadata
 
 
+def compatible_download(provider, url, metadata):
+    if provider != 'tiddl' or resource_kind(provider, url) != 'track':
+        return provider, url, metadata
+    from catalog_matcher import Catalog, is_atmos, match_collection
+    catalog = Catalog()
+    identifier = url.rstrip('/').split('/')[-1].split('?')[0]
+    track = catalog.track('tidal', identifier)
+    if not is_atmos(track):
+        return provider, url, metadata
+    result = match_collection({'name': track['title'], 'kind': 'track', 'tracks': [track]}, catalog)
+    replacement = result['tracks'][0].get('match')
+    if not replacement:
+        raise PublicError('Version Dolby Atmos non compatible. Aucune version équivalente trouvée sur Beatport ou Qobuz.', status=422)
+    return replacement['provider'], replacement['download_url'], {
+        **metadata, 'title': replacement['title'], 'artist': replacement['artist'], 'kind': 'track'}
+
+
 async def download_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     provider = payload.get("provider")
@@ -2280,6 +2300,8 @@ async def download_handler(request: web.Request) -> web.Response:
         )
     metadata = display_metadata(payload, kind)
     owner_id = request["user"]["id"]
+    if not existing_job(provider, url, owner_id, completed=True):
+        provider, url, metadata = await asyncio.to_thread(compatible_download, provider, url, metadata)
 
     with musicdl.provider_lock(provider, "enqueue"):
         job_id = existing_job(provider, url, owner_id, completed=True)
@@ -2320,6 +2342,9 @@ async def batch_download_handler(request: web.Request) -> web.Response:
             raise PublicError("Les liens d'artiste et de label ne sont pas acceptés.")
         if direct["kind"] not in {"track", "video"} and payload.get("confirm_complete") is not True:
             raise PublicError("Confirmez le téléchargement des ressources complètes.")
+        if not existing_job(direct['provider'], direct['download_url'], owner_id, completed=True):
+            provider, url, metadata = await asyncio.to_thread(compatible_download, direct['provider'], direct['download_url'], direct)
+            direct = {**direct, **metadata, 'provider': provider, 'download_url': url, 'platform': PLATFORM_NAMES[provider]}
         if not worker_is_active(direct["provider"]):
             raise SourceError(f"Le worker {direct['platform']} n'est pas démarré.")
         prepared.append(direct)
@@ -2329,7 +2354,7 @@ async def batch_download_handler(request: web.Request) -> web.Response:
         provider = direct["provider"]
         url = direct["download_url"]
         with musicdl.provider_lock(provider, "enqueue"):
-            job_id = existing_job(provider, url, owner_id)
+            job_id = existing_job(provider, url, owner_id, completed=True)
             duplicate = job_id is not None
             if job_id is None:
                 job_id = musicdl.enqueue(
@@ -2863,6 +2888,9 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
     owner = record["user_id"]
     if resource_kind(provider, url) != "track":
         raise PublicError("La correspondance n'est pas un morceau.")
+    if ('audio_modes' not in result or 'DOLBY_ATMOS' in (result.get('audio_modes') or [])) and not existing_job(provider, url, owner, completed=True):
+        provider, url, metadata = compatible_download(provider, url, result)
+        result = {**result, **metadata, 'provider': provider, 'download_url': url}
     # Serialize enqueue and playlist membership so a restart reuses the same job.
     with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
         if record.get('playlist_id') and not local_playlist_has_owner(db, record["playlist_id"], owner):

@@ -34,7 +34,7 @@ class SingleTrackImportTests(unittest.IsolatedAsyncioTestCase):
         request = fixtures.FakeRequest({'url': 'https://tidal.com/track/123'}, app=self.app_state)
         request['user'] = user
         source = {'name': 'Song', 'kind': 'track', 'source': 'https://tidal.com/track/123',
-                  'tracks': [{'title': 'Song', 'artist': 'Artist', 'provider': 'tidal', 'source_url': 'https://tidal.com/track/123'}]}
+                  'tracks': [{'title': 'Song', 'artist': 'Artist', 'provider': 'tidal', 'audio_modes': [], 'source_url': 'https://tidal.com/track/123'}]}
         with mock.patch.object(engine, 'read', return_value=source), \
              mock.patch.object(engine.matcher.Catalog, 'search_tracks', side_effect=AssertionError('Native link needs no search')):
             first = fixtures.response_json(await webapp.playlist_import_handler(request))

@@ -361,6 +361,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             response = await client.get("/vendor/../../.env")
             self.assertNotEqual(response.status, 200)
 
+    @mock.patch('webapp.compatible_download', new=lambda p, u, m: (p, u, m))
     async def test_direct_search_and_enqueue_are_end_to_end(self) -> None:
         request = FakeRequest(
             {"query": "https://tidal.com/browse/track/123"},
@@ -470,6 +471,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot["counts"]["tiddl"]["pending"], 1)
         self.assertEqual(len(snapshot["recent"]), 1)
 
+    @mock.patch('webapp.compatible_download', new=lambda p, u, m: (p, u, m))
     async def test_batch_download_accepts_one_link_per_line(self) -> None:
         request = FakeRequest(
             {
@@ -527,6 +529,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         response = await webapp.api_middleware(request, webapp.download_handler)
         self.assertEqual(response.status, 202)
 
+    @mock.patch('webapp.compatible_download', new=lambda p, u, m: (p, u, m))
     async def test_download_rejects_inactive_worker(self) -> None:
         musicdl.release_provider_lock(self.worker_handles.pop("tiddl"))
         request = FakeRequest(
@@ -964,7 +967,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(webapp.local_imports(TEST_USER_ID), [])
             tracks = [{"title": "Song", "artist": "Artist", "duration": 180},
                       {"title": "Missing", "artist": "Artist", "duration": 180}]
-            candidate = {"provider": "tiddl", "title": "Song", "artist": "Artist", "duration": "3:00",
+            candidate = {"provider": "tiddl", "title": "Song", "artist": "Artist", "duration": "3:00", "audio_modes": [],
                          "download_url": "https://listen.tidal.com/track/123"}
             with webapp.local_db() as db:
                 record = dict(db.execute("select * from playlist_imports where id = ?", (result["id"],)).fetchone())

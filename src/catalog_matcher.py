@@ -43,7 +43,13 @@ def qobuz_performing_artists(detail):
     return list(dict.fromkeys(name for name in names if name))
 
 
+def is_atmos(track):
+    return 'DOLBY_ATMOS' in (track.get('audio_modes') or [])
+
+
 def direct_target(track):
+    if is_atmos(track):
+        return None
     provider = {"tiddl": "tidal"}.get(track.get("provider"), track.get("provider"))
     url = track.get("download_url") or track.get("source_url") or ""
     host = urlparse(url).hostname
@@ -82,7 +88,7 @@ def match_track(track, candidates):
 def match_album(collection, album):
     if sources.normalized_words(collection["name"]) != sources.normalized_words(album["name"]):
         return None
-    remaining = list(album["tracks"])
+    remaining = [track for track in album['tracks'] if not is_atmos(track)]
     if len(remaining) != len(collection["tracks"]):
         return None
     matches = []
@@ -151,9 +157,12 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
         elif row["status"] == "unavailable":
             update(row, final=True)
     for provider in PROVIDERS:
-        pending = [row for row in rows if row["match"] is None and row["status"] != "unavailable"]
+        pending = [row for row in rows if row["match"] is None and row["status"] != "unavailable"
+                   and not (provider == 'tidal' and is_atmos(row['input']))]
         if not pending:
-            break
+            if all(row['match'] is not None or row['status'] == 'unavailable' for row in rows):
+                break
+            continue
         if progress:
             progress(f"  {provider}: {len(pending)} titres restants")
         event("provider", provider=provider)
@@ -184,7 +193,7 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
             try:
                 for query in queries(row["input"]):
                     attempt["queries"].append(query)
-                    candidates.extend(catalog.search_tracks(provider, query))
+                    candidates.extend(c for c in catalog.search_tracks(provider, query) if not is_atmos(c))
                     attempt['candidates_checked'] = len(candidates)
                     found, ambiguous = match_track(row["input"], candidates)
                     if not found and isinstance(catalog, Catalog):
