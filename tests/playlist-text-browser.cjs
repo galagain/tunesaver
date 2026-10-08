@@ -33,7 +33,6 @@ const fs = require('node:fs/promises');
       await page.waitForFunction(() => publicConfig !== null);
       await page.evaluate(() => {session = {access_token: 'fixture'}; showApp(); clearInterval(queueTimer);});
       await page.locator('[data-playlist-id="p"]').click();
-      await page.locator('#collection-menu > summary').click();
       const downloadEvent = page.waitForEvent('download');
       await page.getByRole('button', {name: 'Exporter la playlist (.txt) : Mon set', exact: true}).click();
       const download = await downloadEvent;

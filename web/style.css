@@ -1192,6 +1192,16 @@ h1 {
 }
 
 .collection-rename svg { width: 14px; height: 14px; }
+.library-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.library-title-row h2 { min-width: 0; }
+#collection-rename { display: flex; flex: 0 0 auto; }
+.collection-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.collection-actions[hidden] { display: none; }
+.collection-actions button { display: grid; place-items: center; width: 30px; height: 32px; padding: 6px; border: 0; border-radius: 3px; background: transparent; color: var(--muted); }
+.collection-actions button svg { width: 16px; height: 16px; }
+.collection-actions .collection-delete { color: #df8f9b; }
+.collection-actions label { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.collection-actions .import-limit { width: 48px; }
 .playlist-entry,
 .tag-row { grid-template-columns: minmax(0, 1fr) repeat(3, 28px); }
 
@@ -2134,7 +2144,7 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 .workspace .library-heading { min-height: 44px; margin-bottom: 12px; align-items: center; gap: 12px; }
 .workspace .library-heading > div:first-child { flex: 1; min-width: 0; }
 .workspace .library-heading h2 { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
-.workspace .library-actions { flex: 0 1 340px; max-width: 65%; min-width: 0; gap: 6px; }
+.workspace .library-actions { flex: 0 1 420px; max-width: 65%; min-width: 0; gap: 6px; }
 .workspace .library-actions .refresh-button { flex: 0 0 32px; border-radius: 3px; }
 .workspace #collection-download { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 6px; height: 32px; min-height: 32px; padding: 0 8px; border: 1px solid #444; border-radius: 3px; background: transparent; color: #ddd; font-size: 11px; }
 .workspace #collection-download[hidden] { display: none; }

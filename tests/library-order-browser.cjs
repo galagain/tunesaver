@@ -79,7 +79,7 @@ const { chromium, firefox, expect } = require('@playwright/test');
       await page.locator('[data-playlist-id="p"]').click();
       await expect.poll(order).toEqual(['c', 'a', 'b', 'd']);
       const search = await page.locator('#library-search').boundingBox();
-      const settings = await page.locator('#collection-menu > summary').boundingBox();
+      const settings = await page.locator('#collection-actions').boundingBox();
       expect(search.x + search.width).toBeLessThanOrEqual(settings.x);
       expect(Math.abs(search.y + search.height / 2 - settings.y - settings.height / 2)).toBeLessThan(1);
       expect(await page.locator('#library-search').evaluate(el => Boolean(el.closest('.library-heading')))).toBe(true);

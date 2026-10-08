@@ -167,16 +167,13 @@
       <section class="library-section" aria-labelledby="library-title">
         <div class="section-heading library-heading">
           <div>
-            <h2 id="library-title">Bibliothèque</h2>
+            <div class="library-title-row"><h2 id="library-title">Bibliothèque</h2><span id="collection-rename"></span></div>
             <p id="library-count" class="library-subtitle"></p>
           </div>
           <div class="library-actions">
             <input id="library-search" type="search" placeholder="Titre ou artiste" aria-label="Rechercher dans mes sons">
             <button id="collection-download" type="button" title="Télécharger" aria-label="Télécharger" hidden><span data-ui-icon="Download"></span><span class="download-caption">Télécharger</span></button>
-            <details id="collection-menu" class="workspace-menu" hidden>
-              <summary aria-label="Actions de la collection" title="Actions de la collection"><span data-ui-icon="Settings2"></span></summary>
-              <div id="collection-actions" class="workspace-menu-items"></div>
-            </details>
+            <div id="collection-actions" class="collection-actions" hidden></div>
             <button id="refresh-library" class="refresh-button" type="button" aria-label="Actualiser la bibliothèque">↻</button>
           </div>
         </div>
