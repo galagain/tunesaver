@@ -3790,6 +3790,12 @@ def resolve_stream(job_id: str, ticket: str):
             return candidate, None, member
     if not content_type:
         raise PublicError("Ce fichier ne peut pas être lu dans le navigateur.")
+    from stream_audio import playback_file
+    try:
+        candidate = playback_file(candidate)
+    except OSError:
+        # A full/read-only disk must not prevent playback of the original.
+        pass
     return candidate, content_type, None
 
 
