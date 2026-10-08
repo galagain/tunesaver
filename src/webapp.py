@@ -2969,6 +2969,40 @@ async def library_track_delete_handler(request: web.Request) -> web.Response:
     return web.json_response({"removed": True})
 
 
+def local_reset_library(user_id: str) -> None:
+    # Removing collections first prevents an in-flight import from adding more jobs.
+    with local_db() as db:
+        db.execute("delete from playlist_imports where user_id=?", (user_id,))
+        db.execute("delete from playlists where user_id=?", (user_id,))
+        db.execute("delete from tags where user_id=?", (user_id,))
+        db.execute("delete from playlist_folders where user_id=?", (user_id,))
+        db.execute("delete from library_orders where user_id=?", (user_id,))
+        jobs = {row['job_id'] for row in db.execute(
+            "select job_id from download_history where user_id=?", (user_id,))}
+    for provider in musicdl.PROVIDERS:
+        for state in musicdl.STATES:
+            for path in (musicdl.QUEUE_ROOT / state / provider).glob('*.json'):
+                try:
+                    payload = musicdl.load_job(path, expected_provider=provider)
+                except FileNotFoundError:
+                    continue
+                if payload.get('owner_id') == user_id:
+                    jobs.add(payload['id'])
+    for job_id in jobs:
+        local_library_remove_track(user_id, job_id)
+    with local_db() as db:
+        db.execute("delete from stream_tickets where user_id=?", (user_id,))
+    # Keep deletion markers: stale browser polls must not restore the history.
+
+
+async def library_reset_handler(request: web.Request) -> web.Response:
+    payload = await read_json_object(request)
+    if payload.get('confirm') != 'RESET':
+        raise PublicError("Confirme la réinitialisation de ta bibliothèque.")
+    await asyncio.to_thread(local_reset_library, request['user']['id'])
+    return web.json_response({'reset': True})
+
+
 async def library_handler(request: web.Request) -> web.Response:
     user_id = request["user"]["id"]
     tracks, playlists, tags = await asyncio.gather(
@@ -3824,6 +3858,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/logout", logout_handler)
     app.router.add_post("/api/history", history_sync_handler)
     app.router.add_get("/api/history", history_handler)
+    app.router.add_post("/api/library/reset", library_reset_handler)
     app.router.add_get("/api/library", library_handler)
     app.router.add_put("/api/library/order", library_order_handler)
     app.router.add_delete("/api/library/{job_id}", library_track_delete_handler)

@@ -2040,6 +2040,21 @@ historyToggle.addEventListener("click", async () => {
   setWorkspaceView('history');
   await refreshQueue();
 });
+document.querySelector('#reset-library').append(document.getElementById('icon-trash').content.cloneNode(true));
+document.querySelector('#reset-library').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (!await siteDialogs.confirm('Vider définitivement ta bibliothèque ? Tous tes sons, fichiers, playlists, imports et téléchargements seront supprimés. Ton compte sera conservé. Cette action est irréversible.', { confirmText: 'Tout effacer' })) return;
+  button.disabled = true;
+  try {
+    await requestJson('/api/library/reset', { method: 'POST', body: JSON.stringify({ confirm: 'RESET' }) });
+    resetPlayer();
+    localStorage.removeItem('tunesaver.dismissedImports');
+    window.location.reload();
+  } catch (error) {
+    showToast(error.message, 'error');
+    button.disabled = false;
+  }
+});
 document.querySelector('#history-search').addEventListener('input', () => renderHistory(historyItems, historyLocalJobs));
 document.querySelector('#history-state').addEventListener('change', () => renderHistory(historyItems, historyLocalJobs));
 
