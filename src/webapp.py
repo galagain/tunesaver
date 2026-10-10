@@ -818,7 +818,42 @@ def local_admin_history(user_id: str = "") -> list[dict[str, Any]]:
                 limit 500
                 """
             ).fetchall()
-    return [normalize_history_row(row) for row in rows]
+    history = {row['job_id']: normalize_history_row(row) for row in rows}
+    with local_db() as db:
+        owners = {row['id'] for row in db.execute('select id from users') if not user_id or row['id'] == user_id}
+        removed = {(row['user_id'], row['job_id']) for row in db.execute('select user_id,job_id from library_removed')}
+        imports = [dict(row) for row in db.execute('select id,user_id,source_url,created_at,tracks,failures from playlist_imports')
+                   if row['user_id'] in owners]
+    # Failed jobs are durable queue records, even when no browser has synced history.
+    for provider in musicdl.PROVIDERS:
+        for path in (musicdl.QUEUE_ROOT / 'failed' / provider).glob('*.json'):
+            try:
+                job = musicdl.load_job(path, expected_provider=provider)
+                owner, identifier = job.get('owner_id'), job['id']
+                if owner not in owners or (owner, identifier) in removed:
+                    continue
+                display = job.get('display') or {}
+                history[identifier] = {**history.get(identifier, {}),
+                    'job_id': identifier, 'user_id': owner, 'provider': provider, 'state': 'failed',
+                    'title': display.get('title', ''), 'artist': display.get('artist', ''),
+                    'resource_kind': display.get('kind', 'track'),
+                    'created_at': job.get('created_at', ''),
+                    'source_url': (job.get('urls') or [''])[0],
+                    'error': str(job.get('last_error') or f"Echec du telechargeur (code {job.get('last_exit_code', '?')}).")[:500]}
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    for record in imports:
+        tracks = json.loads(record['tracks'])
+        for index, failure in enumerate(json.loads(record['failures'])):
+            source = next((track for track in tracks if track.get('title') == failure.get('title')
+                           and track.get('artist', '') == failure.get('artist', '')), {})
+            identifier = f"import:{record['id']}:{index}"
+            history[identifier] = {'job_id': identifier, 'user_id': record['user_id'], 'provider': 'import',
+                'state': 'failed', 'resource_kind': 'Appariement / import', 'created_at': record['created_at'],
+                'title': failure.get('title', ''), 'artist': failure.get('artist', ''),
+                'source_url': source.get('source_url') or source.get('url') or record['source_url'],
+                'error': str(failure.get('reason') or 'Import impossible.')[:500]}
+    return sorted(history.values(), key=lambda row: row.get('created_at', ''), reverse=True)
 
 
 def local_daily_history_rows() -> list[dict[str, Any]]:

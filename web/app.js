@@ -2503,9 +2503,14 @@ function openAdminDay(item) {
   adminDayDialog.showModal();
 }
 
+let adminHistoryItems = [];
+document.querySelector('#admin-history-filter').addEventListener('change', () => renderAdminHistory(adminHistoryItems));
 function renderAdminHistory(items) {
+  adminHistoryItems = items;
+  const failures = items.filter(item => item.state === 'failed').length;
+  if (document.querySelector('#admin-history-filter').value === 'failed') items = items.filter(item => item.state === 'failed');
   adminHistory.replaceChildren();
-  adminHistoryCount.textContent = `${items.length} son${items.length > 1 ? "s" : ""}`;
+  adminHistoryCount.textContent = `${items.length} son${items.length > 1 ? "s" : ""} · ${failures} échec${failures > 1 ? 's' : ''}`;
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "empty-copy";
@@ -2527,6 +2532,20 @@ function renderAdminHistory(items) {
     const artist = item.artist ? `${item.artist} · ` : "";
     meta.textContent = `${artist}${item.resource_kind || "track"} · ${formatAdminDate(item.created_at)}`;
     body.append(title, meta);
+    if (item.state === 'failed') {
+      const reason = document.createElement('p');
+      reason.className = 'admin-track-error';
+      reason.textContent = item.error || 'Téléchargement échoué. Vérifie le lien sur la plateforme.';
+      body.append(reason);
+      try {
+        const url = new URL(item.source_url);
+        if (['http:', 'https:'].includes(url.protocol)) {
+          const link = document.createElement('a'); link.href = url.href;
+          link.textContent = 'Ouvrir la source'; link.target = '_blank'; link.rel = 'noopener noreferrer';
+          body.append(link);
+        }
+      } catch (_) {}
+    }
     const state = document.createElement("span");
     state.className = `job-state ${item.state}`;
     state.textContent = stateLabels[item.state] || item.state;

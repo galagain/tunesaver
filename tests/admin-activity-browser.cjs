@@ -41,6 +41,19 @@ const {chromium, expect} = require('@playwright/test');
       await page.keyboard.press('Enter');
       await expect(page.locator('#admin-day-users')).toHaveText('Aucun téléchargement ce jour.');
       await page.locator('#admin-day-close').click();
+      await page.evaluate(() => renderAdminHistory([
+        {job_id: 'ok', title: 'Done', state: 'done', provider: 'tiddl'},
+        {job_id: 'failed', title: 'Failed song', artist: 'Artist', state: 'failed', provider: 'qobuz',
+         error: 'Acces refuse', source_url: 'https://play.qobuz.com/track/123'},
+        {job_id: 'missing', title: 'Missing', state: 'failed', provider: 'import', error: 'Aucune correspondance', source_url: 'javascript:alert(1)'},
+      ]));
+      await page.locator('#admin-history-filter').selectOption('failed');
+      await expect(page.locator('.admin-track')).toHaveCount(2);
+      await expect(page.locator('#admin-history')).toContainText('Acces refuse');
+      await expect(page.locator('#admin-history a')).toHaveCount(1);
+      await expect(page.locator('#admin-history a')).toHaveAttribute('href', 'https://play.qobuz.com/track/123');
+      await page.locator('#admin-history').scrollIntoViewIfNeeded();
+      await page.screenshot({path: `/work/admin-failures-${width}.png`});
       expect(errors).toEqual([]);
       await page.close();
       console.log(`${width}: daily proportions, empty day, keyboard, close, savings mode OK`);
