@@ -22,6 +22,57 @@ def collection(kind="playlist", tracks=None):
 
 
 class CatalogMatcherTests(unittest.TestCase):
+    def test_branded_soundcloud_premieres_match_without_channel_credits(self):
+        cases = [
+            ("BCCO Premiere: No Valentia \u2013 They've Always Been Here [TRSN050]", 'BCCO',
+             "They've Always Been Here", 'No Valentia', 356.173),
+            ('GTG Premiere | DJ Dextro \u2014 The H Inside Me [TRSN050]', 'Grab The Groove',
+             'The H Inside Me', 'DJ Dextro', 304.68),
+            ('BCCO Premiere: Funkhaus \u2013 Lumen [TRSN050]', 'BCCO', 'Lumen', 'Funkhaus', 334.866),
+            ('GTG Premiere | AEMN \u2014 Samsara [TRSN050]', 'Grab The Groove', 'Samsara', 'AEMN', 356.32),
+        ]
+        for upload, channel, title, artist, duration in cases:
+            with self.subTest(upload=upload):
+                original = track(upload, channel, duration=duration)
+                normalized = playlist_sources.normalize_soundcloud_track(original)
+                self.assertEqual((normalized['title'], normalized['artist']), (title, artist))
+                self.assertEqual(playlist_sources.normalize_soundcloud_track(normalized), normalized)
+                candidate = track(title, artist, duration=round(duration))
+                catalog = mock.Mock()
+                catalog.search_tracks.return_value = [candidate]
+                result = match_collection({**collection(tracks=[original]), 'provider': 'soundcloud'}, catalog)
+                self.assertEqual(result['matched'], 1)
+                self.assertIsNone(match_track(normalized, [{**candidate, 'artist': 'Different Artist'}])[0])
+                self.assertIsNone(match_track(normalized, [{**candidate, 'mix': 'Other Remix'}])[0])
+                self.assertIsNone(match_track(normalized, [{**candidate, 'duration': duration + 40}])[0])
+        for title in ('Artist - Premiere: Love', 'Premiere Love', 'BCCO Premiere: Love'):
+            self.assertEqual(playlist_sources.normalize_soundcloud_track(track(title, 'Someone'))['title'], title)
+        title = 'GTG Premiere | Artist - Song (Club Remix) [TRSN050]'
+        self.assertEqual(playlist_sources.normalize_soundcloud_track(track(title))['title'], 'Song (Club Remix)')
+
+    def test_named_version_artist_is_equivalent_across_catalogs(self):
+        source = track('So Flute - Ludovic Navarre Amapiano Version 2020',
+                       'St Germain, Ludovic Navarre', duration=223.589)
+        for candidate in (
+                track('So Flute (Ludovic Navarre Amapiano Version 2020)', 'St Germain', duration='3:44'),
+                track('So Flute', 'St Germain', mix='Ludovic Navarre Amapiano Version 2020', duration='3:43')):
+            self.assertIs(match_track(source, [candidate])[0], candidate)
+        for title, artist, duration in (
+                ('So Flute', 'St Germain', 507),
+                ('So Flute (Ludovic Navarre Amapiano Reprise)', 'St Germain', 230),
+                ('So Flute (Other Amapiano Version 2020)', 'St Germain', 224),
+                ('So Flute (Ludovic Navarre Amapiano Version 2020)', 'Other Artist', 224),
+                ('So Flute (Ludovic Navarre Amapiano Version 2020)', 'St Germain', 486)):
+            self.assertIsNone(match_track(source, [track(title, artist, duration=duration)])[0])
+
+    def test_soundcloud_retains_individual_source_for_failed_matches(self):
+        url = 'https://soundcloud.com/channel/artist-song'
+        entry = {'id': 1, 'title': 'BCCO Premiere: Artist - Song [TRSN050]',
+                 'user': {'username': 'BCCO'}, 'duration': 180000, 'permalink_url': url}
+        result = playlist_sources.soundcloud_metadata({'tracks': [entry]}, mock.Mock())['tracks'][0]
+        self.assertEqual(result['source_url'], url)
+        self.assertEqual((result['artist'], result['title']), ('Artist', 'Song'))
+
     def test_spotify_liem_remix_matches_across_credit_formats(self):
         wanted = track('If Only I Could (feat. Steve Lucas) - Liem Remix',
                        'Fusion Groove Orchestra, stevelucas, Liem', duration=426.945)

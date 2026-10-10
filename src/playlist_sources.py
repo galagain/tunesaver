@@ -292,6 +292,12 @@ def normalize_soundcloud_track(track, trusted_artist=True):
     title = track.get("title", "").strip()
     artist = track.get("artist", "").strip()
     cleaned = re.sub(r"^(?:premiere|premi[e\u00e8]re|exclusive|premiere exclusive)\s*:\s*", "", title, flags=re.I)
+    if cleaned == title:
+        # Channels prefix premieres with their brand, not the performing artist.
+        branded = re.match(r"^(?:[^\W_][\w&.']*\s+){0,5}(?:premiere|premi[e\u00e8]re|exclusive)\s*[:|]\s*(.+)$",
+                           title, flags=re.I)
+        if branded and re.search(r"\S\s+[-\u2013\u2014]\s+\S", branded[1]):
+            cleaned = branded[1]
     promotional = cleaned != title
     parts = re.split(r"\s+[-\u2013\u2014]\s+", cleaned, maxsplit=1)
     separated = False
@@ -328,7 +334,8 @@ def soundcloud_metadata(playlist, fetch_missing):
         publisher = entry.get("publisher_metadata") or {}
         artist = publisher.get("artist") or (entry.get("user") or {}).get("username", "")
         duration = entry.get("full_duration") or (0 if entry.get("policy") == "SNIP" else entry.get("duration")) or 0
-        tracks.append(normalize_soundcloud_track({"title": title, "artist": artist, "duration": duration / 1000},
+        tracks.append(normalize_soundcloud_track({"title": title, "artist": artist, "duration": duration / 1000,
+                                                 "source_url": entry.get("permalink_url") or ""},
                                                 trusted_artist=bool(publisher.get("artist"))))
     kind = "album" if playlist.get("is_album") or playlist.get("set_type") in {"album", "ep", "single", "compilation"} else "playlist"
     return {"name": playlist.get("title") or "SoundCloud", "kind": kind, "tracks": tracks, "total": total}
@@ -415,7 +422,7 @@ def matching_metadata(track, aliases=None):
     for credit in all_credits:
         name = normalized_words(credit)
         if name and any(re.search(r'\b' + re.escape(name) + r's?\b', version)
-                        and re.search(r'\b(?:mix|remix|edit|dub|rework)\b', version) for version in versions):
+                        and re.search(r'\b(?:mix|remix|edit|dub|rework|version)\b', version) for version in versions):
             continue
         credits.append(credit)
     artist, artist_guests = split_featured_artists(', '.join(credits or all_credits), aliases)
