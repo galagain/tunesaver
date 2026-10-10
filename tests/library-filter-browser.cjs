@@ -6,6 +6,7 @@ const {chromium, expect} = require('@playwright/test');
     for (const width of [1440, 390]) {
       const page = await browser.newPage({viewport: {width, height: 900}});
       const errors = [];
+      const additions = [];
       const library = {tracks: [
         {job_id: 'one', title: 'First song', artist: 'Artist', provider: 'tiddl', state: 'done'},
         {job_id: 'two', title: 'Second song', artist: 'Artist', provider: 'tiddl', state: 'done'}
@@ -16,6 +17,13 @@ const {chromium, expect} = require('@playwright/test');
         if (path === '/api/config') return route.continue();
         if (path === '/api/feedback') return route.fulfill({json: {threads: []}});
         if (path === '/api/library') return route.fulfill({json: library});
+        const target = path.match(/^\/api\/playlists\/([ab])\/tracks$/);
+        if (target && route.request().method() === 'POST') {
+          const id = route.request().postDataJSON().job_id;
+          library.playlists.find(p => p.id === target[1]).track_ids.push(id);
+          additions.push([target[1], id]);
+          return route.fulfill({json: {ok: true}});
+        }
         if (path === '/api/status') return route.fulfill({json: {active: {}, counts: {}, recent: []}});
         if (path === '/api/history') return route.fulfill({json: {history: []}});
         errors.push(path); return route.fulfill({status: 500});
@@ -41,9 +49,29 @@ const {chromium, expect} = require('@playwright/test');
       await page.locator('[data-playlist-id="a"]').click();
       await expect(filter).toHaveValue('');
       await expect(page.locator('.library-track')).toContainText('First song');
+      const drop = async (playlist, job) => {
+        await page.locator(`[data-playlist-id="${playlist}"]`).evaluate((button, job) => {
+          const dataTransfer = new DataTransfer();
+          dataTransfer.setData('application/x-tunesaver-job', job);
+          button.dispatchEvent(new DragEvent('drop', {dataTransfer, bubbles: true, cancelable: true}));
+        }, job);
+      };
+      await filter.fill('First');
+      await drop('b', 'one');
+      await expect.poll(() => additions.length).toBe(1);
+      await expect(page.locator('[data-playlist-id="b"]')).toContainText('2');
+      await expect(page.locator('[data-playlist-id="a"]')).toHaveAttribute('data-selected', 'true');
+      await expect(filter).toHaveValue('First');
+      await expect(page.locator('.library-track')).toHaveCount(1);
+      await page.locator('.playlist-filter[data-playlist-id=""]').click();
+      await drop('a', 'two');
+      await expect.poll(() => additions.length).toBe(2);
+      await expect(page.locator('[data-playlist-id="a"]')).toContainText('2');
+      await expect(page.locator('.playlist-filter[data-playlist-id=""]')).toHaveAttribute('data-selected', 'true');
+      await expect(page.locator('.library-track')).toHaveCount(2);
       expect(errors).toEqual([]);
       await page.close();
-      console.log(`${width}: filter resets across playlists/library, stays during refresh/sort OK`);
+      console.log(`${width}: filters and current view preserved after playlist drop OK`);
     }
   } finally {await browser.close();}
 })().catch(error => {console.error(error); process.exitCode = 1;});

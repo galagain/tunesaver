@@ -1516,8 +1516,6 @@ function renderPlaylists() {
           method: "POST",
           body: JSON.stringify({ job_id: jobId }),
         });
-        selectedPlaylistId = playlist.id;
-        selectedTagId = "";
         await refreshLibrary();
       } catch (error) {
         showToast(error.message, "error");
