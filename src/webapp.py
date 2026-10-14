@@ -33,6 +33,7 @@ from mutagen import File as MutagenFile, MutagenError
 
 import musicdl
 import feedback
+import database
 import mixer_analysis
 import playlist_sources
 
@@ -203,6 +204,10 @@ def token_hash(token: str) -> str:
 
 @contextmanager
 def local_db() -> Any:
+    if database.enabled():
+        with database.postgres_db() as connection:
+            yield connection
+        return
     LOCAL_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(LOCAL_DB_PATH, timeout=10)
     try:
@@ -219,6 +224,9 @@ def local_db() -> Any:
 
 
 def init_local_store() -> None:
+    if database.enabled():
+        database.check_schema()
+        return
     with local_db() as db:
         db.executescript(
             """
@@ -568,7 +576,7 @@ def local_create_user(email: str, password: str) -> dict[str, Any]:
                 """,
                 (user_id, email, salt, digest, utc_timestamp()),
             )
-    except sqlite3.IntegrityError as exc:
+    except database.INTEGRITY_ERRORS as exc:
         raise PublicError("Ce compte existe déjà. Connecte-toi avec ton mot de passe.", status=409) from exc
     return {"id": user_id, "email": email}
 
@@ -1122,23 +1130,15 @@ def normalize_playlist_row(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def local_playlists(user_id: str) -> list[dict[str, Any]]:
+    if database.enabled():
+        aggregate = "(select string_agg(job_id, chr(10) order by created_at, rowid) from playlist_items where playlist_id=playlists.id)"
+    else:
+        aggregate = "(select group_concat(job_id, char(10)) from (select job_id from playlist_items where playlist_id=playlists.id order by created_at, rowid))"
     with local_db() as db:
         rows = db.execute(
-            """
-            select
-              playlists.id,
-              playlists.name,
-              playlists.created_at,
-              playlist_folder_items.folder_id,
-              (select group_concat(job_id, char(10)) from
-                (select job_id from playlist_items where playlist_id=playlists.id
-                 order by created_at, rowid)) as track_ids
-            from playlists
-            left join playlist_folder_items on playlist_folder_items.playlist_id = playlists.id
-            where playlists.user_id = ?
-            group by playlists.id
-            order by playlists.created_at desc
-            """,
+            f"""select playlists.*, playlist_folder_items.folder_id, {aggregate} as track_ids
+            from playlists left join playlist_folder_items on playlist_folder_items.playlist_id = playlists.id
+            where playlists.user_id = ? order by playlists.created_at desc""",
             (user_id,),
         ).fetchall()
     return [normalize_playlist_row(row) for row in rows]
@@ -1157,22 +1157,15 @@ def normalize_tag_row(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def local_tags(user_id: str) -> list[dict[str, Any]]:
+    if database.enabled():
+        aggregate = "(select string_agg(job_id, chr(10) order by created_at, rowid) from tag_items where tag_id=tags.id)"
+    else:
+        aggregate = "(select group_concat(job_id, char(10)) from (select job_id from tag_items where tag_id=tags.id order by created_at, rowid))"
     with local_db() as db:
         rows = db.execute(
-            """
-            select
-              tags.id,
-              tags.name,
-              tags.color,
-              tags.created_at,
-              (select group_concat(job_id, char(10)) from
-                (select job_id from tag_items where tag_id=tags.id
-                 order by created_at, rowid)) as track_ids
+            f"""select tags.*, {aggregate} as track_ids
             from tags
-            where tags.user_id = ?
-            group by tags.id
-            order by tags.created_at desc
-            """,
+            where tags.user_id = ? order by tags.created_at desc""",
             (user_id,),
         ).fetchall()
     return [normalize_tag_row(row) for row in rows]
@@ -3851,6 +3844,10 @@ async def config_handler(_request: web.Request) -> web.Response:
 
 
 async def health_handler(_request: web.Request) -> web.Response:
+    def check():
+        with local_db() as db:
+            db.execute("select 1")
+    await asyncio.to_thread(check)
     return web.json_response({"status": "ok"})
 
 

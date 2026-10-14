@@ -41,3 +41,5 @@ url-normalize==3.0.0
 urllib3==2.7.0
 yarl==1.24.5
 yt-dlp==2026.8.19
+psycopg==3.3.6
+psycopg-binary==3.3.6

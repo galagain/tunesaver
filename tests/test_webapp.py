@@ -813,8 +813,8 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 db.execute("insert into download_history(job_id,user_id,provider,source_url,state,created_at) values(?,?,?,?,?,?)",
                            (job, user["id"] if i < 3 else other["id"], "tiddl", f"https://tidal.com/track/{i+1}", "done", "2026-09-09"))
             for job in [jobs[2], jobs[0], jobs[1]]:
-                db.execute("insert into playlist_items values(?,?,?)", (playlist["id"], job, "2026-09-09"))
-                db.execute("insert into tag_items values(?,?,?)", (tag["id"], job, "2026-09-09"))
+                db.execute("insert into playlist_items(playlist_id,job_id,created_at) values(?,?,?)", (playlist["id"], job, "2026-09-09"))
+                db.execute("insert into tag_items(tag_id,job_id,created_at) values(?,?,?)", (tag["id"], job, "2026-09-09"))
         self.assertEqual(webapp.local_playlists(user["id"])[0]["track_ids"], [jobs[2], jobs[0], jobs[1]])
         self.assertEqual(webapp.local_tags(user["id"])[0]["track_ids"], [jobs[2], jobs[0], jobs[1]])
         app = webapp.create_app()

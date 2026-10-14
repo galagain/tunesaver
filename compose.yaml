@@ -95,6 +95,13 @@ services:
 
   web:
     <<: *common
+    image: "${TUNESAVER_WEB_IMAGE:-tunesaver:local}"
+    env_file:
+      - path: "${TUNESAVER_DATABASE_ENV:-.env.database}"
+        required: false
+    networks:
+      - default
+      - appsilo
     entrypoint: ["python", "/app/webapp.py"]
     command: []
     restart: unless-stopped
@@ -175,3 +182,9 @@ secrets:
     file: ./secrets/qobuz_user_id
   qobuz_token:
     file: ./secrets/qobuz_token
+
+networks:
+  default: {}
+  appsilo:
+    external: true
+    name: "${APPSILO_DB_NETWORK:-appsilo-db}"

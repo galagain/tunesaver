@@ -19,6 +19,10 @@ LOGGER = logging.getLogger(__name__)
 
 def init_store(db_factory):
     with db_factory() as db:
+        if getattr(db, "dialect", None) == "postgres":
+            # PostgreSQL schema changes belong to the owner migration command.
+            db.execute("select job_id from mixer_analysis limit 0")
+            return
         db.executescript("""
           create table if not exists mixer_analysis (
             job_id text primary key references download_history(job_id) on delete cascade,

@@ -115,7 +115,9 @@ COPY --from=beatport-builder /src/LICENSE /usr/share/licenses/beatportdl/LICENSE
 COPY --from=beatport-builder /out/qobuz-dl /opt/qobuz-dl
 COPY --from=beatport-builder /out/qobuz-dl/LICENSE /usr/share/licenses/qobuz-dl/LICENSE
 COPY src/musicdl.py /app/musicdl.py
-COPY src/webapp.py /app/webapp.py
+COPY src/webapp.py src/database.py /app/
+COPY migrations /app/migrations
+COPY tools/migrate_postgres.py /app/migrate_postgres.py
 COPY src/mixer_analysis.py src/analyze_audio.py /app/
 COPY src/playlist_sources.py /app/playlist_sources.py
 COPY src/spotify_browser.py /app/spotify_browser.py

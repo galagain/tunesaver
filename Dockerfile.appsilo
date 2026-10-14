@@ -1,0 +1,6 @@
+# Deployment accelerator; Dockerfile also contains these changes for clean builds.
+FROM tunesaver:before-appsilo
+RUN python -m pip install --no-cache-dir psycopg==3.3.6 psycopg-binary==3.3.6
+COPY src/webapp.py src/database.py src/mixer_analysis.py /app/
+COPY migrations /app/migrations
+COPY tools/migrate_postgres.py /app/migrate_postgres.py
