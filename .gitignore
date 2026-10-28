@@ -16,3 +16,6 @@ __pycache__/
 .env.database
 *.dump
 *.sqlite
+.venv/
+.build/
+dist/

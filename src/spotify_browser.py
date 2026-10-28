@@ -73,8 +73,8 @@ def read_playlist(playlist_id):
     errors = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
-            executable_path=os.environ.get("TUNESAVER_CHROMIUM_PATH", "/usr/bin/chromium"),
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            executable_path=os.environ.get("TUNESAVER_CHROMIUM_PATH") or (None if sys.platform == "darwin" else "/usr/bin/chromium"),
+            args=[] if sys.platform == "darwin" else ["--no-sandbox", "--disable-dev-shm-usage"],
         )
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")

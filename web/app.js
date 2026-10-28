@@ -335,6 +335,7 @@ async function adminJson(path, options = {}) {
 }
 
 async function authenticatedFetch(url, options = {}, retry = true) {
+  if (publicConfig.desktop) return fetch(url, options);
   if (!session?.access_token) throw new Error("Connexion requise");
   const response = await fetch(url, {
     ...options,
@@ -514,7 +515,7 @@ function showApp() {
   adminView.hidden = true;
   document.querySelector('.sidebar-footer').append(accountArea);
   accountArea.hidden = false;
-  logoutButton.hidden = false;
+  logoutButton.hidden = Boolean(publicConfig.desktop);
   historyToggle.hidden = false;
   queueSection.hidden = true;
   userEmail.textContent = session?.user?.email || "Mon compte";
@@ -2593,6 +2594,13 @@ adminChartSavings.addEventListener("click", () => {
 async function start() {
   try {
     await loadConfig();
+    if (publicConfig.desktop) {
+      session = {access_token: 'local', user: {email: 'Sur ce Mac'}};
+      document.body.classList.add('desktop');
+      showApp();
+      window.dispatchEvent(new Event('desktop-ready'));
+      return;
+    }
     const storedAdmin = JSON.parse(localStorage.getItem("tunesaver.adminSession") || "null");
     if (storedAdmin?.access_token) {
       adminSession = storedAdmin;

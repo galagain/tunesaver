@@ -189,7 +189,7 @@ class MixerAnalysis:
             signature = f"{stat.st_size}:{stat.st_mtime_ns}"
             process = await asyncio.create_subprocess_exec(sys.executable, str(Path(__file__).with_name("analyze_audio.py")), str(path),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
-                env={"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "LANG": "C.UTF-8"})
+                env={"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"})
             output, _ = await asyncio.wait_for(process.communicate(), timeout=300)
             result = json.loads(output)
             if process.returncode or result.get("error"):

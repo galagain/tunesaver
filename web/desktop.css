@@ -1,0 +1,34 @@
+body.desktop #feedback-open, body.desktop #logout-button { display: none !important; }
+.desktop-settings-button { padding: 12px; width: 100%; text-align: left; color: #d8efe2; border: 1px solid #344b40; border-radius: 9px; background: #18251f; cursor: pointer; }
+#desktop-accounts { width: min(780px, calc(100vw - 60px)); max-height: calc(100vh - 72px); padding: 28px; border-radius: 18px; border: 1px solid #39423d; background: #151a17; color: #edf3ee; overflow: auto; }
+#desktop-accounts::backdrop { background: #060b09b8; backdrop-filter: blur(5px); }
+#desktop-accounts header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.desktop-eyebrow { font-size: 10px; letter-spacing: .17em; color: #94c6a6; }
+#desktop-accounts h2 { font-size: 28px; margin: 8px 0 0; letter-spacing: -.035em; }
+#desktop-accounts #desktop-close { border: 0; background: none; font-size: 28px; padding: 0 5px; color: #a2ada6; cursor: pointer; }
+.desktop-intro { color: #a7b5ac; line-height: 1.65; margin: 18px 0 24px; max-width: 660px; }
+#desktop-account-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.desktop-account-card { background: #1c231f; border: 1px solid #343e37; border-radius: 12px; padding: 18px; min-width: 0; }
+.desktop-account-card[data-connected=true] { border-color: #477455; }
+.desktop-account-heading { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.desktop-account-heading h3 { margin: 0; font-size: 19px; }
+.desktop-account-state { color: #a4b0a8; font-size: 12px; }
+[data-connected=true] .desktop-account-state { color: #a0e2b3; }
+#desktop-accounts p, #desktop-accounts summary { font-size: 12px; line-height: 1.6; }
+#desktop-accounts label { display: grid; gap: 6px; font-size: 12px; margin: 12px 0; color: #bdc9c1; }
+#desktop-accounts input { width: 100%; box-sizing: border-box; background: #111713; color: #fff; border: 1px solid #455348; border-radius: 6px; padding: 9px; font: inherit; }
+#desktop-accounts button:not(#desktop-close), .desktop-authorize { background: #c8e9d2; color: #15281b; border: 0; padding: 10px 12px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; text-align: center; }
+#desktop-accounts button:disabled { opacity: .5; cursor: wait; }
+#desktop-accounts .desktop-disconnect { background: #323c35; color: #e4eee7; }
+.desktop-account-message { color: #b6ccbe; overflow-wrap: anywhere; }
+.desktop-authorize { display: block; text-decoration: none; margin: 10px 0; }
+.desktop-authorize[hidden] { display: none; }
+#desktop-accounts details { margin-top: 15px; }
+#desktop-accounts summary { cursor: pointer; color: #a1b9a9; }
+#desktop-accounts .desktop-notice { color: #d4be90; margin-top: 16px; font-size: 11px; }
+#desktop-error { color: #f3a89a; }
+#desktop-accounts footer { display: flex; gap: 24px; align-items: center; margin-top: 24px; border-top: 1px solid #343e37; padding-top: 20px; }
+#desktop-accounts footer strong { font-size: 13px; }
+#desktop-accounts footer p { color: #94a49a; margin: 6px 0 0; }
+#desktop-accounts footer button { flex-shrink: 0; }
+@media (max-width: 700px) { #desktop-account-cards { grid-template-columns: 1fr; } #desktop-accounts footer { flex-direction: column; align-items: start; } }
