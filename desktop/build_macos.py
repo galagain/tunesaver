@@ -223,6 +223,8 @@ def main():
     for item in (resources / "python/bin").iterdir():
         if not item.name.startswith("python"):
             item.unlink()
+    for cache in list(resources.rglob("__pycache__")):
+        shutil.rmtree(cache)
     run("xattr", "-cr", app)
     sign(app, "-")
     (ROOT / "dist/build-info.json").write_text(json.dumps({"version": VERSION, "architecture": arch, "minimum_macos": minimum, "notarized": False}, indent=2) + "\n")

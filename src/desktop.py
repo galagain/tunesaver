@@ -26,6 +26,7 @@ SERVICE = "com.tunesaver.desktop.platforms"
 
 
 def configure(data: Path, resources: Path) -> None:
+    sys.dont_write_bytecode = True
     # A shell's old deployment settings must never point the Mac app at a server.
     for name in list(os.environ):
         if name.startswith(("MUSICDL_", "TUNESAVER_", "TIDDL_")):

@@ -62,7 +62,7 @@ async def browser_test(args):
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(ROOT / ".build/browsers")
     with tempfile.TemporaryDirectory(prefix="tunesaver-smoke-") as folder:
         async def start():
-            process = await asyncio.create_subprocess_exec(str(args.resources / "python/bin/python3.13"),
+            process = await asyncio.create_subprocess_exec(str(args.resources / "python/bin/python3.13"), "-B",
                 str(Path(__file__).resolve()), "--server", "--resources", str(args.resources), "--data-dir", folder,
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd="/tmp")
             line = await asyncio.wait_for(process.stdout.readline(), 30)
@@ -134,6 +134,8 @@ async def browser_test(args):
                 if process.returncode is None:
                     await stop(process)
                 await browser.close()
+        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(args.resources.parents[1])], check=True)
+        print("PASS: application signature remains valid after playback, audio analysis and restart")
 
 
 if __name__ == "__main__":
