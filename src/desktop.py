@@ -92,6 +92,7 @@ class Desktop:
         self.tasks = {}
         self.persisted = {}
         self.storage_error = ""
+        self.session_ready = False
         self.files = {
             "tiddl": [musicdl.STATE_ROOT / "tiddl/auth.json"],
             "beatport": [musicdl.SECRETS_ROOT / "beatport_username",
@@ -176,9 +177,12 @@ class Desktop:
                     except Exception:
                         self.storage_error = "Le Trousseau macOS est inaccessible. Déverrouille-le pour mémoriser tes connexions."
                     self.start_worker(provider)
+                elif provider in self.workers:
+                    await self.stop_worker(provider)
 
     async def context(self, app):
-        await asyncio.to_thread(self.restore)
+        if not self.session_ready:
+            await asyncio.to_thread(self.restore)
         for provider in self.files:
             if self.connected(provider):
                 self.start_worker(provider)
@@ -196,7 +200,10 @@ class Desktop:
             await asyncio.gather(*(self.stop_worker(p) for p in list(self.workers)))
             for provider in self.files:
                 try:
-                    self.persist(provider)
+                    with self.music.provider_lock(provider, "operation", blocking=False):
+                        self.persist(provider)
+                except RuntimeError:
+                    pass  # The terminal owns this platform and will persist its tokens.
                 except Exception:
                     logging.error("Keychain save failed for %s", provider)
 
@@ -278,24 +285,29 @@ class Desktop:
         try:
             # Prevent searches / workers from using credentials before validation.
             with self.music.provider_lock(provider, "operation", blocking=False):
-                if provider == "tiddl":
-                    await self.tidal_login()
-                else:
-                    await asyncio.to_thread(self.password_login, provider, payload)
-                # Keychain writes cannot be cancelled halfway through a disconnect.
-                saving = asyncio.create_task(asyncio.to_thread(self.persist, provider))
+                if self.connected(provider):
+                    raise ValueError("Account already connected")
                 try:
-                    await asyncio.shield(saving)
-                except asyncio.CancelledError:
-                    await saving
+                    if provider == "tiddl":
+                        await self.tidal_login()
+                    else:
+                        await asyncio.to_thread(self.password_login, provider, payload)
+                    # Keychain writes cannot be cancelled halfway through a disconnect.
+                    saving = asyncio.create_task(asyncio.to_thread(self.persist, provider))
+                    try:
+                        await asyncio.shield(saving)
+                    except asyncio.CancelledError:
+                        await saving
+                        raise
+                except Exception:
+                    for path in self.files[provider]:
+                        path.unlink(missing_ok=True)
                     raise
             self.jobs[provider] = {"state": "connected", "message": "Compte connecté sur ce Mac."}
             self.start_worker(provider)
         except asyncio.CancelledError:
             raise
         except Exception:
-            for path in self.files[provider]:
-                path.unlink(missing_ok=True)
             self.jobs[provider] = {"state": "error", "message": "Connexion impossible. Vérifie ton compte, ton abonnement, le réseau et l’accès au Trousseau, puis réessaie."}
         finally:
             payload.clear()
@@ -381,6 +393,19 @@ async def serve(data, parent_watch):
     from aiohttp import web
     import webapp
     desktop = Desktop(data)
+    from local_session import LocalSession
+    lease = LocalSession(data, desktop.restore)
+    await asyncio.to_thread(lease.__enter__)
+    desktop.session_ready = True
+    try:
+        await serve_session(data, parent_watch, desktop)
+    finally:
+        lease.__exit__(None, None, None)
+
+
+async def serve_session(data, parent_watch, desktop):
+    from aiohttp import web
+    import webapp
     app = webapp.create_app(desktop)
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=10)
     stop = asyncio.Event()
@@ -420,17 +445,10 @@ def main():
     except BlockingIOError:
         raise SystemExit("TuneSaver est déjà ouvert pour cette bibliothèque.")
     configure(data, args.resources.resolve())
-    # Remove only transient platform sessions left by an interrupted previous run.
-    shutil.rmtree(data / "session", ignore_errors=True)
-    (data / "session/secrets").mkdir(parents=True, mode=0o700)
     (data / "logs").mkdir(mode=0o700, exist_ok=True)
-    import musicdl
-    musicdl.ensure_layout()
-    musicdl.sync_tiddl_config(musicdl.TIDDL_DOWNLOAD_DIR)
     try:
         asyncio.run(serve(data, args.parent_watch))
     finally:
-        shutil.rmtree(data / "session", ignore_errors=True)
         lock.close()
 
 

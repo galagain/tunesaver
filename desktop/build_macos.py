@@ -13,6 +13,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -20,7 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / ".build"
 SOURCES = BUILD / "sources"
 BIN = BUILD / "bin"
-VERSION = "0.1.0"
+sys.path.insert(0, str(ROOT / "src"))
+from tunesaver_version import VERSION
 PYTHON = "3.13.15"
 ARCHIVES = {
     "beatportdl": ("unspok3n/beatportdl", "878d3f61c5a98cffd43b9e0306b8cbc75488999e", "91f64963d51c0e358a4dcc595e8ef1b081f0e3e5a300e8ac93152a4cfade5bdc"),
@@ -175,6 +177,9 @@ def main():
     for name in ("src", "web", "config"):
         shutil.copytree(ROOT / name, resources / name, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "export_playlist.py", resources / "export_playlist.py")
+    shutil.copy2(ROOT / "desktop/install_cli.py", resources / "install_cli.py")
+    shutil.copy2(ROOT / "desktop/tunesaver", resources / "tunesaver")
+    (resources / "tunesaver").chmod(0o755)
     shutil.copytree(BIN, resources / "bin")
     for name in ("ffmpeg", "ffprobe"):
         shutil.copy2(shutil.which(name), resources / "bin" / name)
@@ -214,7 +219,7 @@ def main():
     icon(resources)
     info = {"CFBundleIdentifier": "com.tunesaver.desktop", "CFBundleName": "TuneSaver", "CFBundleDisplayName": "TuneSaver",
             "CFBundleExecutable": "TuneSaver", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": VERSION,
-            "CFBundleVersion": "1", "CFBundleIconFile": "TuneSaver", "LSMinimumSystemVersion": minimum,
+            "CFBundleVersion": "2", "CFBundleIconFile": "TuneSaver", "LSMinimumSystemVersion": minimum,
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
             "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
             "NSHumanReadableCopyright": "TuneSaver — composants tiers : voir Contents/Resources/Licenses"}
@@ -238,8 +243,11 @@ def main():
         (staging / "Applications").symlink_to("/Applications")
         shutil.copytree(app, staging / "TuneSaver.app", symlinks=True)
         run("hdiutil", "create", "-volname", "TuneSaver", "-srcfolder", staging, "-ov", "-format", "UDZO", ROOT / "dist" / (stem + ".dmg"))
+        cli_archive = ROOT / "dist" / (stem + "-CLI.tar.gz")
+        with tarfile.open(cli_archive, "w:gz") as output:
+            output.add(resources, arcname="TuneSaverCLI")
         checksums = []
-        for path in (ROOT / "dist").glob(stem + ".*"):
+        for path in (archive, ROOT / "dist" / (stem + ".dmg"), cli_archive):
             checksums.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}")
         (ROOT / "dist/SHA256SUMS").write_text("\n".join(sorted(checksums)) + "\n")
     print(f"Ready: {app} ({arch}, macOS {minimum}+, local test signature)")

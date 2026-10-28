@@ -295,12 +295,12 @@ def sync_tiddl_config(download_dir: Path | None = None) -> None:
         raise RuntimeError(f"configuration tiddl absente: {source}")
     content = source.read_text(encoding="utf-8")
     if download_dir is not None:
-        quoted = json.dumps(str(download_dir))
+        quoted = json.dumps(str(download_dir), ensure_ascii=False)
         content = re.sub(
-            r"(?m)^download_path\s*=.*$", f"download_path = {quoted}", content
+            r"(?m)^download_path\s*=.*$", lambda _: f"download_path = {quoted}", content
         )
         content = re.sub(
-            r"(?m)^scan_path\s*=.*$", f"scan_path = {quoted}", content
+            r"(?m)^scan_path\s*=.*$", lambda _: f"scan_path = {quoted}", content
         )
     content_bytes = content.encode("utf-8")
     if destination.is_file() and destination.read_bytes() == content_bytes:

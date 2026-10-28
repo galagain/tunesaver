@@ -1,4 +1,4 @@
-# TuneSaver pour Mac — 0.1.0
+# TuneSaver pour Mac — 0.2.0
 
 L'application ouvre directement une bibliothèque personnelle. Aucun compte
 TuneSaver, administrateur, service SMTP, PostgreSQL ou Docker n'est nécessaire.
@@ -13,7 +13,7 @@ version antérieure de macOS. La compilation Intel n'a pas été validée.
 
 ## Installation et comptes
 
-Ouvrir `dist/TuneSaver-0.1.0-macOS-arm64.dmg`, puis glisser TuneSaver dans
+Ouvrir `dist/TuneSaver-0.2.0-macOS-arm64.dmg`, puis glisser TuneSaver dans
 Applications. Une archive ZIP et l'application `.app` sont également produites.
 Le paquet de développement est signé localement, **sans notarisation Apple**.
 Il sert aux essais locaux ; ce n'est pas encore le paquet destiné à une diffusion
@@ -38,6 +38,61 @@ changement d'API d'avril 2026 affecte ses téléchargements. La connexion et la
 recherche sont prises en charge, mais le téléchargement Qobuz ne doit pas être
 présenté comme validé. Cette limite est affichée dans l'application.
 
+## Utilisation dans le terminal
+
+La commande `tunesaver` fonctionne sans ouvrir l'application, sans serveur HTTP
+et sans service en arrière-plan. Python, FFmpeg et les moteurs sont embarqués ;
+Docker et Homebrew ne sont pas nécessaires sur le Mac de l'utilisateur.
+
+Installer depuis l'application copiée dans Applications, sans la lancer :
+
+```sh
+"/Applications/TuneSaver.app/Contents/Resources/tunesaver" install
+```
+
+Ou utiliser uniquement l'archive terminal, sans installer l'application :
+
+```sh
+tar -xzf TuneSaver-0.2.0-macOS-arm64-CLI.tar.gz
+./TuneSaverCLI/tunesaver install
+```
+
+L'installateur copie son moteur dans
+`~/Library/Application Support/TuneSaver/CLI/` et crée la commande dans
+`~/bin` si ce dossier est déjà dans le PATH, sinon dans `~/.local/bin`.
+Il affiche la ligne à ajouter à `~/.zshrc` si nécessaire. `install --bin-dir
+"$HOME/bin"` permet de choisir ce dossier. Aucun `sudo` n'est nécessaire.
+Le paquet source peut ensuite être déplacé ou supprimé. Une mise à jour conserve
+les anciens moteurs pour ne pas interrompre une commande en cours.
+
+```sh
+tunesaver                       # invite : coller un lien ou chercher un titre
+tunesaver login tidal           # affiche le lien d'autorisation TIDAL
+tunesaver login beatport        # identifiant puis mot de passe masqué
+tunesaver "https://tidal.com/track/123"
+tunesaver download "https://tidal.com/track/123" -o "$HOME/Music/Mon set"
+tunesaver search "artiste titre" # choisir un résultat à télécharger
+tunesaver search "artiste titre" --provider tidal --json
+tunesaver status
+tunesaver logout beatport
+```
+
+Les liens directs acceptés sont ceux de TIDAL, Beatport et Qobuz. Plusieurs liens
+peuvent suivre `download`, ou être lus depuis l'entrée standard (`cat liens.txt |
+tunesaver`). Un script doit connecter ses comptes au préalable avec `login`.
+Les mots de passe et jetons ne sont jamais demandés en argument de commande.
+Qobuz utilise une saisie masquée du jeton de session du lecteur web et reste
+soumis à la limite de téléchargement indiquée plus haut.
+
+Les fichiers vont par défaut dans `~/Music/TuneSaver`. Ils ne sont pas ajoutés
+automatiquement à la bibliothèque de l'application. Les connexions du terminal
+et de l'application partagent le Trousseau macOS : il suffit de connecter chaque
+compte une fois. Les opérations concurrentes d'une même plateforme sont
+verrouillées ; une commande invite à réessayer si la plateforme est occupée.
+Fermer l'application ne coupe pas un téléchargement lancé dans le terminal.
+Ctrl+C interrompt le téléchargement terminal ; des fichiers partiels peuvent
+rester dans le dossier de destination. Le code de sortie est non nul en cas d'échec.
+
 ## Données locales
 
 `~/Library/Application Support/TuneSaver/` contient :
@@ -46,8 +101,10 @@ présenté comme validé. Cette limite est affichée dans l'application.
 - `Music/` : morceaux importés et archives, sans expiration automatique ;
 - `queue/` : tâches et journaux persistants ;
 - `logs/` : diagnostics de l'application et des moteurs ;
-- `session/` : fichiers temporaires de connexion, privés, supprimés à la
-  fermeture et nettoyés au lancement suivant après un arrêt brutal.
+- `session/` : fichiers temporaires de connexion, privés, supprimés après la
+  fermeture du dernier client (application ou terminal), et nettoyés au lancement
+  suivant après un arrêt brutal ;
+- `CLI/` : moteurs autonomes installés pour la commande terminal.
 
 Les connexions persistantes sont dans le Trousseau macOS, sous le service
 `com.tunesaver.desktop.platforms`. Les outils tiers lisent des copies temporaires
@@ -98,8 +155,12 @@ uv venv --python 3.13.15
 uv pip install --python .venv/bin/python -r desktop/requirements.lock
 PATH="$PWD/.build/bin:$PATH" .venv/bin/python -m unittest discover -s tests
 .venv/bin/python tests/desktop_smoke.py --resources dist/TuneSaver.app/Contents/Resources
+.venv/bin/python tests/terminal_smoke.py --resources dist/TuneSaver.app/Contents/Resources
 ```
 
+Les tests couvrent aussi le téléchargement terminal simulé, les chemins avec
+espaces, les sorties d'échec, le renouvellement des connexions, les verrous entre
+clients, le nettoyage après le dernier client et l'installation autonome.
 Les tests couvrent les sessions locales, les refus d'accès intersite, les routes
 désactivées, les connexions simulées, les erreurs du Trousseau, la persistance et
 le nettoyage. L'essai navigateur utilise le Python réellement embarqué, un
