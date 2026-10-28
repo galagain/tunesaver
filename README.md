@@ -4,8 +4,11 @@ Bibliotheque musicale web avec playlists, lecture audio, recherche et import
 de morceaux depuis TIDAL, Beatport et Qobuz. Les comptes sont approuves par
 l'administrateur ; inscriptions et recuperations utilisent des codes par e-mail.
 
-Le projet contient actuellement une application web et des workers Docker.
-L'application de bureau autonome n'est pas encore implementee.
+Le projet contient une application web avec workers Docker et une application
+macOS autonome. La version Mac utilise les comptes personnels de chaque
+utilisateur et stocke sa bibliothèque sur son ordinateur, sans serveur TuneSaver.
+Voir [la version macOS](docs/macos.md) pour l'installation, la construction et
+les limites de cette première version.
 
 ## Installation
 

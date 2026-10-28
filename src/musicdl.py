@@ -287,6 +287,8 @@ def load_job(path: Path, expected_provider: str | None = None) -> dict[str, Any]
 
 
 def sync_tiddl_config(download_dir: Path | None = None) -> None:
+    if download_dir is None and os.environ.get("TUNESAVER_DESKTOP") == "1":
+        download_dir = TIDDL_DOWNLOAD_DIR
     source = CONFIG_ROOT / "tiddl.toml"
     destination = STATE_ROOT / "tiddl" / "config.toml"
     if not source.is_file():
@@ -605,7 +607,9 @@ def stream_command(
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 while True:
-                    if ACTIVE_JOB_PATH is not None and not ACTIVE_JOB_PATH.exists():
+                    if (ACTIVE_JOB_PATH is not None and not ACTIVE_JOB_PATH.exists()) or not desktop_parent_alive():
+                        if not desktop_parent_alive():
+                            STOP_EVENT.set()
                         try:
                             os.killpg(process.pid, signal.SIGKILL)
                         except ProcessLookupError:
@@ -658,7 +662,9 @@ def _run_provider_unlocked(
 
     if provider == "tiddl":
         sync_tiddl_config(output_dir)
-        command = ["tiddl", "download", "--raise-errors", "url", *urls]
+        command = ([sys.executable, str(Path(__file__).with_name("desktop_tiddl.py"))]
+                   if os.environ.get("TUNESAVER_DESKTOP") == "1" else ["tiddl"])
+        command.extend(["download", "--raise-errors", "url", *urls])
         try:
             return stream_command(
                 command, cwd=None, log_path=log_path, environment=environment
@@ -899,6 +905,13 @@ def signal_handler(signum: int, _frame: Any) -> None:
     global SIGNAL_COUNT
     SIGNAL_COUNT += 1
     STOP_EVENT.set()
+    if os.environ.get("TUNESAVER_DESKTOP") == "1":
+        if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is None:
+            try:
+                os.killpg(ACTIVE_PROCESS.pid, signal.SIGTERM if SIGNAL_COUNT == 1 else signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        return
     if SIGNAL_COUNT == 1:
         print(
             f"[musicdl] signal {signum}: arrêt après la tâche en cours",
@@ -910,6 +923,11 @@ def signal_handler(signum: int, _frame: Any) -> None:
     if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is None:
         print("[musicdl] second signal: interruption forcée", file=sys.stderr, flush=True)
         ACTIVE_PROCESS.terminate()
+
+
+def desktop_parent_alive() -> bool:
+    parent = os.environ.get("TUNESAVER_PARENT_PID")
+    return not parent or str(os.getppid()) == parent
 
 
 def worker(provider: str, *, once: bool, poll_interval: float) -> int:
@@ -932,7 +950,7 @@ def worker(provider: str, *, once: bool, poll_interval: float) -> int:
         signal.signal(signal.SIGINT, signal_handler)
         print(f"[musicdl] worker {provider} prêt", flush=True)
 
-        while not STOP_EVENT.is_set():
+        while not STOP_EVENT.is_set() and desktop_parent_alive():
             pending = sorted((QUEUE_ROOT / "pending" / provider).glob("*.json"))
             if pending:
                 process_job(provider, pending[0])

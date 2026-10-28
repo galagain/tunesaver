@@ -31,10 +31,11 @@ func run() error {
 	cacheFile := flag.String("cache-file", "/state/beatportdl/beatportdl-credentials.json", "cache OAuth BeatportDL")
 	proxy := flag.String("proxy", "", "proxy HTTP facultatif")
 	collection := flag.String("collection", "", "playlist ou chart")
+	authOnly := flag.Bool("auth-only", false, "valider le compte sans recherche")
 	flag.Parse()
 
 	query := strings.TrimSpace(strings.Join(flag.Args(), " "))
-	if query == "" {
+	if query == "" && !*authOnly {
 		return fmt.Errorf("recherche vide")
 	}
 	username, err := readSecret(*usernameFile)
@@ -52,6 +53,10 @@ func run() error {
 		if err := auth.Init(client); err != nil {
 			return fmt.Errorf("authentification Beatport: %w", err)
 		}
+	}
+	if *authOnly {
+		fmt.Printf("%s{\"authenticated\":true}\n", outputPrefix)
+		return nil
 	}
 	var results interface{}
 	if *collection != "" {
