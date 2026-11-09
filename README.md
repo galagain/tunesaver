@@ -4,8 +4,22 @@ Bibliotheque musicale web avec playlists, lecture audio, recherche et import
 de morceaux depuis TIDAL, Beatport et Qobuz. Les comptes sont approuves par
 l'administrateur ; inscriptions et recuperations utilisent des codes par e-mail.
 
-Le projet contient actuellement une application web et des workers Docker.
-L'application de bureau autonome n'est pas encore implementee.
+Le projet contient une application web avec workers Docker et une application
+macOS autonome avec une commande `tunesaver` utilisable sans ouvrir l'application.
+La version Mac utilise les comptes personnels de chaque
+utilisateur et stocke sa bibliothèque sur son ordinateur, sans serveur TuneSaver.
+Voir [la version macOS](docs/macos.md) pour l'installation, la construction et
+les commandes terminal et les limites de cette version.
+
+Après installation de la commande sur Mac :
+
+```sh
+tunesaver login tidal
+tunesaver                       # coller un lien ou chercher un titre
+tunesaver "https://tidal.com/track/123"
+```
+
+Les téléchargements terminal sont enregistrés dans `~/Music/TuneSaver`.
 
 ## Installation
 

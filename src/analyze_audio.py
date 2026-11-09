@@ -196,7 +196,8 @@ def analyze(path: Path) -> dict:
 
 if __name__ == "__main__":
     os.nice(10)
-    resource.setrlimit(resource.RLIMIT_AS, (2 * 1024 ** 3, 2 * 1024 ** 3))
+    if sys.platform != "darwin":
+        resource.setrlimit(resource.RLIMIT_AS, (2 * 1024 ** 3, 2 * 1024 ** 3))
     resource.setrlimit(resource.RLIMIT_CPU, (240, 240))
     try:
         print(json.dumps(analyze(Path(sys.argv[1]).resolve()), allow_nan=False))

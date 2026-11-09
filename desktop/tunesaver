@@ -1,0 +1,14 @@
+#!/bin/sh
+# Resolve the installed symlink to the portable runtime, including paths with spaces.
+script=$0
+while [ -L "$script" ]; do
+    directory=$(CDPATH= cd -P "$(dirname "$script")" && pwd) || exit 1
+    target=$(readlink "$script") || exit 1
+    case "$target" in
+        /*) script=$target ;;
+        *) script=$directory/$target ;;
+    esac
+done
+resources=$(CDPATH= cd -P "$(dirname "$script")" && pwd) || exit 1
+unset PYTHONHOME PYTHONPATH PYTHONSTARTUP DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_INSERT_LIBRARIES
+exec "$resources/python/bin/python3.13" -E -s -B "$resources/src/terminal.py" "$@"

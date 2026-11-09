@@ -112,6 +112,7 @@ AUTH_CACHE_KEY = web.AppKey("auth_cache", dict)
 ADMIN_SESSIONS_KEY = web.AppKey("admin_sessions", dict)
 PLAYLIST_TICKETS_KEY = web.AppKey("playlist_tickets", dict)
 PLAYLIST_ZIP_LOCK_KEY = web.AppKey("playlist_zip_lock", asyncio.Lock)
+DESKTOP_KEY = web.AppKey("desktop", object)
 
 
 class PublicError(Exception):
@@ -1397,6 +1398,9 @@ async def api_middleware(
 ) -> web.StreamResponse:
     try:
         _check_local_host(request)
+        desktop = request.app.get(DESKTOP_KEY)
+        if desktop is not None:
+            return await desktop.handle_request(request, handler)
         public_paths = {
             *(f'/{asset}' for asset in BRAND_ASSETS),
             "/",
@@ -2053,6 +2057,10 @@ def configured_beatport_proxy() -> str:
 
 def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "") -> dict[str, Any]:
     command = [BEATPORT_SEARCH_BINARY]
+    if os.environ.get("TUNESAVER_DESKTOP") == "1":
+        command.extend(["--username-file", str(musicdl.SECRETS_ROOT / "beatport_username"),
+                        "--password-file", str(musicdl.SECRETS_ROOT / "beatport_password"),
+                        "--cache-file", str(BEATPORT_CACHE_PATH)])
     if proxy:
         command.extend(["--proxy", proxy])
     if collection:
@@ -3886,6 +3894,7 @@ async def config_handler(_request: web.Request) -> web.Response:
     return web.json_response(
         {
             "public_url": PUBLIC_URL,
+            "desktop": DESKTOP_KEY in _request.app,
         }
     )
 
@@ -3900,6 +3909,9 @@ async def health_handler(_request: web.Request) -> web.Response:
 
 async def index_handler(_request: web.Request) -> web.StreamResponse:
     html = (ASSET_ROOT / "index.html").read_text(encoding="utf-8")
+    if DESKTOP_KEY in _request.app:
+        html = html.replace('<script src="/feedback.js?v=1" defer></script>',
+                            '<script src="/desktop.js" defer></script><link rel="stylesheet" href="/desktop.css">')
     return web.Response(text=html, content_type="text/html")
 
 
@@ -3915,7 +3927,7 @@ async def stylesheet_handler(_request: web.Request) -> web.StreamResponse:
     return web.FileResponse(ASSET_ROOT / "style.css", headers={"Content-Type": "text/css; charset=utf-8"})
 
 
-def create_app() -> web.Application:
+def create_app(desktop=None) -> web.Application:
     init_local_store()
     app = web.Application(middlewares=[api_middleware], client_max_size=JSON_BODY_LIMIT)
     app[SEARCH_SEMAPHORES_KEY] = {
@@ -3932,10 +3944,14 @@ def create_app() -> web.Application:
     app[ADMIN_SESSIONS_KEY] = {}
     app[PLAYLIST_TICKETS_KEY] = {}
     app[PLAYLIST_ZIP_LOCK_KEY] = asyncio.Lock()
+    if desktop is not None:
+        app[DESKTOP_KEY] = desktop
+        desktop.register(app)
     app.cleanup_ctx.append(playlist_import_context)
-    app.cleanup_ctx.append(audio_retention_context)
-    import download_fallback
-    app.cleanup_ctx.append(lambda app: download_fallback.context(sys.modules[__name__]))
+    if desktop is None:
+        app.cleanup_ctx.append(audio_retention_context)
+        import download_fallback
+        app.cleanup_ctx.append(lambda app: download_fallback.context(sys.modules[__name__]))
     app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
     feedback.register(app, local_db, read_json_object, PublicError)
