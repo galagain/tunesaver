@@ -26,6 +26,7 @@ export const ExternalLink = ['svg', searchAttributes, [['path', { d: 'M15 3h6v6'
 export const ListPlus = ['svg', searchAttributes, [['path', { d: 'M11 12H3' }], ['path', { d: 'M16 6H3' }], ['path', { d: 'M16 18H3' }], ['path', { d: 'M18 9v6' }], ['path', { d: 'M21 12h-6' }]]];
 // Lucide v0.468.0, ISC; see LUCIDE-LICENSE.
 export const ChevronDown = ['svg', searchAttributes, [['path', { d: 'm6 9 6 6 6-6' }]]];
+export const ArrowDown = ['svg', searchAttributes, [['path', { d: 'M12 5v14' }], ['path', { d: 'm19 12-7 7-7-7' }]]];
 export const Library = ['svg', searchAttributes, [['path', { d: 'm16 6 4 14' }], ['path', { d: 'M12 6v14' }], ['path', { d: 'M8 8v12' }], ['path', { d: 'M4 4v16' }]]];
 export const History = ['svg', searchAttributes, [['path', { d: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' }], ['path', { d: 'M3 3v5h5' }], ['path', { d: 'M12 7v5l4 2' }]]];
 export const ListMusic = ['svg', searchAttributes, [['path', { d: 'M21 15V6' }], ['path', { d: 'M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z' }], ['path', { d: 'M12 12H3' }], ['path', { d: 'M16 6H3' }], ['path', { d: 'M12 18H3' }]]];

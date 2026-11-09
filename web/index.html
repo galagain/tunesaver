@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="dark">
     <title>TuneSaver</title>
     <link rel="icon" type="image/svg+xml" sizes="any" href="/tunesaver.svg?v=2">
-    <link rel="stylesheet" href="/style.css?v=20261109-library">
-    <script src="/app.js?v=20261109-library" defer></script>
+    <link rel="stylesheet" href="/style.css?v=20261109-flow">
+    <script src="/app.js?v=20261109-flow" defer></script>
     <script src="/feedback.js?v=1" defer></script>
   </head>
   <body>
@@ -104,10 +104,8 @@
           </div>
         </form>
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
-        <details class="search-sources" open>
-          <summary><span>Sources &amp; qualité audio</span><span data-ui-icon="ChevronDown" aria-hidden="true"></span></summary>
+        <section class="search-sources" aria-label="Sources musicales vers audio lossless">
           <div class="search-guide">
-            <header class="search-guide-heading"><span class="search-eyebrow">ENTRÉE</span><h2>Vos sources musicales</h2><p>Morceaux, albums, EP et playlists.</p></header>
             <div class="search-source-grid">
               <div class="search-source" data-brand="spotify"><img src="/vendor/brands/spotify.svg" alt="" width="32" height="32"><strong>Spotify</strong></div>
               <div class="search-source" data-brand="applemusic"><img src="/vendor/brands/applemusic.svg" alt="" width="32" height="32"><strong>Apple Music</strong></div>
@@ -116,15 +114,14 @@
               <div class="search-source" data-brand="beatport"><img src="/vendor/brands/beatport.svg" alt="" width="32" height="32"><strong>Beatport</strong></div>
               <div class="search-source"><img class="qobuz-source-logo" src="/vendor/brands/qobuz.ico" alt="" width="32" height="32"><strong>Qobuz</strong></div>
             </div>
-            <p class="search-source-note">Également : charts Beatport et sets SoundCloud.</p>
             <div class="search-input-formats">
-              <div><span data-ui-icon="Search" aria-hidden="true"></span><div><strong>Titre ou artiste</strong><span>Recherche libre</span></div></div>
-              <div><span data-ui-icon="Link" aria-hidden="true"></span><div><strong>Un ou plusieurs liens</strong><span>Un lien par ligne</span></div></div>
-              <div><span data-ui-icon="FileText" aria-hidden="true"></span><div><strong>Import .txt</strong><span>Liens ou export TuneSaver</span></div></div>
+              <div><span data-ui-icon="Search" aria-hidden="true"></span><strong>Titre ou artiste</strong></div>
+              <div><span data-ui-icon="Link" aria-hidden="true"></span><strong>Liens</strong></div>
+              <div><span data-ui-icon="FileText" aria-hidden="true"></span><strong>Fichier .txt</strong></div>
             </div>
-            <div class="search-flow-divider" aria-hidden="true"><span data-ui-icon="ChevronDown"></span></div>
+            <div class="search-flow-divider" aria-hidden="true"><span data-ui-icon="ArrowDown"></span></div>
             <section class="search-output" aria-labelledby="search-output-title">
-              <div class="search-output-heading"><span class="search-eyebrow">SORTIE</span><h2 id="search-output-title">Lossless<span>Sans perte.</span></h2><p>Selon la disponibilité du morceau et du catalogue.</p></div>
+              <h2 id="search-output-title">Lossless <span>Sans perte</span></h2>
               <div class="search-output-platforms" aria-label="Plateformes de téléchargement lossless">
                 <div><img src="/vendor/brands/tidal.svg" alt="" width="22" height="22"><span>TIDAL</span></div>
                 <div><img src="/vendor/brands/beatport.svg" alt="" width="22" height="22"><span>Beatport</span></div>
@@ -132,7 +129,7 @@
               </div>
             </section>
           </div>
-        </details>
+        </section>
       </section>
 
       <section id="results-section" class="results-section" aria-label="Musiques trouvées" hidden>

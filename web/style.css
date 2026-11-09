@@ -2249,12 +2249,6 @@ body:has(#app-view:not([hidden])) { overflow: hidden; }
 
 #search-view .search-section { margin: 0; padding: 0; }
 .search-sources { margin: 0 0 16px; }
-.search-sources summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 2px; color: #a4a4a4; font-size: 11px; cursor: pointer; list-style: none; }
-.search-sources summary::-webkit-details-marker { display: none; }
-.search-sources summary:focus-visible { outline: 2px solid #a3dac7; outline-offset: -2px; }
-.search-sources summary > [data-ui-icon] { display: flex; flex: 0 0 16px; }
-.search-sources summary svg { width: 16px; height: 16px; }
-.search-sources[open] summary > [data-ui-icon] { transform: rotate(180deg); }
 .search-guide { max-width: 860px; margin: 24px auto 40px; padding: 0 20px; }
 .search-guide-heading { text-align: center; }
 .search-eyebrow { display: block; font-size: 10px; line-height: 16px; font-weight: 600; color: #939393; }
@@ -2520,6 +2514,19 @@ body.file-drop-active::after { content: ''; position: fixed; inset: 5px; z-index
 @media(max-width:700px) { #search-view .result-card { grid-template-columns: 40px 34px minmax(0, 1fr); gap: 6px 8px; padding: 8px; } #search-view .result-actions { grid-column: 3; justify-content: flex-start; } }
 
 /* Shared library surfaces and transport. */
+.search-sources .search-guide { max-width: 760px; margin: 36px auto; }
+.search-sources .search-source-grid { padding: 16px 0 28px; }
+.search-sources .search-input-formats { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px 28px; padding: 16px 0; border: 0; }
+.search-sources .search-input-formats > div { justify-content: center; gap: 8px; }
+.search-sources .search-flow-divider { justify-content: center; margin: 12px 0 18px; color: #68dfb4; }
+.search-sources .search-flow-divider::before, .search-sources .search-flow-divider::after { display: none; }
+.search-sources .search-flow-divider svg { width: 76px; height: 76px; stroke-width: 1.5; }
+.search-sources .search-output { display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 0; border: 0; text-align: center; }
+.search-sources .search-output h2 { margin: 0; font-size: 22px; }
+.search-sources .search-output h2 span { display: block; margin: 0; font-size: 12px; line-height: 22px; }
+.search-sources .search-output-platforms { width: 100%; justify-content: center; gap: 48px; }
+.search-sources .search-output-platforms img { width: 30px; height: 30px; }
+#search-view:has(#results-section:not([hidden]) .result-card) .search-sources { display: none; }
 #app-view { --accent: #67e5b0; --ui-border: #303334; --ui-muted: #979d9b; }
 #app-view > .workspace { width: min(1760px, calc(100% - 32px)); grid-template-columns: 224px minmax(0, 1fr); gap: 28px; padding-top: 22px; padding-bottom: 16px; }
 .workspace .library-sidebar { padding-right: 16px; border-color: #2c2e2e; }

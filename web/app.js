@@ -164,7 +164,7 @@ const trackCollator = new Intl.Collator('fr', { numeric: true, sensitivity: 'bas
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
 const deletedJobIds = new Set();
-const uiIcons = Promise.all([import('/vendor/mixer-icons.js'), import('/vendor/player-icons.js?v=20261109-library')])
+const uiIcons = Promise.all([import('/vendor/mixer-icons.js'), import('/vendor/player-icons.js?v=20261109-flow')])
   .then(([mixer, player]) => ({ ...mixer, ...player }));
 function appendUIIcon(element, name) {
   uiIcons.then(icons => { element.append(icons.createElement(icons[name], { 'aria-hidden': 'true' })); });
@@ -1011,7 +1011,6 @@ form.addEventListener("submit", async (event) => {
       await enqueueList(lines);
       return;
     }
-    document.querySelector('.search-sources').open = false;
     resultsSection.hidden = false;
     if (looksLikeDirectLink(query)) {
       searchResultsByProvider.clear(); lastTextSearch = '';
