@@ -7,6 +7,7 @@ import test_audio_retention as retention_fixtures
 import test_webapp as fixtures
 from test_webapp import webapp, musicdl
 import audio_retention
+import import_engine
 
 
 class PlaylistRetryTests(unittest.IsolatedAsyncioTestCase):
@@ -60,3 +61,11 @@ class PlaylistRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('matching', updated[1])
         self.assertEqual(row['state'], 'running')
         self.assertEqual(json.loads(row['failures']), [])
+        def match_remaining(source, catalog, on_event):
+            self.assertEqual([t['title'] for t in source['tracks']], ['Missing'])
+            on_event({'type': 'track_updated', 'number': 1, 'status': 'not_found', 'final': True})
+        with mock.patch.object(import_engine.matcher, 'match_collection', side_effect=match_remaining):
+            import_engine.process(webapp, dict(row))
+        with webapp.local_db() as db:
+            row = db.execute('select tracks from playlist_imports where id=?', ('retry-import',)).fetchone()
+        self.assertEqual(json.loads(row['tracks'])[0]['matching']['job_id'], 'existing')
