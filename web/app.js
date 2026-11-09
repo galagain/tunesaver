@@ -90,6 +90,46 @@ document.querySelector('.sidebar-brand').addEventListener('click', event => {
   event.preventDefault();
   document.querySelector('.library-nav-content [data-collection=""]').click();
 });
+
+(() => {
+  const label = document.querySelector('.brand-wordmark-text');
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const words = ['TuneSaver', 'ThuneSaver'];
+  let timer, word = 0, deleting = true;
+  const active = () => !reducedMotion.matches && !document.hidden && !appView.hidden;
+  function tick() {
+    if (!active()) return;
+    if (deleting) {
+      label.textContent = label.textContent.slice(0, -1);
+      if (!label.textContent) {
+        word = (word + 1) % words.length;
+        deleting = false;
+        timer = setTimeout(tick, 250);
+        return;
+      }
+    } else {
+      label.textContent = words[word].slice(0, label.textContent.length + 1);
+      if (label.textContent === words[word]) {
+        deleting = true;
+        timer = setTimeout(tick, 3500);
+        return;
+      }
+    }
+    timer = setTimeout(tick, deleting ? 65 : 125);
+  }
+  function sync() {
+    clearTimeout(timer);
+    label.textContent = words[0];
+    word = 0;
+    deleting = true;
+    if (active()) timer = setTimeout(tick, 3500);
+  }
+  reducedMotion.addEventListener('change', sync);
+  document.addEventListener('visibilitychange', sync);
+  new MutationObserver(sync).observe(appView, { attributes: true, attributeFilter: ['hidden'] });
+  sync();
+})();
+
 document.querySelector('.library-nav-content').addEventListener('click', event => {
   if (event.target.closest('[data-collection]')) {
     librarySearchScope = null;

@@ -99,6 +99,14 @@ textarea:focus-visible {
   filter: none;
 }
 
+.brand-wordmark { display: inline-grid; flex-shrink: 0; line-height: 1.3; padding-right: 5px; }
+.brand-wordmark > span { grid-area: 1 / 1; }
+.brand-wordmark-size { visibility: hidden; padding-right: 4px; }
+.brand-wordmark-text { justify-self: start; white-space: nowrap; }
+.brand-wordmark-text::after { content: ''; display: inline-block; width: 1px; height: 0.9em; margin-left: 3px; vertical-align: -0.05em; background: #67e5b0; animation: brand-caret 1.1s step-end infinite; }
+@keyframes brand-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .brand-wordmark-text::after { display: none; animation: none; } }
+
 .brand-icon path {
   fill: none;
   stroke: #101010;
