@@ -32,6 +32,14 @@
 - **Connecter un appareil depuis le web**, sans recopier les fichiers des comptes.
 - **Synchroniser le catalogue** : titres, artistes, plateformes et liens. Les audios restent sur leur machine.
 
+<p align="center">
+  <img src="docs/assets/download-preview.png" alt="Vue Télécharger de TuneSaver : recherche par titre, artiste, lien ou fichier texte depuis six plateformes, puis téléchargement via TIDAL, Beatport ou Qobuz" width="960">
+</p>
+
+Les liens et playlists servent à retrouver les titres sur **TIDAL, Beatport ou
+Qobuz**. La disponibilité et la qualité audio dépendent du catalogue, de votre
+abonnement et des réglages de téléchargement.
+
 ## Démarrer
 
 | Vous souhaitez… | Choisissez… | Première étape |
