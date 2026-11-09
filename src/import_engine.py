@@ -234,12 +234,14 @@ def process(api, record):
             remaining = [i for i in range(total) if i not in completed]
             source = {'name': settings.get('name', ''),
                       'kind': settings.get('kind', 'playlist') if len(remaining) == total else 'playlist',
-                      'source': record['source_url'], 'tracks': [tracks[i] for i in remaining]}
+                      'source': record['source_url'],
+                      'tracks': tracks if not completed else [tracks[i] for i in remaining]}
             def remaining_event(value):
                 if 'number' in value:
                     value = {**value, 'number': remaining[value['number'] - 1] + 1}
                 event(value)
-            matcher.match_collection(source, matcher.Catalog(), on_event=remaining_event)
+            matcher.match_collection(source, matcher.Catalog(), on_event=remaining_event,
+                                     max_tracks=total if not completed else 0)
         active()
         with api.local_db() as db:
             state = 'matched' if not download else 'partial' if failures or record['error'] else 'done'

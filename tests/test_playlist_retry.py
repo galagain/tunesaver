@@ -61,7 +61,7 @@ class PlaylistRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('matching', updated[1])
         self.assertEqual(row['state'], 'running')
         self.assertEqual(json.loads(row['failures']), [])
-        def match_remaining(source, catalog, on_event):
+        def match_remaining(source, catalog, on_event, **kwargs):
             self.assertEqual([t['title'] for t in source['tracks']], ['Missing'])
             on_event({'type': 'track_updated', 'number': 1, 'status': 'not_found', 'final': True})
         with mock.patch.object(import_engine.matcher, 'match_collection', side_effect=match_remaining):
