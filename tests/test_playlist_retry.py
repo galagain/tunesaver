@@ -1,4 +1,5 @@
 import json
+import errno
 import unittest
 from unittest import mock
 
@@ -23,7 +24,13 @@ class PlaylistRetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(webapp.retry_playlist(owner, playlist)['unchanged'], 1)
         (directory / 'song.flac').unlink()
         self.assertEqual(webapp.retry_playlist(owner, playlist, errors_only=True)['queued'], 0)
-        result = webapp.retry_playlist(owner, playlist)
+        replace = audio_retention.os.replace
+        def separate_mounts(source, destination):
+            if source == path:
+                raise OSError(errno.EXDEV, 'separate Docker mounts')
+            return replace(source, destination)
+        with mock.patch.object(audio_retention.os, 'replace', side_effect=separate_mounts):
+            result = webapp.retry_playlist(owner, playlist)
         self.assertEqual(result, {'queued': 1, 'unchanged': 0, 'matching': 0, 'errors': []})
         self.assertEqual(webapp.retry_playlist(owner, playlist)['unchanged'], 1)
         pending = musicdl.load_job(musicdl.QUEUE_ROOT / 'pending' / 'tiddl' / path.name)

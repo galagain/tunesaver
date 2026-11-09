@@ -1,5 +1,6 @@
 """Seven-day retention for owned web audio; queue metadata is kept permanently."""
 import asyncio
+import errno
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import os
@@ -104,7 +105,15 @@ def requeue(api, owner, identifier):
                 job['attempts'] = 0
                 musicdl.atomic_write_json(path, job)
                 pending = musicdl.QUEUE_ROOT / 'pending' / provider / path.name
-                os.replace(path, pending)
+                try:
+                    os.replace(path, pending)
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+                    # Docker can bind-mount queue states separately. Workers
+                    # share this enqueue lock, so they cannot claim the copy yet.
+                    musicdl.atomic_write_json(pending, job)
+                    path.unlink()
                 with api.local_db() as db:
                     db.execute("update download_history set state='pending', completed_at=null, delivered_at=null where job_id=? and user_id=?",
                                (identifier, owner))
