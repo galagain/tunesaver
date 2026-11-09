@@ -22,6 +22,22 @@ def collection(kind="playlist", tracks=None):
 
 
 class CatalogMatcherTests(unittest.TestCase):
+    def test_video_versions_match_across_catalogs_only_with_matching_duration(self):
+        source = track('The Man With The Red Face', 'Laurent Garnier', mix='Video Mix', duration='9:10')
+        for label in ('Video', 'Video Edit', 'Video Version'):
+            for candidate in (
+                    track(f'The Man With The Red Face ({label})', 'Laurent Garnier', duration='9:10'),
+                    track('The Man With The Red Face', 'Laurent Garnier', mix=label, duration='9:11')):
+                self.assertIs(match_track(source, [candidate])[0], candidate)
+                self.assertIs(match_track(candidate, [source])[0], source)
+        for candidate in (
+                track('The Man With The Red Face (Video)', 'Laurent Garnier', duration='3:35'),
+                track('The Man With The Red Face (Video)', 'Laurent Garnier', duration=None),
+                track('The Man With The Red Face (Video)', 'Someone Else', duration='9:10'),
+                track('The Man With The Red Face', 'Laurent Garnier', duration='9:10'),
+                track('The Man With The Red Face (Svek Remix)', 'Laurent Garnier', duration='9:10')):
+            self.assertIsNone(match_track(source, [candidate])[0])
+
     def test_branded_soundcloud_premieres_match_without_channel_credits(self):
         cases = [
             ("BCCO Premiere: No Valentia \u2013 They've Always Been Here [TRSN050]", 'BCCO',

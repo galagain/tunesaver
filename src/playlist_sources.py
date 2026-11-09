@@ -450,7 +450,7 @@ def matching_duration(value):
 
 
 def split_release_edition(title):
-    match = re.search(r"\s+(radio edit|radio version|extended mix|extended version|single version|album version|edit)$", title)
+    match = re.search(r"\s+(radio edit|radio version|extended mix|extended version|single version|album version|video mix|video edit|video version|video|edit)$", title)
     return (title[:match.start()], match[1]) if match else (title, "")
 
 
@@ -482,8 +482,12 @@ def matching_track(track, candidates):
             # Some catalogs omit standard release labels. Accept a missing label
             # only with near-identical durations. Explicit editions must be
             # the same standard label, not e.g. a radio edit versus an extended mix.
-            edition_aliases = {'radio version': 'radio edit', 'extended version': 'extended mix'}
+            edition_aliases = {'radio version': 'radio edit', 'extended version': 'extended mix',
+                               'video mix': 'video', 'video edit': 'video', 'video version': 'video'}
             equivalent = bool(edition and other_edition) and edition_aliases.get(edition, edition) == edition_aliases.get(other_edition, other_edition)
+            # Video labels vary across catalogs, but must be explicit on both sides.
+            if (edition.startswith('video') or other_edition.startswith('video')) and not equivalent:
+                continue
             if (base != other_base or (bool(edition) == bool(other_edition) and not equivalent)
                     or difference is None or difference > 2):
                 continue
