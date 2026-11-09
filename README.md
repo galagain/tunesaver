@@ -45,10 +45,14 @@
 
 1. Télécharger le [DMG 0.4.0](https://github.com/galagain/tunesaver/releases/download/v0.4.0/TuneSaver-0.4.0-macOS-arm64.dmg).
 2. Glisser **TuneSaver** dans **Applications**.
-3. Ouvrir **Mes plateformes → Se connecter avec TuneSaver**.
+3. Ouvrir **Mes plateformes** et connecter son compte TIDAL, Beatport ou Qobuz.
 
-Le navigateur reconnaît votre session TuneSaver. Confirmez le code affiché et les
-plateformes à connecter. La connexion manuelle reste disponible.
+Les connexions individuelles utilisent vos propres comptes, directement auprès des
+plateformes : aucun compte sur le serveur TuneSaver n’est nécessaire.
+
+Le bouton **Se connecter avec TuneSaver** propose un autre parcours : importer les
+connexions mises à disposition par le serveur. Il nécessite un compte TuneSaver
+approuvé et une confirmation du code affiché dans le navigateur.
 
 > Le paquet actuel cible **Apple Silicon et macOS 26 ou plus récent**. Il est signé
 > localement, mais **pas encore notarié par Apple** ; macOS peut bloquer son ouverture.
@@ -60,19 +64,68 @@ Dans l’application : **TuneSaver → Installer la commande tunesaver…**, pui
 un nouveau terminal. Python et les outils audio sont inclus ; aucun Docker ni
 Homebrew n’est nécessaire pour utiliser le client Mac.
 
+Pour connecter votre propre compte, précisez la plateforme :
+
 ```sh
-tunesaver login
+tunesaver login tidal
+tunesaver login beatport
+tunesaver login qobuz
+```
+
+Connectez seulement les plateformes que vous utilisez :
+
+- **TIDAL** : autorisez la connexion depuis le lien affiché dans le terminal.
+- **Beatport** : saisissez votre identifiant et votre mot de passe.
+- **Qobuz** : saisissez votre identifiant numérique et votre jeton de session ; le terminal indique où les récupérer.
+
+Puis téléchargez un morceau, un album ou une playlist :
+
+```sh
 tunesaver "https://tidal.com/track/123"
 ```
 
 Le Mac et le terminal partagent leurs comptes dans le Trousseau. Si vous êtes déjà
 connecté dans l’application, passez directement au téléchargement.
 
+#### Importer les comptes depuis le serveur
+
+```sh
+tunesaver login
+```
+
+**Sans nom de plateforme**, cette commande ouvre `tunesaver.galagain.com` et
+importe les connexions autorisées par ce serveur. Elle nécessite un compte
+TuneSaver approuvé. Ce parcours est facultatif sur Mac : les commandes
+`login tidal`, `login beatport` et `login qobuz` connectent vos propres comptes.
+
+#### Déconnecter ou changer de compte
+
+```sh
+tunesaver logout tidal
+tunesaver logout beatport
+tunesaver logout qobuz
+```
+
+Chaque commande retire la connexion de la plateforme concernée sur ce Mac,
+pour **l’application et le terminal**. Les morceaux téléchargés sont conservés.
+Pour utiliser un autre compte, déconnectez le compte actuel puis reconnectez-vous :
+
+```sh
+tunesaver logout beatport
+tunesaver login beatport
+```
+
+La synchronisation du catalogue est indépendante des connexions musicales.
+**Déconnecter les plateformes ou connecter ses propres comptes ne désactive pas
+une synchronisation déjà configurée avec le serveur.**
+
+#### Commandes utiles
+
 ```sh
 tunesaver                            # Recherche interactive
 tunesaver search "artiste titre"      # Rechercher un morceau
 tunesaver status                     # Vérifier les comptes
-tunesaver sync                       # Synchroniser les métadonnées
+tunesaver sync                       # Synchroniser si un serveur est configuré
 ```
 
 Les téléchargements vont dans `~/Music/TuneSaver`. Pour choisir un dossier :
@@ -91,7 +144,8 @@ tar -xzf TuneSaver-0.4.0-macOS-arm64-CLI.tar.gz
 ./TuneSaverCLI/tunesaver install --configure-shell
 ```
 
-Ouvrir un nouveau terminal, puis lancer `tunesaver login`.
+Ouvrir un nouveau terminal, puis lancer par exemple `tunesaver login tidal`
+pour connecter son propre compte.
 Pour Linux, utiliser le déploiement Docker ci-dessous.
 
 </details>
@@ -105,6 +159,10 @@ git clone https://github.com/galagain/tunesaver.git
 cd tunesaver
 ./tunesaver server setup
 ```
+
+Ce parcours de configuration Docker utilise actuellement la connexion web à
+`tunesaver.galagain.com` pour importer les comptes autorisés. Les commandes de
+connexion et déconnexion individuelles décrites ci-dessus concernent le client Mac.
 
 La configuration prépare les dossiers, crée le mot de passe administrateur,
 connecte les plateformes et démarre les services disponibles. L’interface est
