@@ -172,3 +172,5 @@ ENV BEATPORTDL_COMMIT=${BEATPORTDL_COMMIT} \
 
 ENTRYPOINT ["python", "/app/musicdl.py"]
 CMD ["worker", "tiddl"]
+
+COPY src/account_transfer.py /app/

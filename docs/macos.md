@@ -1,4 +1,26 @@
-# TuneSaver pour Mac — 0.2.0
+# TuneSaver pour Mac — 0.2.1
+
+## Synchronisation avec le site
+
+La version 0.2.1 embarque la nouvelle interface commune et le transfert rapide
+des connexions. Dans **Mes plateformes → Connexion rapide**, ouvrir
+**Récupérer mes connexions TuneSaver**, utiliser le compte approuvé du site,
+puis importer le fichier JSON dans l'application. Les comptes déjà connectés
+sont conservés ; pour remplacer un compte, le déconnecter avant l'import.
+Supprimer le fichier après import : il contient les accès en clair.
+
+Le transfert n'importe pas les playlists et ne synchronise pas automatiquement
+les futurs changements de comptes du serveur. La connexion manuelle reste disponible.
+
+Le constructeur copie directement `web/` et `src/` : il n'existe pas de seconde
+copie de l'interface à mettre à jour. `Contents/Resources/build-info.json`
+identifie désormais le commit source, les modifications locales éventuelles et
+les empreintes des fichiers web embarqués. Reconstruire sur macOS avec
+`python3 desktop/build_macos.py`, puis remplacer l'application installée.
+Les données et le Trousseau sont conservés. Cette version n'ajoute pas de mise à
+jour automatique et doit encore être construite et validée sur macOS.
+
+## Version précédemment construite
 
 L'application ouvre directement une bibliothèque personnelle. Aucun compte
 TuneSaver, administrateur, service SMTP, PostgreSQL ou Docker n'est nécessaire.

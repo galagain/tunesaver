@@ -11,15 +11,37 @@
   dialog.id = 'desktop-accounts';
   dialog.setAttribute('aria-labelledby', 'desktop-accounts-title');
   dialog.innerHTML = `<header><div><span class="desktop-eyebrow">TUNESAVER POUR MAC</span>
-    <h2 id="desktop-accounts-title">Ta musique. Tes comptes.</h2></div>
+    <h2 id="desktop-accounts-title">Mes plateformes</h2></div>
     <button type="button" id="desktop-close" aria-label="Fermer">×</button></header>
     <p class="desktop-intro">Connecte les plateformes que tu utilises. Ta bibliothèque reste sur ce Mac et tes connexions sont mémorisées dans le Trousseau macOS.</p>
+    <section class="desktop-account-transfer"><h3>Connexion rapide</h3>
+      <p><a href="https://tunesaver.galagain.com/auth/" target="_blank" rel="noopener noreferrer">Récupérer mes connexions TuneSaver</a></p>
+      <label>Importer un fichier<input id="desktop-account-file" type="file" accept=".json,application/json"></label>
+      <p>Les comptes déjà connectés sont conservés. Supprime le fichier après l’import.</p>
+      <p id="desktop-import-result" role="status"></p></section>
     <div id="desktop-account-cards"></div>
     <p id="desktop-error" role="alert"></p>
     <footer><div><strong>Une bibliothèque qui reste à toi</strong>
     <p>Les morceaux sont conservés jusqu’à leur suppression. Les recherches et imports nécessitent Internet et les droits d’accès de ton abonnement.</p></div>
     <button type="button" id="desktop-open-music">Afficher dans le Finder</button></footer>`;
   document.body.append(dialog);
+  const input = dialog.querySelector('#desktop-account-file');
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    input.disabled = true;
+    dialog.querySelector('#desktop-import-result').textContent = 'Import en cours…';
+    try {
+      if (file.size > 256 * 1024) throw new Error('Fichier trop volumineux.');
+      let payload;
+      try { payload = JSON.parse(await file.text()); }
+      catch { throw new Error('Fichier de comptes invalide. Choisis le fichier JSON exporté depuis TuneSaver.'); }
+      const result = await requestJson('/api/desktop/account-import', {method:'POST', body:JSON.stringify(payload)});
+      dialog.querySelector('#desktop-import-result').textContent = `${result.imported.length} compte(s) importé(s), ${result.skipped.length} déjà connecté(s).`;
+      showError(''); await refresh();
+    } catch (error) { dialog.querySelector('#desktop-import-result').textContent = ''; showError(error.message); }
+    finally { input.value = ''; input.disabled = false; }
+  });
   const cards = dialog.querySelector('#desktop-account-cards');
   for (const [provider, name] of Object.entries(names)) {
     const card = document.createElement('section');

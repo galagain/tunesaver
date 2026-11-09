@@ -215,6 +215,7 @@ class Desktop:
         app.cleanup_ctx.append(self.context)
         app.router.add_get("/desktop/start", self.bootstrap_handler)
         app.router.add_get("/api/desktop/accounts", self.status_handler)
+        app.router.add_post("/api/desktop/account-import", self.import_handler)
         app.router.add_post("/api/desktop/accounts/{provider}", self.connect_handler)
         app.router.add_delete("/api/desktop/accounts/{provider}", self.disconnect_handler)
         for name in ("desktop.js", "desktop.css"):
@@ -230,7 +231,7 @@ class Desktop:
         self.api._check_same_origin(request)
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.content_type != "application/json":
             raise self.api.PublicError("Le corps doit être en JSON.", status=415)
-        if request.path.startswith(("/api/admin", "/api/feedback", "/api/email", "/api/password-reset", "/api/session")) or request.path in {"/api/signup", "/api/login", "/api/logout"}:
+        if request.path.startswith(("/api/admin", "/api/feedback", "/api/email", "/api/password-reset", "/api/session", "/api/account-transfer")) or request.path in {"/api/signup", "/api/login", "/api/logout", "/api/account-export", "/auth/"}:
             raise self.api.PublicError("Cette fonction serveur n’existe pas dans la version Mac.", status=404)
         request["user"] = {"id": LOCAL_USER_ID, "email": "Sur ce Mac", "approved": True, "email_verified": True}
         response = await handler(request)
@@ -256,6 +257,58 @@ class Desktop:
         } for p in self.files}, "music_directory": str(self.music.DELIVERY_ROOT),
             "storage_error": self.storage_error,
             "qobuz_notice": "Le connecteur Qobuz actuel permet la connexion et la recherche, mais son téléchargement est affecté par un changement de l’API Qobuz."})
+
+    async def import_handler(self, request):
+        from aiohttp import web
+        from contextlib import ExitStack
+        import account_transfer
+        import configparser
+        try:
+            accounts = account_transfer.validate(await self.api.read_json_object(request))
+        except (ValueError, KeyError, TypeError, configparser.Error):
+            raise self.api.PublicError("Fichier de comptes TuneSaver invalide.")
+        imported, skipped = [], []
+        try:
+            with ExitStack() as locks:
+                for provider in sorted(accounts):
+                    locks.enter_context(self.music.provider_lock(provider, "operation", blocking=False))
+                    if self.tasks.get(provider) and not self.tasks[provider].done():
+                        raise RuntimeError("Connexion en cours")
+                for provider, files in accounts.items():
+                    if self.connected(provider):
+                        skipped.append(provider)
+                        continue
+                    before = self.snapshot(provider)
+                    old_vault = self.vault.get(provider)
+                    try:
+                        # Only fixed paths; the uploaded file cannot choose a destination.
+                        for path in self.files[provider]:
+                            if path.name in files:
+                                path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                                with os.fdopen(fd, "w") as target:
+                                    target.write(files[path.name])
+                                path.chmod(0o600)
+                        self.persist(provider)
+                    except Exception:
+                        for path in self.files[provider]:
+                            if path.name in before:
+                                path.write_text(before[path.name]); path.chmod(0o600)
+                            else:
+                                path.unlink(missing_ok=True)
+                        if old_vault:
+                            self.vault.set(provider, old_vault)
+                        else:
+                            self.vault.delete(provider)
+                        self.persisted[provider] = old_vault
+                        raise
+                    imported.append(provider)
+                    self.start_worker(provider)
+        except RuntimeError:
+            raise self.api.PublicError("Une plateforme est occupée. Réessaie dans un instant.", status=409)
+        except Exception:
+            raise self.api.PublicError("Import interrompu. Vérifie le Trousseau puis réessaie ; les comptes déjà importés seront conservés.", status=409)
+        return web.json_response({"imported": imported, "skipped": skipped})
 
     def provider(self, request):
         provider = request.match_info["provider"]

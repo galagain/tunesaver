@@ -1,10 +1,10 @@
 body.desktop #feedback-open, body.desktop #logout-button { display: none !important; }
-.desktop-settings-button { padding: 12px; width: 100%; text-align: left; color: #d8efe2; border: 1px solid #344b40; border-radius: 9px; background: #18251f; cursor: pointer; }
+.desktop-settings-button { padding: 8px; width: 100%; text-align: left; color: #a3aba6; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font-size: 11px; }
 #desktop-accounts { width: min(780px, calc(100vw - 60px)); max-height: calc(100vh - 72px); padding: 28px; border-radius: 18px; border: 1px solid #39423d; background: #151a17; color: #edf3ee; overflow: auto; }
 #desktop-accounts::backdrop { background: #060b09b8; backdrop-filter: blur(5px); }
 #desktop-accounts header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-.desktop-eyebrow { font-size: 10px; letter-spacing: .17em; color: #94c6a6; }
-#desktop-accounts h2 { font-size: 28px; margin: 8px 0 0; letter-spacing: -.035em; }
+.desktop-eyebrow { font-size: 10px; letter-spacing: 0; color: #94c6a6; }
+#desktop-accounts h2 { font-size: 22px; margin: 8px 0 0; letter-spacing: 0; }
 #desktop-accounts #desktop-close { border: 0; background: none; font-size: 28px; padding: 0 5px; color: #a2ada6; cursor: pointer; }
 .desktop-intro { color: #a7b5ac; line-height: 1.65; margin: 18px 0 24px; max-width: 660px; }
 #desktop-account-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -32,3 +32,15 @@ body.desktop #feedback-open, body.desktop #logout-button { display: none !import
 #desktop-accounts footer p { color: #94a49a; margin: 6px 0 0; }
 #desktop-accounts footer button { flex-shrink: 0; }
 @media (max-width: 700px) { #desktop-account-cards { grid-template-columns: 1fr; } #desktop-accounts footer { flex-direction: column; align-items: start; } }
+#desktop-accounts { border-radius: 8px; background: #1b1d1c; }
+.desktop-account-card { border-radius: 6px; background: #222624; }
+.desktop-account-transfer { padding: 0 0 20px; margin-bottom: 24px; border-bottom: 1px solid #343e37; }
+.desktop-account-transfer h3 { margin: 0; font-size: 16px; }
+.desktop-account-transfer a { color: #68dfb4; }
+#desktop-accounts input[type=file] { padding: 8px; overflow: hidden; }
+#desktop-accounts input::file-selector-button { border: 0; border-radius: 4px; padding: 8px; margin-right: 8px; background: #35423c; color: #edf3ee; cursor: pointer; }
+body.desktop .sidebar-footer { min-width: 0; }
+@media (max-width: 700px) {
+  body.desktop .library-sidebar { grid-template-rows: 48px 26px minmax(0, 1fr); }
+  #desktop-accounts { width: calc(100vw - 24px); padding: 18px; }
+}

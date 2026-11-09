@@ -5,3 +5,5 @@ COPY web /app/web
 COPY src/audio_retention.py src/feedback.py /app/
 COPY src/stream_audio.py /app/
 COPY src/download_fallback.py /app/
+
+COPY src/account_transfer.py /app/

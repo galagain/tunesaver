@@ -219,7 +219,7 @@ def main():
     icon(resources)
     info = {"CFBundleIdentifier": "com.tunesaver.desktop", "CFBundleName": "TuneSaver", "CFBundleDisplayName": "TuneSaver",
             "CFBundleExecutable": "TuneSaver", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": VERSION,
-            "CFBundleVersion": "2", "CFBundleIconFile": "TuneSaver", "LSMinimumSystemVersion": minimum,
+            "CFBundleVersion": "3", "CFBundleIconFile": "TuneSaver", "LSMinimumSystemVersion": minimum,
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
             "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
             "NSHumanReadableCopyright": "TuneSaver — composants tiers : voir Contents/Resources/Licenses"}
@@ -231,8 +231,16 @@ def main():
     for cache in list(resources.rglob("__pycache__")):
         shutil.rmtree(cache)
     run("xattr", "-cr", app)
+    revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True)
+    changes = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True)
+    build_info = {"version": VERSION, "architecture": arch, "minimum_macos": minimum, "notarized": False,
+                  "source_commit": revision.stdout.strip() if revision.returncode == 0 else None,
+                  "working_tree_dirty": bool(changes.stdout.strip()) if changes.returncode == 0 else None,
+                  "web_assets": {str(path.relative_to(resources / 'web')): hashlib.sha256(path.read_bytes()).hexdigest()
+                                 for path in sorted((resources / 'web').rglob('*')) if path.is_file()}}
+    (resources / "build-info.json").write_text(json.dumps(build_info, indent=2) + "\n")
+    (ROOT / "dist/build-info.json").write_text(json.dumps(build_info, indent=2) + "\n")
     sign(app, "-")
-    (ROOT / "dist/build-info.json").write_text(json.dumps({"version": VERSION, "architecture": arch, "minimum_macos": minimum, "notarized": False}, indent=2) + "\n")
     if not args.skip_archives:
         stem = f"TuneSaver-{VERSION}-macOS-{arch}"
         archive = ROOT / "dist" / (stem + ".zip")

@@ -51,6 +51,7 @@ def server(args):
         import audio_retention
         api.local_upsert_history(desktop.LOCAL_USER_ID, [audio_retention.history(job)])
 
+    desktop.Desktop.start_worker = lambda self, provider: None
     desktop.KeychainVault = MemoryVault
     desktop.Desktop.register = register
     sys.argv = ["desktop.py", "--resources", str(args.resources), "--data-dir", args.data_dir, "--parent-watch"]
@@ -88,7 +89,11 @@ async def browser_test(args):
                 await page.goto(url)
                 await expect(page.locator("#desktop-accounts")).to_be_visible()
                 await expect(page.locator("#auth-view")).to_be_hidden()
-                await expect(page.locator(".desktop-account-card")).to_have_count(3)
+                await expect(page.locator("#desktop-account-cards .desktop-account-card")).to_have_count(3)
+                await expect(page.get_by_role("link", name="Récupérer mes connexions")).to_have_attribute("href", "https://tunesaver.galagain.com/auth/")
+                await page.locator("#desktop-account-file").set_input_files({"name":"test-accounts.json", "mimeType":"application/json", "buffer":json.dumps({"format":"tunesaver-accounts-v1","accounts":{"beatport":{"beatport_username":"test-user","beatport_password":"test-password"}}}).encode()})
+                await expect(page.locator("#desktop-import-result")).to_contain_text("1 compte(s) importé(s)")
+                await expect(page.locator('[data-provider="beatport"] .desktop-account-state')).to_have_text("Connecté")
                 await page.screenshot(path=str(ROOT / ".build/desktop-accounts.png"))
                 await page.locator("#desktop-close").click()
                 await expect(page.locator("#library-tracks")).to_contain_text("Essai local")

@@ -1,0 +1,11 @@
+body { min-height: 100vh; display: grid; place-items: center; padding: 24px; overflow: auto; }
+.transfer-panel { width: min(100%, 460px); padding: 24px 0; color: #edf3ee; }
+.transfer-panel h1 { margin: 28px 0 16px; font-size: 24px; letter-spacing: 0; }
+.transfer-panel p { line-height: 1.6; margin: 16px 0; color: #a3aba6; font-size: 13px; }
+.transfer-panel label { display: block; margin: 14px 0; font-size: 13px; }
+.transfer-panel input:not([type=checkbox]) { display: block; width: 100%; padding: 12px; margin-top: 7px; border: 1px solid #35423c; border-radius: 4px; background: #222624; color: inherit; }
+.transfer-panel fieldset { padding: 12px 18px; border: 1px solid #35423c; border-radius: 4px; }
+.transfer-panel input[type=checkbox] { accent-color: #68dfb4; }
+.transfer-panel button { width: 100%; padding: 12px 18px; border: 0; border-radius: 4px; background: #68dfb4; color: #14241d; cursor: pointer; }
+.transfer-panel button:disabled { opacity: .6; cursor: wait; }
+.transfer-panel a { color: inherit; }

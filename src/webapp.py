@@ -1405,6 +1405,7 @@ async def api_middleware(
             *(f'/{asset}' for asset in BRAND_ASSETS),
             "/",
             "/app.js",
+            "/auth/", "/account-transfer.js", "/account-transfer.css", "/api/account-transfer/login",
             "/feedback.js",
             "/style.css",
             "/tunesaver.svg",
@@ -3955,6 +3956,8 @@ def create_app(desktop=None) -> web.Application:
     app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
     feedback.register(app, local_db, read_json_object, PublicError)
+    import account_transfer
+    account_transfer.register(app, sys.modules[__name__])
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
