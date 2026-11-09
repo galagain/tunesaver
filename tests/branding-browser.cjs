@@ -24,6 +24,17 @@ const {chromium, expect} = require('@playwright/test');
       await expect(logo).toBeVisible();
       expect(await logo.getAttribute('src')).toBe(iconUrl);
       expect(await logo.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+      const faviconPixels = await logo.evaluate(img => {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 16;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, 16, 16);
+        const pixels = ctx.getImageData(0, 0, 16, 16).data;
+        return { cornerAlpha: pixels[3], visible: Array.from(pixels).filter((v, i) => i % 4 === 3 && v > 128).length };
+      });
+      expect(faviconPixels.cornerAlpha).toBe(0);
+      expect(faviconPixels.visible).toBeGreaterThan(40);
+      expect(faviconPixels.visible).toBeLessThan(180);
       const box = await logo.boundingBox();
       expect(box.width).toBe(box.height);
       await page.screenshot({path: `/work/branding-${width}.png`});
