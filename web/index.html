@@ -105,19 +105,32 @@
         </form>
         <p id="search-message" class="form-message" role="status" aria-live="polite"></p>
         <details class="search-sources" open>
-          <summary><span>Sources et formats acceptés</span><span class="search-sources-count">6 plateformes</span><span data-ui-icon="ChevronDown" aria-hidden="true"></span></summary>
-          <div class="search-source-grid">
-            <div class="search-source"><img src="/vendor/brands/spotify.svg" alt="" width="28" height="28"><div><strong>Spotify</strong><span>Morceaux · Albums · Playlists</span></div></div>
-            <div class="search-source"><img src="/vendor/brands/applemusic.svg" alt="" width="28" height="28"><div><strong>Apple Music</strong><span>Morceaux · Albums · Playlists</span></div></div>
-            <div class="search-source"><img src="/vendor/brands/soundcloud.svg" alt="" width="28" height="28"><div><strong>SoundCloud</strong><span>Morceaux · Albums · Playlists (sets)</span></div></div>
-            <div class="search-source"><img src="/vendor/brands/tidal.svg" alt="" width="28" height="28"><div><strong>TIDAL</strong><span>Morceaux · Albums · Playlists</span></div></div>
-            <div class="search-source"><img src="/vendor/brands/beatport.svg" alt="" width="28" height="28"><div><strong>Beatport</strong><span>Morceaux · Releases (albums / EP) · Playlists · Charts</span></div></div>
-            <div class="search-source"><img class="qobuz-source-logo" src="/vendor/brands/qobuz.ico" alt="" width="28" height="28"><div><strong>Qobuz</strong><span>Morceaux · Albums · Playlists</span></div></div>
-          </div>
-          <div class="search-input-formats">
-            <div><span data-ui-icon="Search" aria-hidden="true"></span><div><strong>Titre ou artiste</strong><span>Laurent Garnier · The Man With The Red Face</span></div></div>
-            <div><span data-ui-icon="Link" aria-hidden="true"></span><div><strong>Liens multiples</strong><span>Morceaux, albums et playlists · Un lien par ligne</span></div></div>
-            <div><span data-ui-icon="FileText" aria-hidden="true"></span><div><strong>Fichier .txt à déposer</strong><span>Liste de liens ou export TuneSaver · UTF-8 · 1 Mo max.</span></div></div>
+          <summary><span>Sources &amp; qualité audio</span><span data-ui-icon="ChevronDown" aria-hidden="true"></span></summary>
+          <div class="search-guide">
+            <header class="search-guide-heading"><span class="search-eyebrow">ENTRÉE</span><h2>Vos sources musicales</h2><p>Morceaux, albums, EP et playlists.</p></header>
+            <div class="search-source-grid">
+              <div class="search-source" data-brand="spotify"><img src="/vendor/brands/spotify.svg" alt="" width="32" height="32"><strong>Spotify</strong></div>
+              <div class="search-source" data-brand="applemusic"><img src="/vendor/brands/applemusic.svg" alt="" width="32" height="32"><strong>Apple Music</strong></div>
+              <div class="search-source" data-brand="soundcloud"><img src="/vendor/brands/soundcloud.svg" alt="" width="32" height="32"><strong>SoundCloud</strong></div>
+              <div class="search-source"><img src="/vendor/brands/tidal.svg" alt="" width="32" height="32"><strong>TIDAL</strong></div>
+              <div class="search-source" data-brand="beatport"><img src="/vendor/brands/beatport.svg" alt="" width="32" height="32"><strong>Beatport</strong></div>
+              <div class="search-source"><img class="qobuz-source-logo" src="/vendor/brands/qobuz.ico" alt="" width="32" height="32"><strong>Qobuz</strong></div>
+            </div>
+            <p class="search-source-note">Également : charts Beatport et sets SoundCloud.</p>
+            <div class="search-input-formats">
+              <div><span data-ui-icon="Search" aria-hidden="true"></span><div><strong>Titre ou artiste</strong><span>Recherche libre</span></div></div>
+              <div><span data-ui-icon="Link" aria-hidden="true"></span><div><strong>Un ou plusieurs liens</strong><span>Un lien par ligne</span></div></div>
+              <div><span data-ui-icon="FileText" aria-hidden="true"></span><div><strong>Import .txt</strong><span>Liens ou export TuneSaver</span></div></div>
+            </div>
+            <div class="search-flow-divider" aria-hidden="true"><span data-ui-icon="ChevronDown"></span></div>
+            <section class="search-output" aria-labelledby="search-output-title">
+              <div class="search-output-heading"><span class="search-eyebrow">SORTIE</span><h2 id="search-output-title">Lossless<span>Sans perte.</span></h2><p>Selon la disponibilité du morceau et du catalogue.</p></div>
+              <div class="search-output-platforms" aria-label="Plateformes de téléchargement lossless">
+                <div><img src="/vendor/brands/tidal.svg" alt="" width="22" height="22"><span>TIDAL</span></div>
+                <div><img src="/vendor/brands/beatport.svg" alt="" width="22" height="22"><span>Beatport</span></div>
+                <div><img class="qobuz-source-logo" src="/vendor/brands/qobuz.ico" alt="" width="22" height="22"><span>Qobuz</span></div>
+              </div>
+            </section>
           </div>
         </details>
       </section>
