@@ -476,6 +476,13 @@ def matching_track(track, candidates):
         if difference is not None and difference > 2 and any(
                 label in {'original', 'original mix', 'original version'} for label in version_labels(track)):
             continue
+        if (difference is not None and difference <= 2
+                and version_labels(track) and version_labels(candidate)):
+            # Presentation qualifiers may differ, but keep the remixer and mix type.
+            title = re.sub(r'\bfull length (?=club mix$)', '', title)
+            other_title = re.sub(r'\bfull length (?=club mix$)', '', other_title)
+            title = re.sub(r'\bmain mix$', 'mix', title)
+            other_title = re.sub(r'\bmain mix$', 'mix', other_title)
         if title != other_title:
             base, edition = split_release_edition(title)
             other_base, other_edition = split_release_edition(other_title)
@@ -497,10 +504,16 @@ def matching_track(track, candidates):
         # by the source. Unknown additional artists still fail the original check.
         primary = artist - (guests | other_guests)
         other_primary = other_artist - (guests | other_guests)
+        source_credits = artist_credits(track.get('artist', ''))
+        target_credits = artist_credits(candidate.get('artist', ''))
+        # A literal DJ prefix is optional only with otherwise identical full credits
+        # and near-identical duration; this does not infer unrelated artist aliases.
+        dj_credit_match = (difference is not None and difference <= 2
+                           and (primary ^ other_primary) == {'dj'}
+                           and {re.sub(r'^dj\s+', '', normalized_words(c)) for c in source_credits}
+                           == {re.sub(r'^dj\s+', '', normalized_words(c)) for c in target_credits})
         if (not primary or not other_primary
-                or len(primary & other_primary) / max(len(primary), len(other_primary)) < 0.8):
-            source_credits = artist_credits(track.get('artist', ''))
-            target_credits = artist_credits(candidate.get('artist', ''))
+                or len(primary & other_primary) / max(len(primary), len(other_primary)) < 0.8) and not dj_credit_match:
             # Some releases omit secondary contributors. Require the same lead,
             # explicit version, near-identical duration and no new target artist.
             if not (primary and other_primary and other_primary < primary

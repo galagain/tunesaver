@@ -22,6 +22,26 @@ def collection(kind="playlist", tracks=None):
 
 
 class CatalogMatcherTests(unittest.TestCase):
+    def test_presentation_qualifiers_keep_artist_version_and_duration_checks(self):
+        pairs = [
+            (track('Knights of the Jaguar', 'Rolando', duration=397),
+             track('Knights of the Jaguar', 'DJ Rolando', mix='Original Mix', duration='6:37')),
+            (track('The Light - Jamie Lewis Mix', 'Michelle Weeks, Jamie Lewis', duration=540.773),
+             track('The Light', 'Michelle Weeks', mix='Jamie Lewis Main Mix', duration='9:01')),
+            (track("Heartbreak 'Make Me A Dancer' - Club Mix", 'Freemasons, Sophie Ellis-Bextor', duration=560.96),
+             track('Heartbreak (Make Me A Dancer)', 'Freemasons, Sophie Ellis-Bextor', mix='Full Length Club Mix', duration='9:21')),
+        ]
+        for source, candidate in pairs:
+            with self.subTest(title=source['title']):
+                self.assertIs(match_track(source, [candidate])[0], candidate)
+                for changes in ({'duration': None}, {'duration': 180}, {'artist': 'Someone Else'}, {'mix': 'Different Remix'}):
+                    self.assertIsNone(match_track(source, [{**candidate, **changes}])[0])
+        for artist in ('DJ Rolando Junior', 'Roland', 'The Aztec Mystic'):
+            self.assertIsNone(match_track(pairs[0][0], [{**pairs[0][1], 'artist': artist}])[0])
+        self.assertIsNone(match_track(
+            track('Song', 'Artist', mix='Extended Club Mix', duration=348),
+            [track('Song (Club Mix)', 'Artist', duration=186)])[0])
+
     def test_video_versions_match_across_catalogs_only_with_matching_duration(self):
         source = track('The Man With The Red Face', 'Laurent Garnier', mix='Video Mix', duration='9:10')
         for label in ('Video', 'Video Edit', 'Video Version'):
