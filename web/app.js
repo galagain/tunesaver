@@ -164,7 +164,7 @@ const trackCollator = new Intl.Collator('fr', { numeric: true, sensitivity: 'bas
 let libraryState = { tracks: [], playlists: [], tags: [] };
 let liveQueueTracks = [];
 const deletedJobIds = new Set();
-const uiIcons = Promise.all([import('/vendor/mixer-icons.js'), import('/vendor/player-icons.js?v=20261109-sources')])
+const uiIcons = Promise.all([import('/vendor/mixer-icons.js'), import('/vendor/player-icons.js?v=20261109-library')])
   .then(([mixer, player]) => ({ ...mixer, ...player }));
 function appendUIIcon(element, name) {
   uiIcons.then(icons => { element.append(icons.createElement(icons[name], { 'aria-hidden': 'true' })); });
@@ -509,6 +509,7 @@ function resetPlayer() {
   currentTrackId = "";
   playbackQueue = [];
   playbackScope = '';
+  syncPlayerControls();
   pumpCoverRequests();
 }
 
@@ -1137,6 +1138,7 @@ async function streamTrack(track, { advance = false } = {}) {
   playerTitle.textContent = fullTrack.title || fullTrack.file_name || 'Sans titre';
   playerArtist.textContent = fullTrack.artist || 'Artiste inconnu';
   playerAudio.setAttribute('aria-busy', 'true');
+  syncPlayerControls();
   try {
     const sourceScope = libraryScope();
     const sourceTracks = advance ? playbackQueue : sortedLibraryTracks(manualLibraryTracks());
@@ -1189,6 +1191,7 @@ async function streamTrack(track, { advance = false } = {}) {
     if (version === playerVersion) {
       playbackStarting = false;
       playerAudio.removeAttribute('aria-busy');
+      syncPlayerControls();
       pumpCoverRequests();
     }
   }
@@ -1250,6 +1253,44 @@ function currentLibraryTitle() {
   }
   return "Mes sons";
 }
+
+function trackDurationSeconds(track) {
+  const value = track.mix_analysis?.duration || track.duration;
+  if (typeof value === 'string' && /^\d+:\d{2}(?::\d{2})?$/.test(value)) {
+    return value.split(':').reduce((seconds, part) => seconds * 60 + Number(part), 0);
+  }
+  return Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0;
+}
+
+function renderCollectionIdentity(tracks, { total = tracks.length, shown = total } = {}) {
+  document.querySelector('#library-title').textContent = currentLibraryTitle();
+  document.querySelector('#collection-kind').textContent = selectedPlaylistId ? 'Playlist' : 'Bibliothèque';
+  const durations = tracks.map(trackDurationSeconds);
+  const seconds = durations.reduce((sum, duration) => sum + duration, 0);
+  const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+  const duration = seconds ? `${hours ? `${hours} h ` : ''}${minutes} min${durations.filter(Boolean).length < total ? ' connues' : ''}` : '';
+  libraryCount.textContent = `${shown !== total ? `${shown} sur ` : ''}${total} titre${total > 1 ? 's' : ''}${duration ? ` · ${duration}` : ''}`;
+  const artwork = document.querySelector('#collection-artwork');
+  const covers = tracks.filter(track => track.cover_url).filter((track, index, all) => all.findIndex(t => t.cover_url === track.cover_url) === index).slice(0, 4);
+  const tiles = selectedPlaylistId && covers.length ? (covers.length === 4 ? covers : covers.slice(0, 1)) : [];
+  const key = JSON.stringify([selectedPlaylistId, tiles.map(track => track.cover_url)]);
+  if (artwork.renderKey !== key) {
+    artwork.renderKey = key;
+    artwork.replaceChildren();
+    artwork.dataset.tiles = tiles.length;
+    if (tiles.length) artwork.append(...tiles.map(makeLibraryCover));
+    else appendUIIcon(artwork, selectedPlaylistId ? 'ListMusic' : 'Library');
+  }
+  const play = document.querySelector('#collection-play');
+  play.hidden = !selectedPlaylistId;
+  play.disabled = !tracks.some(track => track.streamable);
+}
+
+document.querySelector('#collection-play').addEventListener('click', async () => {
+  const first = sortedLibraryTracks(manualLibraryTracks()).find(track => track.streamable);
+  if (!first) return;
+  try { await streamTrack(first); } catch (error) { showToast(error.message, 'error'); }
+});
 
 function makeTrackDeleteButton(track) {
   const jobId = track.job_id || track.id;
@@ -1560,6 +1601,8 @@ function renderPlaylists() {
     button.dataset.selected = playlist.id === selectedPlaylistId ? "true" : "false";
     const readyImport = (libraryState.imports || []).find(item => item.playlist_id === playlist.id && item.state === 'ready');
     collectionRowLabel(button, playlist.name, readyImport ? readyImport.total : playlist.track_ids.length);
+    const icon = document.createElement('span'); icon.className = 'playlist-nav-icon'; icon.setAttribute('aria-hidden', 'true');
+    appendUIIcon(icon, 'ListMusic'); button.prepend(icon);
     button.addEventListener("dragover", (event) => {
       if (!Array.from(event.dataTransfer.types).includes("application/x-tunesaver-job")) return;
       event.preventDefault();
@@ -1742,6 +1785,7 @@ function renderLibrary() {
   const preview = (libraryState.imports || []).find(item => item.playlist_id === selectedPlaylistId
     && ["pending", "ready", "running", "matched", "cancelled"].includes(item.state));
   if (preview) {
+    renderCollectionIdentity(manualLibraryTracks(), { total: preview.total || 0 });
     renderImportPreview(preview);
     return;
   }
@@ -1757,8 +1801,7 @@ function renderLibrary() {
   });
   renderedTracks = tracks;
   if (!tracks.some(track => track.job_id === selectedLibraryTrackId)) selectedLibraryTrackId = tracks[0]?.job_id || '';
-  document.querySelector("#library-title").textContent = currentLibraryTitle();
-  libraryCount.textContent = `${tracks.length} son${tracks.length > 1 ? "s" : ""}`;
+  renderCollectionIdentity(manualTracks, { shown: tracks.length });
   const renderKey = JSON.stringify([tracks, [...numbers], sort, selectedPlaylistId, selectedTagId]);
   if (libraryTracks.renderKey === renderKey) return;
   libraryTracks.renderKey = renderKey;
@@ -1819,7 +1862,10 @@ function renderLibrary() {
       play.addEventListener('pointerdown', prepare);
       play.addEventListener("click", async () => {
         play.setAttribute('aria-busy', 'true');
-        try { await streamTrack(track); }
+        try {
+          if (currentTrackId === track.job_id && !playerAudio.paused) playerAudio.pause();
+          else await streamTrack(track);
+        }
         catch (error) { showToast(error.message, "error"); }
         finally { play.removeAttribute('aria-busy'); }
       });
@@ -1896,6 +1942,7 @@ function renderLibrary() {
     row.append(number, cover, body, bpm, key, duration, actions);
     libraryTracks.append(row);
   });
+  updatePlayingRows();
 }
 
 function selectLibraryTrack(id) {
@@ -1929,7 +1976,6 @@ function renderImportPreview(item) {
   if (libraryTracks.renderKey === renderKey) return;
   libraryTracks.renderKey = renderKey;
   document.querySelector("#library-title").textContent = currentLibraryTitle();
-  libraryCount.textContent = `${item.total} sons`;
   libraryTracks.replaceChildren();
   if (item.state === "pending") {
     const message = document.createElement("p");
@@ -2697,7 +2743,94 @@ const playerAudio = document.querySelector('#player-audio');
 const playerTitle = document.querySelector('#player-title');
 const playerArtist = document.querySelector('#player-artist');
 const playerCover = document.querySelector('#player-cover');
+const playerToggle = document.querySelector('#player-toggle');
+const playerSeek = document.querySelector('#player-seek');
+const playerVolume = document.querySelector('#player-volume');
+const playerMute = document.querySelector('#player-mute');
 let playerVersion = 0;
+let playingRowsKey = '';
+
+function setControlIcon(button, name) {
+  if (button.dataset.icon === name) return;
+  button.dataset.icon = name;
+  uiIcons.then(icons => {
+    if (button.dataset.icon === name) button.replaceChildren(icons.createElement(icons[name], { 'aria-hidden': 'true' }));
+  });
+}
+
+function playerTime(seconds) {
+  const value = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
+}
+
+function updatePlayingRows() {
+  libraryTracks.querySelectorAll('.library-track').forEach(row => {
+    const playing = row.dataset.jobId === currentTrackId && !playerAudio.paused && !playerAudio.ended;
+    row.dataset.playing = String(playing);
+    const button = row.querySelector('.play-button');
+    if (!button) return;
+    setControlIcon(button, playing ? 'Pause' : 'Play');
+    button.title = playing ? 'Mettre en pause' : 'Lire';
+    button.setAttribute('aria-label', `${button.title} ${row.querySelector('.library-track-body strong')?.textContent || 'ce son'}`);
+  });
+}
+
+function syncPlayerControls() {
+  const loaded = Boolean(playerAudio.getAttribute('src'));
+  const playing = loaded && !playerAudio.paused && !playerAudio.ended;
+  const busy = playerAudio.hasAttribute('aria-busy');
+  playerToggle.disabled = !loaded || busy;
+  playerToggle.title = busy ? 'Chargement du morceau' : playing ? 'Mettre en pause' : 'Lire';
+  playerToggle.setAttribute('aria-label', playerToggle.title);
+  playerToggle.setAttribute('aria-busy', String(busy));
+  setControlIcon(playerToggle, busy ? 'RefreshCw' : playing ? 'Pause' : 'Play');
+  const duration = Number.isFinite(playerAudio.duration) ? playerAudio.duration : 0;
+  const current = Number.isFinite(playerAudio.currentTime) ? playerAudio.currentTime : 0;
+  playerSeek.disabled = !loaded || !duration;
+  playerSeek.max = duration;
+  playerSeek.value = current;
+  playerSeek.setAttribute('aria-valuetext', `${playerTime(current)} sur ${playerTime(duration)}`);
+  playerSeek.style.setProperty('--progress', `${duration ? current / duration * 100 : 0}%`);
+  document.querySelector('#player-elapsed').textContent = playerTime(current);
+  document.querySelector('#player-duration').textContent = playerTime(duration);
+  document.querySelector('#player-previous').disabled = busy || (!adjacentPlaybackTrack(-1) && current <= 3);
+  document.querySelector('#player-next').disabled = busy || !adjacentPlaybackTrack(1);
+  const muted = playerAudio.muted || playerAudio.volume === 0;
+  setControlIcon(playerMute, muted ? 'VolumeX' : 'Volume2');
+  playerMute.title = muted ? 'Rétablir le son' : 'Couper le son';
+  playerMute.setAttribute('aria-label', playerMute.title);
+  playerMute.setAttribute('aria-pressed', String(muted));
+  playerVolume.value = playerAudio.muted ? 0 : playerAudio.volume;
+  playerVolume.style.setProperty('--progress', `${Number(playerVolume.value) * 100}%`);
+  const rowsKey = `${currentTrackId}:${playing}`;
+  if (playingRowsKey !== rowsKey) { playingRowsKey = rowsKey; updatePlayingRows(); }
+}
+
+playerToggle.addEventListener('click', async () => {
+  try {
+    if (playerAudio.paused) await playerAudio.play();
+    else playerAudio.pause();
+  } catch (error) { showToast(error.message, 'error'); }
+});
+playerSeek.addEventListener('input', () => {
+  if (Number.isFinite(playerAudio.duration)) playerAudio.currentTime = Number(playerSeek.value);
+  syncPlayerControls();
+});
+playerVolume.addEventListener('input', () => {
+  playerAudio.volume = Number(playerVolume.value);
+  playerAudio.muted = false;
+  syncPlayerControls();
+});
+playerMute.addEventListener('click', () => {
+  if (playerAudio.volume === 0) { playerAudio.volume = 0.5; playerAudio.muted = false; }
+  else playerAudio.muted = !playerAudio.muted;
+  syncPlayerControls();
+});
+for (const event of ['play', 'pause', 'ended', 'timeupdate', 'durationchange', 'loadedmetadata', 'emptied', 'volumechange', 'error']) {
+  playerAudio.addEventListener(event, syncPlayerControls);
+}
+playerAudio.addEventListener('waiting', () => { document.querySelector('#player-status').textContent = 'Chargement audio'; });
+playerAudio.addEventListener('playing', () => { document.querySelector('#player-status').textContent = ''; });
 playerAudio.addEventListener('ended', playNextTrack);
 playerAudio.addEventListener('error', () => {
   if (playerAudio.hasAttribute('src')) showToast('Lecture impossible. Réessaie de lancer le morceau.', 'error');
@@ -2711,4 +2844,5 @@ for (const [id, icon, action] of [
   button.addEventListener('click', () => action().catch(error => showToast(error.message, 'error')));
 }
 
+syncPlayerControls();
 start();
