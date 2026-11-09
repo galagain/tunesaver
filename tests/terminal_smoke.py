@@ -20,7 +20,7 @@ def fixture(args):
     import desktop
     data = args.data_dir
     desktop.configure(data, args.resources)
-    import musicdl
+    import download_engine
     import terminal
 
     class MemoryVault:
@@ -35,19 +35,19 @@ def fixture(args):
         raise AssertionError("The terminal must not open a network listener")
     socket.socket.bind = no_listener
     desktop.KeychainVault = MemoryVault
-    stream = musicdl.stream_command
+    stream = download_engine.stream_command
 
     def provider(command, *, cwd, log_path, environment):
         assert command[1].endswith("desktop_tiddl.py"), command
         assert command[2:5] == ["download", "--raise-errors", "url"], command
-        assert musicdl.validate_url("tiddl", command[5]) == musicdl.validate_url("tiddl", "https://tidal.com/track/123"), command
+        assert download_engine.validate_url("tiddl", command[5]) == download_engine.validate_url("tiddl", "https://tidal.com/track/123"), command
         assert environment["TUNESAVER_DESKTOP"] == "1"
-        config = tomllib.loads((musicdl.STATE_ROOT / "tiddl/config.toml").read_text())
+        config = tomllib.loads((download_engine.STATE_ROOT / "tiddl/config.toml").read_text())
         output = Path(config["download"]["download_path"]) / "Essai été.wav"
         code = "import sys,wave; a=wave.open(sys.argv[1],'wb'); a.setparams((1,2,22050,0,'NONE','not compressed')); a.writeframes(b'\\0\\0'*22050); a.close()"
         return stream([sys.executable, "-B", "-c", code, str(output)], cwd=cwd, log_path=log_path, environment=environment)
 
-    musicdl.stream_command = provider
+    download_engine.stream_command = provider
     run = terminal.run
     def diagnose(*args, **kwargs):
         try:

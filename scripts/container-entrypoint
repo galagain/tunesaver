@@ -1,0 +1,3 @@
+#!/bin/sh
+export TUNESAVER_RUNTIME=service
+exec python -B /app/cli.py "$@"

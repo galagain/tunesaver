@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 from aiohttp.test_utils import TestClient, TestServer
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 from test_desktop import DesktopHTTPTests
 import account_transfer
 
@@ -21,7 +21,7 @@ class ExportTests(unittest.IsolatedAsyncioTestCase):
         self.token = webapp.session_payload(self.user)['access_token']
         self.headers = {'Authorization': 'Bearer ' + self.token}
         for name, value in BUNDLE['accounts']['beatport'].items():
-            (musicdl.SECRETS_ROOT / name).write_text(value)
+            (download_engine.SECRETS_ROOT / name).write_text(value)
 
     async def asyncTearDown(self):
         await self.client.close()
@@ -32,7 +32,9 @@ class ExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.post('/api/account-export', json={'providers':['beatport']})).status, 401)
         response = await self.client.post('/api/account-export', headers=self.headers, json={'providers':['beatport']})
         self.assertEqual(response.status, 200, await response.text())
-        self.assertEqual(await response.json(), BUNDLE)
+        payload = await response.json()
+        self.assertEqual({k:payload[k] for k in BUNDLE}, BUNDLE)
+        self.assertEqual(payload["sync"]["server"], "https://tunesaver.galagain.com")
         self.assertEqual(response.headers['Cache-Control'], 'no-store')
         # Cached normal login cannot bypass immediate revocation.
         with webapp.local_db() as db:
@@ -85,7 +87,7 @@ class ImportTests(DesktopHTTPTests):
         self.assertEqual(response.status, 200, await response.text())
         self.assertEqual((await response.json())['imported'], ['beatport'])
         self.assertEqual(self.desktop.vault.get('beatport'), BUNDLE['accounts']['beatport'])
-        self.assertEqual((musicdl.SECRETS_ROOT/'beatport_password').stat().st_mode & 0o777, 0o600)
+        self.assertEqual((download_engine.SECRETS_ROOT/'beatport_password').stat().st_mode & 0o777, 0o600)
         changed = {'format':account_transfer.FORMAT, 'accounts':{'beatport':{'beatport_username':'other','beatport_password':'other'}}}
         result = await self.client.post('/api/desktop/account-import', headers=self.cookie, json=changed)
         self.assertEqual((await result.json())['skipped'], ['beatport'])
@@ -101,6 +103,6 @@ class ImportTests(DesktopHTTPTests):
         with mock.patch.object(self.desktop.vault, 'set', side_effect=RuntimeError('locked')):
             response = await self.client.post('/api/desktop/account-import', headers=self.cookie, json=BUNDLE)
         self.assertEqual(response.status, 409)
-        self.assertFalse((musicdl.SECRETS_ROOT/'beatport_password').exists())
+        self.assertFalse((download_engine.SECRETS_ROOT/'beatport_password').exists())
 
 if __name__ == '__main__': unittest.main()

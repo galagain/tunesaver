@@ -1,7 +1,7 @@
 import json
 import unittest
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 
 
 class AdminFailuresTests(unittest.IsolatedAsyncioTestCase):
@@ -11,13 +11,13 @@ class AdminFailuresTests(unittest.IsolatedAsyncioTestCase):
     async def test_unsynced_failed_jobs_and_imports_are_visible_only_for_owner(self):
         owner = webapp.local_create_user('failure@example.com', 'secret123')['id']
         other = webapp.local_create_user('other@example.com', 'secret123')['id']
-        job = musicdl.enqueue('qobuz', ['https://play.qobuz.com/track/123'], owner_id=owner,
+        job = download_engine.enqueue('qobuz', ['https://play.qobuz.com/track/123'], owner_id=owner,
                               metadata={'title': 'Failed song', 'artist': 'Artist'})
-        path = musicdl.QUEUE_ROOT / 'pending' / 'qobuz' / (job + '.json')
-        payload = musicdl.load_job(path)
+        path = download_engine.QUEUE_ROOT / 'pending' / 'qobuz' / (job + '.json')
+        payload = download_engine.load_job(path)
         payload['last_error'] = 'Access denied'
-        musicdl.atomic_write_json(path, payload)
-        path.rename(musicdl.QUEUE_ROOT / 'failed' / 'qobuz' / path.name)
+        download_engine.atomic_write_json(path, payload)
+        path.rename(download_engine.QUEUE_ROOT / 'failed' / 'qobuz' / path.name)
         playlist = webapp.local_create_playlist(owner, 'Import')
         with webapp.local_db() as db:
             db.execute('insert into playlist_imports(id,user_id,playlist_id,source_url,created_at,tracks,failures) values(?,?,?,?,?,?,?)',

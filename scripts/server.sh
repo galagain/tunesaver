@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd -P)"
 COMPOSE_FILE="$ROOT_DIR/compose.yaml"
 
 usage() {
   command cat <<'EOF'
-Usage: ./musicdl <commande> [arguments]
+Usage: tunesaver server <commande> [arguments]
 
+  setup                        Configure, connecte et démarre le serveur
+  login                        Connecte les plateformes via le navigateur
   init [--skip-beatport] [--force-beatport] [--skip-qobuz] [--force-qobuz]
                                Prépare les dossiers et les secrets
+  database setup|backup        Prépare PostgreSQL ou sauvegarde sa base
   build                        Construit l'image pour l'architecture locale
-  auth <tiddl|qobuz> [--force] Connecte ou réinitialise un compte
-  start [all|tiddl|beatport|qobuz]
+  auth <tidal|qobuz> [--force] Connecte ou réinitialise un compte
+  start [all|tidal|beatport|qobuz]
                                Démarre l'interface et le(s) worker(s)
   stop                         Arrête les workers sans effacer les données
   add <source> <url...>        Ajoute une tâche durable à la file
@@ -22,16 +25,20 @@ Usage: ./musicdl <commande> [arguments]
   status [all|source] [--limit N]
                                Affiche l'état des files
   doctor [all|source]          Vérifie la présence des authentifications
-  logs [all|tiddl|beatport|qobuz|web]
+  logs [all|tidal|beatport|qobuz|web]
                                Suit les journaux des services
   versions                     Affiche les versions embarquées
 
-Sources: tiddl, beatport, qobuz
+Sources: tidal, beatport, qobuz
 EOF
 }
 
 compose() {
-  docker compose --project-directory "$ROOT_DIR" --file "$COMPOSE_FILE" "$@"
+  local extra=()
+  if [[ -f "$ROOT_DIR/.env.database" ]] || { [[ -f "$ROOT_DIR/.env" ]] && command grep -q '^TUNESAVER_DATABASE_ENV=.' "$ROOT_DIR/.env"; }; then
+    extra+=(--file "$ROOT_DIR/compose.postgres.yaml")
+  fi
+  docker compose --project-directory "$ROOT_DIR" --file "$COMPOSE_FILE" "${extra[@]}" "$@"
 }
 
 require_docker() {
@@ -61,6 +68,7 @@ ensure_layout() {
     "$ROOT_DIR/data/downloads/qobuz" \
     "$ROOT_DIR/data/deliveries" \
     "$ROOT_DIR/data/queue" \
+    "$ROOT_DIR/data/state/catalog" \
     "$ROOT_DIR/data/state/tiddl" \
     "$ROOT_DIR/data/state/beatportdl" \
     "$ROOT_DIR/data/state/qobuz" \
@@ -69,7 +77,7 @@ ensure_layout() {
     "$ROOT_DIR/secrets"
   chmod 700 "$ROOT_DIR/data/queue" "$ROOT_DIR/data/state" \
     "$ROOT_DIR/data/deliveries" \
-    "$ROOT_DIR/data/state/tiddl" "$ROOT_DIR/data/state/beatportdl" \
+    "$ROOT_DIR/data/state/catalog" "$ROOT_DIR/data/state/tiddl" "$ROOT_DIR/data/state/beatportdl" \
     "$ROOT_DIR/data/state/qobuz" \
     "$ROOT_DIR/data/state/home" "$ROOT_DIR/data/state/home/tiddl" \
     "$ROOT_DIR/data/state/home/beatport" "$ROOT_DIR/secrets"
@@ -113,7 +121,7 @@ write_default_env() {
     command printf 'QOBUZ_DOWNLOADS_PATH=./data/downloads/qobuz\n'
     command printf 'PUBLIC_URL=http://127.0.0.1:8080\n'
     command printf 'ADMIN_EMAIL=admin\n'
-    command printf 'ADMIN_PASSWORD=changez-moi\n'
+    command printf 'ADMIN_PASSWORD=%s\n' "$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
     command printf 'SMTP_HOST=\n'
     command printf 'SMTP_PORT=587\n'
     command printf 'SMTP_USERNAME=\n'
@@ -212,7 +220,7 @@ EOF
 require_beatport_secrets() {
   if ! secret_is_ready "$ROOT_DIR/secrets/beatport_username" \
     || ! secret_is_ready "$ROOT_DIR/secrets/beatport_password"; then
-    command echo "Secrets Beatport absents. Lancez d'abord: ./musicdl init" >&2
+    command echo "Secrets Beatport absents. Lancez d'abord: tunesaver server init" >&2
     exit 1
   fi
 }
@@ -220,7 +228,7 @@ require_beatport_secrets() {
 require_qobuz_secrets() {
   if ! secret_is_ready "$ROOT_DIR/secrets/qobuz_user_id" \
     || ! secret_is_ready "$ROOT_DIR/secrets/qobuz_token"; then
-    command echo "Jeton Qobuz absent. Lancez d'abord: ./musicdl auth qobuz" >&2
+    command echo "Jeton Qobuz absent. Lancez d'abord: tunesaver server auth qobuz" >&2
     exit 1
   fi
 }
@@ -267,7 +275,7 @@ cmd_init() {
   if [[ "$skip_qobuz" == false ]]; then
     configure_qobuz "$force_qobuz"
   fi
-  command echo "Initialisation terminée. Authentifiez ensuite TIDAL et Qobuz."
+  command echo "Dossiers prêts. Les comptes existants sont conservés."
 }
 
 cmd_build() {
@@ -284,7 +292,7 @@ cmd_auth() {
   local provider="${1:-}"
   if [[ "$provider" != "tiddl" && "$provider" != "qobuz" ]] || [[ $# -gt 2 \
     || ( $# -eq 2 && "${2:-}" != "--force" ) ]]; then
-    command echo "Utilisation: ./musicdl auth <tiddl|qobuz> [--force]" >&2
+    command echo "Utilisation: tunesaver server auth <tiddl|qobuz> [--force]" >&2
     exit 2
   fi
   ensure_layout
@@ -318,13 +326,12 @@ cmd_start() {
   require_docker
   case "$target" in
     all)
-      require_beatport_secrets
-      require_qobuz_secrets
-      compose build tiddl beatport qobuz web
-      compose run --rm --no-deps tiddl doctor tiddl
-      compose run --rm --no-deps beatport doctor beatport
-      compose run --rm --no-deps qobuz doctor qobuz
-      compose up --detach --wait --wait-timeout 120 tiddl beatport qobuz web
+      local services=(web)
+      [[ -s "$ROOT_DIR/data/state/tiddl/auth.json" ]] && services+=(tiddl)
+      [[ -s "$ROOT_DIR/secrets/beatport_username" && -s "$ROOT_DIR/secrets/beatport_password" ]] && services+=(beatport)
+      [[ -s "$ROOT_DIR/data/state/qobuz/.config/qobuz-dl/config.ini" ]] && services+=(qobuz)
+      compose build "${services[@]}"
+      compose up --detach --wait --wait-timeout 120 "${services[@]}"
       ;;
     tiddl)
       compose build tiddl web

@@ -8,7 +8,7 @@ from unittest import mock
 
 from aiohttp.test_utils import TestClient, TestServer
 import test_webapp as fixtures
-from test_webapp import musicdl, webapp
+from test_webapp import download_engine, webapp
 from desktop import COOKIE, Desktop, KeychainVault, LOCAL_USER_ID, configure
 
 
@@ -31,7 +31,7 @@ class DesktopHTTPTests(unittest.IsolatedAsyncioTestCase):
         await fixtures.WebAppHTTPTests.asyncSetUp(self)
         self.root = Path(self.temporary.name)
         (self.root / "logs").mkdir()
-        shutil.copytree(fixtures.PROJECT_ROOT / "config", musicdl.CONFIG_ROOT)
+        shutil.copytree(fixtures.PROJECT_ROOT / "config", download_engine.CONFIG_ROOT)
         self.desktop = Desktop(self.root, MemoryVault())
         self.worker_mock = mock.patch.object(self.desktop, "start_worker")
         self.worker = self.worker_mock.start()
@@ -95,7 +95,7 @@ class DesktopHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def test_connect_persists_only_valid_credentials_and_disconnect_removes_them(self):
         def login(provider, payload):
             for key in ("username", "password"):
-                path = musicdl.SECRETS_ROOT / ("beatport_" + key)
+                path = download_engine.SECRETS_ROOT / ("beatport_" + key)
                 path.write_text(payload[key])
                 path.chmod(0o600)
         with mock.patch.object(self.desktop, "password_login", side_effect=login):
@@ -115,8 +115,8 @@ class DesktopHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_keychain_save_does_not_start_worker_or_leave_password(self):
         def login(provider, payload):
-            (musicdl.SECRETS_ROOT / "beatport_username").write_text("fixture")
-            (musicdl.SECRETS_ROOT / "beatport_password").write_text("private-value")
+            (download_engine.SECRETS_ROOT / "beatport_username").write_text("fixture")
+            (download_engine.SECRETS_ROOT / "beatport_password").write_text("private-value")
         with mock.patch.object(self.desktop, "password_login", side_effect=login), \
              mock.patch.object(self.desktop.vault, "set", side_effect=RuntimeError("private-value")):
             await self.desktop.connect("beatport", {})
@@ -161,7 +161,7 @@ class DesktopHTTPTests(unittest.IsolatedAsyncioTestCase):
 
 class DesktopIsolationTests(unittest.TestCase):
     def test_server_environment_is_not_inherited(self):
-        with mock.patch.dict(os.environ, {"TUNESAVER_PG_HOST": "server", "MUSICDL_WEB_HOST": "0.0.0.0", "TIDDL_AUTH": "private"}):
+        with mock.patch.dict(os.environ, {"TUNESAVER_PG_HOST": "server", "TUNESAVER_WEB_HOST": "0.0.0.0", "TIDDL_AUTH": "private"}):
             configure(Path("/tmp/local-data"), Path("/tmp/resources"))
             self.assertNotIn("TUNESAVER_PG_HOST", os.environ)
             self.assertNotIn("TIDDL_AUTH", os.environ)

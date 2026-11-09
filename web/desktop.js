@@ -15,16 +15,29 @@
     <button type="button" id="desktop-close" aria-label="Fermer">×</button></header>
     <p class="desktop-intro">Connecte les plateformes que tu utilises. Ta bibliothèque reste sur ce Mac et tes connexions sont mémorisées dans le Trousseau macOS.</p>
     <section class="desktop-account-transfer"><h3>Connexion rapide</h3>
+      <button id="desktop-web-login" type="button">Se connecter avec TuneSaver</button>
+      <p id="desktop-web-status" role="status"></p>
+      <a id="desktop-web-authorize" target="_blank" rel="noopener noreferrer" hidden>Ouvrir la connexion</a>
+      <details><summary>Importer un fichier de connexions</summary>
       <p><a href="https://tunesaver.galagain.com/auth/" target="_blank" rel="noopener noreferrer">Récupérer mes connexions TuneSaver</a></p>
       <label>Importer un fichier<input id="desktop-account-file" type="file" accept=".json,application/json"></label>
       <p>Les comptes déjà connectés sont conservés. Supprime le fichier après l’import.</p>
-      <p id="desktop-import-result" role="status"></p></section>
+      <p id="desktop-import-result" role="status"></p></details><p id="desktop-sync-status" role="status"></p></section>
     <div id="desktop-account-cards"></div>
     <p id="desktop-error" role="alert"></p>
     <footer><div><strong>Une bibliothèque qui reste à toi</strong>
     <p>Les morceaux sont conservés jusqu’à leur suppression. Les recherches et imports nécessitent Internet et les droits d’accès de ton abonnement.</p></div>
     <button type="button" id="desktop-open-music">Afficher dans le Finder</button></footer>`;
   document.body.append(dialog);
+  dialog.querySelector('#desktop-web-login').onclick = async () => {
+    const button = dialog.querySelector('#desktop-web-login'); button.disabled = true;
+    try {
+      const grant = await requestJson('/api/desktop/web-login', {method:'POST',body:'{}'});
+      const link = dialog.querySelector('#desktop-web-authorize'); link.href = grant.url; link.hidden = false;
+      link.click();
+      await refresh();
+    } catch (error) { showError(error.message); button.disabled = false; }
+  };
   const input = dialog.querySelector('#desktop-account-file');
   input.addEventListener('change', async () => {
     const file = input.files[0];
@@ -102,6 +115,12 @@
     inFlight = true;
     try {
       latest = await requestJson('/api/desktop/accounts');
+      const webLogin = latest.web_login || {};
+      dialog.querySelector('#desktop-web-login').disabled = webLogin.state === 'pending';
+      dialog.querySelector('#desktop-web-status').textContent = webLogin.state === 'pending' ? `Valide le code ${webLogin.code} dans le navigateur.` : webLogin.state === 'done' ? 'Appareil connecté.' : webLogin.message || '';
+      dialog.querySelector('#desktop-web-authorize').hidden = webLogin.state !== 'pending';
+      const sync = latest.catalog_sync || {};
+      dialog.querySelector('#desktop-sync-status').textContent = sync.error || (sync.connected ? `Catalogue global · ${sync.pending || 0} titre(s) en attente` : 'Catalogue global : importe un fichier de connexions récent pour activer la synchronisation.');
       if (latest.storage_error) showError(latest.storage_error);
       for (const [provider, account] of Object.entries(latest.accounts)) {
         const card = cards.querySelector(`[data-provider="${provider}"]`);

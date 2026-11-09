@@ -28,7 +28,7 @@ def main():
     with ExitStack() as guard:
         for name in ("search_tidal", "search_qobuz", "search_beatport", "enqueue_import_track", "local_db"):
             guard.enter_context(patch.object(webapp, name, side_effect=AssertionError(f"Forbidden during metadata read: {name}")))
-        guard.enter_context(patch.object(webapp.musicdl, "enqueue", side_effect=AssertionError("Audio download forbidden")))
+        guard.enter_context(patch.object(webapp.download_engine, "enqueue", side_effect=AssertionError("Audio download forbidden")))
         for case in cases:
             started = time.monotonic()
             report = dict(case)

@@ -60,9 +60,9 @@ def native_tools():
     prefix = Path(capture("brew", "--prefix"))
     goenv = {**os.environ, "GOCACHE": str(BUILD / "go-cache"), "GOTOOLCHAIN": "go1.26.7", "CGO_ENABLED": "0"}
     beatport = source("beatportdl")
-    (beatport / "cmd/musicdl-search").mkdir(parents=True, exist_ok=True)
-    shutil.copy2(ROOT / "src/beatport_search.go", beatport / "cmd/musicdl-search/main.go")
-    run("go", "build", "-mod=vendor", "-trimpath", "-ldflags=-s -w", "-o", BIN / "beatport-search", "./cmd/musicdl-search", cwd=beatport, env=goenv)
+    (beatport / "cmd/tunesaver-search").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "src/beatport_search.go", beatport / "cmd/tunesaver-search/main.go")
+    run("go", "build", "-mod=vendor", "-trimpath", "-ldflags=-s -w", "-o", BIN / "beatport-search", "./cmd/tunesaver-search", cwd=beatport, env=goenv)
     flags = f"-I{prefix}/opt/taglib/include"
     goenv.update({"CGO_ENABLED": "1", "CGO_CFLAGS": flags, "CGO_CXXFLAGS": flags,
                   "CGO_LDFLAGS": f"-L{prefix}/opt/taglib/lib -lc++"})

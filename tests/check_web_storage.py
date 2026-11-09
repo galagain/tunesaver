@@ -7,7 +7,7 @@ import tempfile
 import uuid
 
 sys.path.insert(0, "/app")
-import musicdl
+import download_engine
 import webapp
 
 
@@ -18,21 +18,21 @@ with tempfile.TemporaryDirectory() as temporary:
     owner = user["id"]
     paths = []
     try:
-        for provider in musicdl.PROVIDERS:
-            for state in (*musicdl.STATES, "logs"):
-                path = musicdl.QUEUE_ROOT / state / provider / f".storage-test-{uuid.uuid4().hex}"
+        for provider in download_engine.PROVIDERS:
+            for state in (*download_engine.STATES, "logs"):
+                path = download_engine.QUEUE_ROOT / state / provider / f".storage-test-{uuid.uuid4().hex}"
                 paths.append(path)
                 path.write_text("fixture")
                 path.unlink()
             job = f"20260908T000000Z-{uuid.uuid4().hex[:8]}"
-            path = musicdl.QUEUE_ROOT / "failed" / provider / f"{job}.json"
+            path = download_engine.QUEUE_ROOT / "failed" / provider / f"{job}.json"
             paths.append(path)
             url = {"tiddl": "https://tidal.com/track/123", "beatport": "https://www.beatport.com/track/test/123", "qobuz": "https://play.qobuz.com/track/123"}[provider]
             path.write_text(json.dumps({"id": job, "provider": provider, "owner_id": owner, "urls": [url], "ephemeral": True}))
-            content = musicdl.DELIVERY_ROOT / owner / job / "content"
+            content = download_engine.DELIVERY_ROOT / owner / job / "content"
             content.mkdir(parents=True)
             (content / "partial.flac").write_bytes(b"fixture")
-            log = musicdl.QUEUE_ROOT / "logs" / provider / f"{job}-attempt-1.log"
+            log = download_engine.QUEUE_ROOT / "logs" / provider / f"{job}-attempt-1.log"
             paths.append(log)
             log.write_text("fixture")
             webapp.local_upsert_history(owner, [{"job_id": job, "provider": provider, "state": "failed"}])
@@ -43,4 +43,4 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         for path in paths:
             path.unlink(missing_ok=True)
-        shutil.rmtree(musicdl.DELIVERY_ROOT / owner, ignore_errors=True)
+        shutil.rmtree(download_engine.DELIVERY_ROOT / owner, ignore_errors=True)

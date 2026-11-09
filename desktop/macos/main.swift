@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "TuneSaver")
         appMenu.addItem(withTitle: "À propos de TuneSaver", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Installer la commande tunesaver…", action: #selector(installTerminal), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quitter TuneSaver", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -68,6 +69,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         menu.addItem(windowItem)
         NSApp.windowsMenu = windows
         NSApp.mainMenu = menu
+    }
+
+    @objc func installTerminal() {
+        guard let resources = Bundle.main.resourceURL else { return }
+        let task = Process()
+        task.executableURL = resources.appendingPathComponent("python/bin/python3.13")
+        task.arguments = ["-E", "-s", "-B", resources.appendingPathComponent("install_cli.py").path, "--resources", resources.path, "--configure-shell"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        task.terminationHandler = { process in
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = process.terminationStatus == 0 ? "Commande tunesaver installée" : "Installation interrompue"
+                alert.informativeText = process.terminationStatus == 0 ? "Ouvre un nouveau terminal, puis lance tunesaver. Les comptes sont partagés avec l’application." : output
+                alert.beginSheetModal(for: self.window)
+            }
+        }
+        do { try task.run() } catch { fail("Impossible de lancer l’installation du terminal.") }
     }
 
     func startBackend() {

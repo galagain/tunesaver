@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from unittest import mock
 
 import test_webapp as fixtures
-from test_webapp import musicdl, webapp
+from test_webapp import download_engine, webapp
 import audio_retention as retention
 
 
@@ -14,19 +14,19 @@ class AudioRetentionTests(unittest.IsolatedAsyncioTestCase):
 
     def completed(self, age=retention.RETENTION_SECONDS + 1):
         user = webapp.local_create_user('retention@example.com', 'secret123')
-        identifier = musicdl.enqueue('tiddl', ['track/123'], owner_id=user['id'], ephemeral=True,
+        identifier = download_engine.enqueue('tiddl', ['track/123'], owner_id=user['id'], ephemeral=True,
                                      metadata={'title': 'Kept title', 'artist': 'Artist', 'kind': 'track'})
-        pending = musicdl.QUEUE_ROOT / 'pending' / 'tiddl' / f'{identifier}.json'
-        done = musicdl.QUEUE_ROOT / 'done' / 'tiddl' / pending.name
-        job = musicdl.load_job(pending, expected_provider='tiddl')
+        pending = download_engine.QUEUE_ROOT / 'pending' / 'tiddl' / f'{identifier}.json'
+        done = download_engine.QUEUE_ROOT / 'done' / 'tiddl' / pending.name
+        job = download_engine.load_job(pending, expected_provider='tiddl')
         self.now = 1900000000
         job['last_finished_at'] = datetime.fromtimestamp(self.now - age, timezone.utc).isoformat()
-        directory = musicdl.DELIVERY_ROOT / user['id'] / identifier
+        directory = download_engine.DELIVERY_ROOT / user['id'] / identifier
         directory.mkdir(parents=True)
         audio = directory / 'song.flac'
         audio.write_bytes(b'audio')
-        job['delivery'] = {'name': audio.name, 'path': str(audio.relative_to(musicdl.DELIVERY_ROOT)), 'size': 5}
-        musicdl.atomic_write_json(done, job)
+        job['delivery'] = {'name': audio.name, 'path': str(audio.relative_to(download_engine.DELIVERY_ROOT)), 'size': 5}
+        download_engine.atomic_write_json(done, job)
         pending.unlink()
         return user['id'], identifier, done, directory
 
@@ -49,7 +49,7 @@ class AudioRetentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['job_id'], identifier)
         self.assertTrue(retention.requeue(webapp, owner, identifier)['duplicate'])
         self.assertIn(identifier, webapp.local_playlists(owner)[0]['track_ids'])
-        job = musicdl.load_job(musicdl.QUEUE_ROOT / 'pending' / 'tiddl' / path.name, expected_provider='tiddl')
+        job = download_engine.load_job(download_engine.QUEUE_ROOT / 'pending' / 'tiddl' / path.name, expected_provider='tiddl')
         self.assertNotIn('last_finished_at', job)
         self.assertNotIn('delivery_expired_at', job)
         self.assertEqual(job['urls'], ['track/123'])
@@ -63,7 +63,7 @@ class AudioRetentionTests(unittest.IsolatedAsyncioTestCase):
         _, _, path, directory = self.completed()
         job = json.loads(path.read_text())
         job['last_finished_at'] = 'invalid'
-        musicdl.atomic_write_json(path, job)
+        download_engine.atomic_write_json(path, job)
         self.assertEqual(retention.expire(webapp, self.now), 0)
         self.assertTrue(directory.exists())
 

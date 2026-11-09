@@ -1,0 +1,4 @@
+#!/bin/sh
+# A single entry point, from a checkout or an installed package.
+root=$(CDPATH= cd -P "$(dirname "$0")" && pwd) || exit 1
+exec python3 -B "$root/src/cli.py" "$@"

@@ -5,7 +5,7 @@ from unittest import mock
 
 import test_audio_retention as retention_fixtures
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 import audio_retention
 import import_engine
 
@@ -16,9 +16,9 @@ class PlaylistRetryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_audio_requeues_once_and_preserves_membership(self):
         owner, identifier, path, directory = retention_fixtures.AudioRetentionTests.completed(self)
-        job = musicdl.load_job(path)
+        job = download_engine.load_job(path)
         job.update(fallback_tried=['beatport', 'tiddl'], fallback_checked_at='old')
-        musicdl.atomic_write_json(path, job)
+        download_engine.atomic_write_json(path, job)
         webapp.local_upsert_history(owner, [audio_retention.history(job)])
         playlist = webapp.local_create_playlist(owner, 'Set')['id']
         webapp.local_playlist_add_track(owner, playlist, identifier)
@@ -34,7 +34,7 @@ class PlaylistRetryTests(unittest.IsolatedAsyncioTestCase):
             result = webapp.retry_playlist(owner, playlist)
         self.assertEqual(result, {'queued': 1, 'unchanged': 0, 'matching': 0, 'errors': []})
         self.assertEqual(webapp.retry_playlist(owner, playlist)['unchanged'], 1)
-        pending = musicdl.load_job(musicdl.QUEUE_ROOT / 'pending' / 'tiddl' / path.name)
+        pending = download_engine.load_job(download_engine.QUEUE_ROOT / 'pending' / 'tiddl' / path.name)
         self.assertNotIn('fallback_tried', pending)
         self.assertNotIn('fallback_checked_at', pending)
         self.assertEqual(webapp.local_playlists(owner)[0]['track_ids'], [identifier])

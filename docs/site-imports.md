@@ -42,14 +42,5 @@ Les erreurs de disque et les autres erreurs non reconnues ne sont pas relancees.
 Les qualites configurees de chaque plateforme restent inchangees : ce mecanisme
 ne garantit pas une qualite lossless sur la plateforme de remplacement.
 
-Le Dockerfile principal inclut tous les nouveaux modules. Sur le serveur ayant
-deja l'image `tunesaver:appsilo`, la variante suivante reutilise son environnement :
-
-```sh
-docker compose -f compose.yaml -f compose.matching.yaml build web
-docker compose -f compose.yaml -f compose.matching.yaml up -d --no-deps --no-build web
-```
-
-Ne pas reconstruire ni redemarrer les workers audio pour cette mise a jour.
-Conserver l'image precedente pour un retour arriere. Les donnees et les comptes
-ne sont ni effaces ni migres par cette operation.
+Le Dockerfile unique inclut les modules d’import et de recherche.
+La mise à jour se fait avec `./tunesaver server start`.

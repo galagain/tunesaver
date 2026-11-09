@@ -36,7 +36,7 @@ def run_docker(inputs, container):
         raise ValueError("Conteneur TuneSaver inaccessible.")
     command = ["docker", "run", "--rm", "-i", "--volumes-from", container,
                "-v", f"{export_playlist.ROOT}:/repo:ro", "-w", "/repo",
-               "-e", "MUSICDL_QOBUZ_SEARCH_SCRIPT=/repo/src/qobuz_search.py",
+               "-e", "TUNESAVER_QOBUZ_SEARCH_SCRIPT=/repo/src/qobuz_search.py",
                "--entrypoint", "python", inspected.stdout.strip(), "match_music.py", "--stdin-json", "-o", "-"]
     # No whole-playlist timeout or size cap; individual metadata requests are bounded.
     result = subprocess.run(command, input=json.dumps(inputs), stdout=subprocess.PIPE, text=True)

@@ -29,22 +29,22 @@ def configure(data: Path, resources: Path) -> None:
     sys.dont_write_bytecode = True
     # A shell's old deployment settings must never point the Mac app at a server.
     for name in list(os.environ):
-        if name.startswith(("MUSICDL_", "TUNESAVER_", "TIDDL_")):
+        if name.startswith(("TUNESAVER_", "TIDDL_")):
             os.environ.pop(name)
     settings = {
         "TUNESAVER_DESKTOP": "1",
         "TUNESAVER_ALLOWED_HOSTS": "127.0.0.1",
         "TUNESAVER_DB_PATH": str(data / "library.sqlite"),
-        "MUSICDL_QUEUE_DIR": str(data / "queue"),
-        "MUSICDL_STATE_DIR": str(data / "session"),
-        "MUSICDL_SECRETS_DIR": str(data / "session" / "secrets"),
-        "MUSICDL_CONFIG_DIR": str(resources / "config"),
-        "MUSICDL_WEB_ASSET_DIR": str(resources / "web"),
-        "MUSICDL_DELIVERY_DIR": str(data / "Music"),
-        "MUSICDL_BEATPORT_CONFIG": str(resources / "config" / "beatport.json"),
-        "MUSICDL_BEATPORT_SEARCH_BINARY": str(resources / "bin" / "beatport-search"),
-        "MUSICDL_QOBUZ_SEARCH_SCRIPT": str(resources / "src" / "qobuz_search.py"),
-        "MUSICDL_QOBUZ_CONFIG": str(data / "session/qobuz/.config/qobuz-dl/config.ini"),
+        "TUNESAVER_QUEUE_DIR": str(data / "queue"),
+        "TUNESAVER_STATE_DIR": str(data / "session"),
+        "TUNESAVER_SECRETS_DIR": str(data / "session" / "secrets"),
+        "TUNESAVER_CONFIG_DIR": str(resources / "config"),
+        "TUNESAVER_WEB_ASSET_DIR": str(resources / "web"),
+        "TUNESAVER_DELIVERY_DIR": str(data / "Music"),
+        "TUNESAVER_BEATPORT_CONFIG": str(resources / "config" / "beatport.json"),
+        "TUNESAVER_BEATPORT_SEARCH_BINARY": str(resources / "bin" / "beatport-search"),
+        "TUNESAVER_QOBUZ_SEARCH_SCRIPT": str(resources / "src" / "qobuz_search.py"),
+        "TUNESAVER_QOBUZ_CONFIG": str(data / "session/qobuz/.config/qobuz-dl/config.ini"),
         "TIDDL_PATH": str(data / "session/tiddl"),
         "PLAYWRIGHT_BROWSERS_PATH": str(resources / "browsers"),
         "PYTHONUNBUFFERED": "1",
@@ -53,7 +53,7 @@ def configure(data: Path, resources: Path) -> None:
         "PATH": os.pathsep.join((str(resources / "bin"), str(Path(sys.executable).parent), "/usr/bin", "/bin")),
     }
     for provider in ("TIDDL", "BEATPORT", "QOBUZ"):
-        settings[f"MUSICDL_{provider}_DOWNLOAD_DIR"] = str(data / "Downloads" / provider.lower())
+        settings[f"TUNESAVER_{provider}_DOWNLOAD_DIR"] = str(data / "Downloads" / provider.lower())
     os.environ.update(settings)
     if str(resources) not in sys.path:
         sys.path.insert(0, str(resources))
@@ -79,10 +79,10 @@ class KeychainVault:
 
 class Desktop:
     def __init__(self, data: Path, vault=None):
-        import musicdl
+        import download_engine
         import webapp
         self.api = webapp
-        self.music = musicdl
+        self.music = download_engine
         self.data = data
         self.vault = vault if vault is not None else KeychainVault()
         self.bootstrap = secrets.token_urlsafe(32)
@@ -93,11 +93,15 @@ class Desktop:
         self.persisted = {}
         self.storage_error = ""
         self.session_ready = False
+        self.sync_status = {"connected": False}
+        self.web_login_task = None
+        self.web_login_lock = asyncio.Lock()
+        self.web_login_status = {}
         self.files = {
-            "tiddl": [musicdl.STATE_ROOT / "tiddl/auth.json"],
-            "beatport": [musicdl.SECRETS_ROOT / "beatport_username",
-                         musicdl.SECRETS_ROOT / "beatport_password", webapp.BEATPORT_CACHE_PATH],
-            "qobuz": [musicdl.QOBUZ_CONFIG_PATH],
+            "tiddl": [download_engine.STATE_ROOT / "tiddl/auth.json"],
+            "beatport": [download_engine.SECRETS_ROOT / "beatport_username",
+                         download_engine.SECRETS_ROOT / "beatport_password", webapp.BEATPORT_CACHE_PATH],
+            "qobuz": [download_engine.QOBUZ_CONFIG_PATH],
         }
 
     def snapshot(self, provider):
@@ -140,7 +144,7 @@ class Desktop:
         log = (self.data / "logs" / f"{provider}.log").open("ab")
         try:
             self.workers[provider] = subprocess.Popen(
-                [sys.executable, str(Path(__file__).with_name("musicdl.py")), "worker", provider],
+                [sys.executable, str(Path(__file__).with_name("cli.py")), "worker", provider],
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True,
                 env={**os.environ, "TUNESAVER_PARENT_PID": str(os.getpid())})
         finally:
@@ -150,7 +154,7 @@ class Desktop:
         process = self.workers.pop(provider, None)
         if process is None or process.poll() is not None:
             return
-        process.terminate()  # musicdl forwards termination to its downloader group.
+        process.terminate()  # download_engine forwards termination to its downloader group.
         try:
             await asyncio.to_thread(process.wait, 8)
         except subprocess.TimeoutExpired:
@@ -164,6 +168,7 @@ class Desktop:
     async def maintenance(self):
         while True:
             await asyncio.sleep(15)
+            await asyncio.to_thread(self.sync_catalog)
             for provider in self.files:
                 if self.tasks.get(provider) and not self.tasks[provider].done():
                     continue
@@ -190,6 +195,10 @@ class Desktop:
         try:
             yield
         finally:
+            if self.web_login_task:
+                self.web_login_cancel.set()
+                self.web_login_task.cancel()
+                await asyncio.gather(self.web_login_task, return_exceptions=True)
             monitor.cancel()
             await asyncio.gather(monitor, return_exceptions=True)
             # Do not cancel to_thread credential writes midway through a Keychain update.
@@ -216,6 +225,7 @@ class Desktop:
         app.router.add_get("/desktop/start", self.bootstrap_handler)
         app.router.add_get("/api/desktop/accounts", self.status_handler)
         app.router.add_post("/api/desktop/account-import", self.import_handler)
+        app.router.add_post("/api/desktop/web-login", self.web_login_handler)
         app.router.add_post("/api/desktop/accounts/{provider}", self.connect_handler)
         app.router.add_delete("/api/desktop/accounts/{provider}", self.disconnect_handler)
         for name in ("desktop.js", "desktop.css"):
@@ -256,15 +266,46 @@ class Desktop:
             **self.jobs.get(p, {}),
         } for p in self.files}, "music_directory": str(self.music.DELIVERY_ROOT),
             "storage_error": self.storage_error,
+            "catalog_sync": self.sync_status,
+            "web_login": self.web_login_status,
             "qobuz_notice": "Le connecteur Qobuz actuel permet la connexion et la recherche, mais son téléchargement est affecté par un changement de l’API Qobuz."})
+
+    async def web_login_handler(self, request):
+        async with self.web_login_lock:
+            return await self._web_login_handler(request)
+
+    async def _web_login_handler(self, request):
+        from aiohttp import web
+        import web_login
+        if self.web_login_task and not self.web_login_task.done():
+            return web.json_response(self.web_login_status)
+        grant = await asyncio.to_thread(web_login.start)
+        import threading
+        self.web_login_cancel = threading.Event()
+        self.web_login_status = {"state":"pending", "url":grant["verification_uri"], "code":grant["code"]}
+        async def finish():
+            try:
+                bundle = await asyncio.to_thread(web_login.wait, grant, self.web_login_cancel)
+                result = self.import_bundle(bundle)
+                self.web_login_status = {"state":"done", **result}
+                await asyncio.to_thread(self.sync_catalog)
+            except Exception:
+                self.web_login_status = {"state":"error", "message":"Connexion interrompue ou expirée. Réessaie."}
+        self.web_login_task = asyncio.create_task(finish())
+        return web.json_response(self.web_login_status)
 
     async def import_handler(self, request):
         from aiohttp import web
+        return web.json_response(self.import_bundle(await self.api.read_json_object(request)))
+
+    def import_bundle(self, payload):
         from contextlib import ExitStack
         import account_transfer
         import configparser
         try:
-            accounts = account_transfer.validate(await self.api.read_json_object(request))
+            accounts = account_transfer.validate(payload)
+            import catalog_sync
+            sync = catalog_sync.valid_config(payload["sync"]) if "sync" in payload else None
         except (ValueError, KeyError, TypeError, configparser.Error):
             raise self.api.PublicError("Fichier de comptes TuneSaver invalide.")
         imported, skipped = [], []
@@ -308,7 +349,17 @@ class Desktop:
             raise self.api.PublicError("Une plateforme est occupée. Réessaie dans un instant.", status=409)
         except Exception:
             raise self.api.PublicError("Import interrompu. Vérifie le Trousseau puis réessaie ; les comptes déjà importés seront conservés.", status=409)
-        return web.json_response({"imported": imported, "skipped": skipped})
+        if sync:
+            self.vault.set("catalog_sync", sync)
+        return {"imported": imported, "skipped": skipped}
+
+    def sync_catalog(self):
+        import catalog_sync
+        try:
+            catalog_sync.harvest_local(self.data, self.music)
+            self.sync_status = catalog_sync.flush(self.data, self.vault.get("catalog_sync"))
+        except Exception:
+            self.sync_status = {"connected": bool(self.sync_status.get("connected")), "error": "Synchronisation différée ; les titres restent en attente sur ce Mac."}
 
     def provider(self, request):
         provider = request.match_info["provider"]

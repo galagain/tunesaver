@@ -18,7 +18,7 @@ from aiohttp.test_utils import TestClient, TestServer
 PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-import musicdl  # noqa: E402
+import download_engine  # noqa: E402
 import webapp  # noqa: E402
 
 TEST_USER_ID = "11111111-1111-4111-8111-111111111111"
@@ -254,43 +254,43 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
         self.originals = {
-            "QUEUE_ROOT": musicdl.QUEUE_ROOT,
-            "STATE_ROOT": musicdl.STATE_ROOT,
-            "CONFIG_ROOT": musicdl.CONFIG_ROOT,
-            "SECRETS_ROOT": musicdl.SECRETS_ROOT,
-            "TIDDL_DOWNLOAD_DIR": musicdl.TIDDL_DOWNLOAD_DIR,
-            "BEATPORT_DOWNLOAD_DIR": musicdl.BEATPORT_DOWNLOAD_DIR,
-            "QOBUZ_DOWNLOAD_DIR": musicdl.QOBUZ_DOWNLOAD_DIR,
-            "DELIVERY_ROOT": musicdl.DELIVERY_ROOT,
-            "QOBUZ_CONFIG_PATH": musicdl.QOBUZ_CONFIG_PATH,
+            "QUEUE_ROOT": download_engine.QUEUE_ROOT,
+            "STATE_ROOT": download_engine.STATE_ROOT,
+            "CONFIG_ROOT": download_engine.CONFIG_ROOT,
+            "SECRETS_ROOT": download_engine.SECRETS_ROOT,
+            "TIDDL_DOWNLOAD_DIR": download_engine.TIDDL_DOWNLOAD_DIR,
+            "BEATPORT_DOWNLOAD_DIR": download_engine.BEATPORT_DOWNLOAD_DIR,
+            "QOBUZ_DOWNLOAD_DIR": download_engine.QOBUZ_DOWNLOAD_DIR,
+            "DELIVERY_ROOT": download_engine.DELIVERY_ROOT,
+            "QOBUZ_CONFIG_PATH": download_engine.QOBUZ_CONFIG_PATH,
             "TIDAL_AUTH_PATH": webapp.TIDAL_AUTH_PATH,
             "BEATPORT_CACHE_PATH": webapp.BEATPORT_CACHE_PATH,
             "LOCAL_DB_PATH": webapp.LOCAL_DB_PATH,
             "ASSET_ROOT": webapp.ASSET_ROOT,
         }
-        musicdl.QUEUE_ROOT = root / "queue"
-        musicdl.STATE_ROOT = root / "state"
-        musicdl.CONFIG_ROOT = root / "config"
-        musicdl.SECRETS_ROOT = root / "secrets"
-        musicdl.TIDDL_DOWNLOAD_DIR = root / "downloads" / "tiddl"
-        musicdl.BEATPORT_DOWNLOAD_DIR = root / "downloads" / "beatport"
-        musicdl.QOBUZ_DOWNLOAD_DIR = root / "downloads" / "qobuz"
-        musicdl.DELIVERY_ROOT = root / "deliveries"
-        musicdl.QOBUZ_CONFIG_PATH = root / "state" / "qobuz" / ".config" / "qobuz-dl" / "config.ini"
-        webapp.TIDAL_AUTH_PATH = musicdl.STATE_ROOT / "tiddl" / "auth.json"
+        download_engine.QUEUE_ROOT = root / "queue"
+        download_engine.STATE_ROOT = root / "state"
+        download_engine.CONFIG_ROOT = root / "config"
+        download_engine.SECRETS_ROOT = root / "secrets"
+        download_engine.TIDDL_DOWNLOAD_DIR = root / "downloads" / "tiddl"
+        download_engine.BEATPORT_DOWNLOAD_DIR = root / "downloads" / "beatport"
+        download_engine.QOBUZ_DOWNLOAD_DIR = root / "downloads" / "qobuz"
+        download_engine.DELIVERY_ROOT = root / "deliveries"
+        download_engine.QOBUZ_CONFIG_PATH = root / "state" / "qobuz" / ".config" / "qobuz-dl" / "config.ini"
+        webapp.TIDAL_AUTH_PATH = download_engine.STATE_ROOT / "tiddl" / "auth.json"
         webapp.BEATPORT_CACHE_PATH = (
-            musicdl.STATE_ROOT / "beatportdl" / "beatportdl-credentials.json"
+            download_engine.STATE_ROOT / "beatportdl" / "beatportdl-credentials.json"
         )
-        webapp.LOCAL_DB_PATH = musicdl.STATE_ROOT / "tiddl" / "tunesaver.db"
+        webapp.LOCAL_DB_PATH = download_engine.STATE_ROOT / "tiddl" / "tunesaver.db"
         webapp.ASSET_ROOT = PROJECT_ROOT / "web"
-        musicdl.ensure_layout()
+        download_engine.ensure_layout()
         webapp.init_local_store()
-        musicdl.SECRETS_ROOT.mkdir(parents=True)
+        download_engine.SECRETS_ROOT.mkdir(parents=True)
         self.worker_handles = {
-            provider: musicdl.acquire_provider_lock(
+            provider: download_engine.acquire_provider_lock(
                 provider, "worker", blocking=False
             )
-            for provider in musicdl.PROVIDERS
+            for provider in download_engine.PROVIDERS
         }
 
         self.app_state = {
@@ -315,10 +315,10 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         for handle in self.worker_handles.values():
-            musicdl.release_provider_lock(handle)
+            download_engine.release_provider_lock(handle)
         for name, value in self.originals.items():
-            if hasattr(musicdl, name):
-                setattr(musicdl, name, value)
+            if hasattr(download_engine, name):
+                setattr(download_engine, name, value)
             else:
                 setattr(webapp, name, value)
         webapp.TIDAL_AUTH_PATH = self.originals["TIDAL_AUTH_PATH"]
@@ -386,7 +386,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.status, 202)
         first_payload = response_json(first)
         job_path = (
-            musicdl.QUEUE_ROOT
+            download_engine.QUEUE_ROOT
             / "pending"
             / "tiddl"
             / f"{first_payload['job_id']}.json"
@@ -455,13 +455,13 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_queue_history_is_isolated_per_user(self) -> None:
         other_user = "22222222-2222-4222-8222-222222222222"
-        musicdl.enqueue(
+        download_engine.enqueue(
             "tiddl",
             ["track/123"],
             owner_id=TEST_USER_ID,
             ephemeral=True,
         )
-        musicdl.enqueue(
+        download_engine.enqueue(
             "tiddl",
             ["track/456"],
             owner_id=other_user,
@@ -531,7 +531,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch('webapp.compatible_download', new=lambda p, u, m: (p, u, m))
     async def test_download_rejects_inactive_worker(self) -> None:
-        musicdl.release_provider_lock(self.worker_handles.pop("tiddl"))
+        download_engine.release_provider_lock(self.worker_handles.pop("tiddl"))
         request = FakeRequest(
             {"provider": "tiddl", "url": "track/123"},
             path="/api/download",
@@ -542,7 +542,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("n'est pas démarré", response_json(response)["error"])
 
     async def test_status_contains_readable_recent_job(self) -> None:
-        musicdl.enqueue(
+        download_engine.enqueue(
             "tiddl",
             ["track/123"],
             metadata={"title": "Readable", "artist": "Artist", "kind": "track"},
@@ -740,25 +740,25 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_browser_delivery_is_private_and_kept_for_library(self) -> None:
-        job_id = musicdl.enqueue(
+        job_id = download_engine.enqueue(
             "tiddl",
             ["track/123"],
             owner_id=TEST_USER_ID,
             ephemeral=True,
         )
-        pending = musicdl.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
-        done = musicdl.QUEUE_ROOT / "done" / "tiddl" / f"{job_id}.json"
-        job = musicdl.load_job(pending, expected_provider="tiddl")
-        job_root = musicdl.DELIVERY_ROOT / TEST_USER_ID / job_id
+        pending = download_engine.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
+        done = download_engine.QUEUE_ROOT / "done" / "tiddl" / f"{job_id}.json"
+        job = download_engine.load_job(pending, expected_provider="tiddl")
+        job_root = download_engine.DELIVERY_ROOT / TEST_USER_ID / job_id
         delivery_path = job_root / "TuneSaver-test.flac"
         delivery_path.parent.mkdir(parents=True)
         delivery_path.write_bytes(b"test-audio")
         job["delivery"] = {
             "name": delivery_path.name,
-            "path": str(delivery_path.relative_to(musicdl.DELIVERY_ROOT)),
+            "path": str(delivery_path.relative_to(download_engine.DELIVERY_ROOT)),
             "size": delivery_path.stat().st_size,
         }
-        musicdl.atomic_write_json(done, job)
+        download_engine.atomic_write_json(done, job)
         pending.unlink()
 
         app = webapp.create_app()
@@ -796,7 +796,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await response.read(), b"test-audio")
 
         self.assertTrue(job_root.exists())
-        delivered = musicdl.load_job(done, expected_provider="tiddl")
+        delivered = download_engine.load_job(done, expected_provider="tiddl")
         self.assertIn("delivery", delivered)
         self.assertFalse(delivered["delivery_deleted"])
         self.assertIn("delivered_at", delivered)
@@ -1121,17 +1121,17 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def test_library_stream_and_playlists_use_owned_deliveries(self) -> None:
         user = webapp.local_create_user("library@example.com", "secret123")
         user_id = user["id"]
-        job_id = musicdl.enqueue(
+        job_id = download_engine.enqueue(
             "tiddl",
             ["track/123"],
             metadata={"title": "Library track", "artist": "Artist", "kind": "track"},
             owner_id=user_id,
             ephemeral=True,
         )
-        pending = musicdl.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
-        done = musicdl.QUEUE_ROOT / "done" / "tiddl" / f"{job_id}.json"
-        job = musicdl.load_job(pending, expected_provider="tiddl")
-        job_root = musicdl.DELIVERY_ROOT / user_id / job_id
+        pending = download_engine.QUEUE_ROOT / "pending" / "tiddl" / f"{job_id}.json"
+        done = download_engine.QUEUE_ROOT / "done" / "tiddl" / f"{job_id}.json"
+        job = download_engine.load_job(pending, expected_provider="tiddl")
+        job_root = download_engine.DELIVERY_ROOT / user_id / job_id
         delivery_path = job_root / "TuneSaver-test.flac"
         delivery_path.parent.mkdir(parents=True)
         delivery_path.write_bytes(b"test-audio")
@@ -1139,10 +1139,10 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         cover_path.write_bytes(b"fake-cover")
         job["delivery"] = {
             "name": delivery_path.name,
-            "path": str(delivery_path.relative_to(musicdl.DELIVERY_ROOT)),
+            "path": str(delivery_path.relative_to(download_engine.DELIVERY_ROOT)),
             "size": delivery_path.stat().st_size,
         }
-        musicdl.atomic_write_json(done, job)
+        download_engine.atomic_write_json(done, job)
         pending.unlink()
         webapp.local_upsert_history(user_id, [{
             "job_id": job_id,
@@ -1327,14 +1327,14 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
         owner = user["id"]
         for state in ("pending", "failed", "done"):
             with self.subTest(state=state):
-                job = musicdl.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=owner, ephemeral=True)
-                pending = musicdl.QUEUE_ROOT / "pending" / "qobuz" / f"{job}.json"
-                path = musicdl.QUEUE_ROOT / state / "qobuz" / pending.name
+                job = download_engine.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=owner, ephemeral=True)
+                pending = download_engine.QUEUE_ROOT / "pending" / "qobuz" / f"{job}.json"
+                path = download_engine.QUEUE_ROOT / state / "qobuz" / pending.name
                 pending.rename(path)
-                content = musicdl.DELIVERY_ROOT / owner / job / "content"
+                content = download_engine.DELIVERY_ROOT / owner / job / "content"
                 content.mkdir(parents=True)
                 (content / "partial.flac").write_bytes(b"audio")
-                log = musicdl.QUEUE_ROOT / "logs" / "qobuz" / f"{job}-attempt-1.log"
+                log = download_engine.QUEUE_ROOT / "logs" / "qobuz" / f"{job}-attempt-1.log"
                 log.write_text("private")
                 stale = {"job_id": job, "provider": "qobuz", "state": state}
                 if state == "done":
@@ -1363,8 +1363,8 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_active_download_cleans_partial_files(self) -> None:
         user = webapp.local_create_user("active-delete@example.com", "secret123")
-        job = musicdl.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=user["id"], ephemeral=True)
-        pending = musicdl.QUEUE_ROOT / "pending" / "qobuz" / f"{job}.json"
+        job = download_engine.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=user["id"], ephemeral=True)
+        pending = download_engine.QUEUE_ROOT / "pending" / "qobuz" / f"{job}.json"
         ready, resume = threading.Event(), threading.Event()
         errors = []
 
@@ -1378,11 +1378,11 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
 
         def worker():
             try:
-                musicdl.process_job("qobuz", pending)
+                download_engine.process_job("qobuz", pending)
             except Exception as exc:
                 errors.append(exc)
 
-        with mock.patch.object(musicdl, "run_provider", side_effect=download):
+        with mock.patch.object(download_engine, "run_provider", side_effect=download):
             thread = threading.Thread(target=worker)
             thread.start()
             try:
@@ -1394,17 +1394,17 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
                 thread.join(5)
             self.assertFalse(thread.is_alive())
         self.assertEqual(errors, [])
-        self.assertFalse((musicdl.DELIVERY_ROOT / user["id"] / job).exists())
-        self.assertEqual(list((musicdl.QUEUE_ROOT / "logs" / "qobuz").glob("*.log")), [])
+        self.assertFalse((download_engine.DELIVERY_ROOT / user["id"] / job).exists())
+        self.assertEqual(list((download_engine.QUEUE_ROOT / "logs" / "qobuz").glob("*.log")), [])
 
     async def test_delete_does_not_follow_delivery_symlink(self) -> None:
         user = webapp.local_create_user("symlink-delete@example.com", "secret123")
-        job = musicdl.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=user["id"], ephemeral=True)
+        job = download_engine.enqueue("qobuz", ["https://play.qobuz.com/track/789"], owner_id=user["id"], ephemeral=True)
         outside = Path(self.temporary.name) / "keep"
         outside.mkdir()
         audio = outside / "keep.flac"
         audio.write_bytes(b"keep")
-        owner_dir = musicdl.DELIVERY_ROOT / user["id"]
+        owner_dir = download_engine.DELIVERY_ROOT / user["id"]
         owner_dir.mkdir()
         (owner_dir / job).symlink_to(outside, target_is_directory=True)
         webapp.local_library_remove_track(user["id"], job)
@@ -1414,17 +1414,17 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def test_library_can_stream_single_audio_zip_and_read_cover(self) -> None:
         user = webapp.local_create_user("zip-library@example.com", "secret123")
         user_id = user["id"]
-        job_id = musicdl.enqueue(
+        job_id = download_engine.enqueue(
             "qobuz",
             ["https://play.qobuz.com/track/789"],
             metadata={"title": "Zip track", "artist": "Artist", "kind": "track"},
             owner_id=user_id,
             ephemeral=True,
         )
-        pending = musicdl.QUEUE_ROOT / "pending" / "qobuz" / f"{job_id}.json"
-        done = musicdl.QUEUE_ROOT / "done" / "qobuz" / f"{job_id}.json"
-        job = musicdl.load_job(pending, expected_provider="qobuz")
-        job_root = musicdl.DELIVERY_ROOT / user_id / job_id
+        pending = download_engine.QUEUE_ROOT / "pending" / "qobuz" / f"{job_id}.json"
+        done = download_engine.QUEUE_ROOT / "done" / "qobuz" / f"{job_id}.json"
+        job = download_engine.load_job(pending, expected_provider="qobuz")
+        job_root = download_engine.DELIVERY_ROOT / user_id / job_id
         delivery_path = job_root / "TuneSaver-test.zip"
         delivery_path.parent.mkdir(parents=True)
         with zipfile.ZipFile(delivery_path, "w") as archive:
@@ -1432,10 +1432,10 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             archive.writestr("Album/cover.jpg", b"zip-cover")
         job["delivery"] = {
             "name": delivery_path.name,
-            "path": str(delivery_path.relative_to(musicdl.DELIVERY_ROOT)),
+            "path": str(delivery_path.relative_to(download_engine.DELIVERY_ROOT)),
             "size": delivery_path.stat().st_size,
         }
-        musicdl.atomic_write_json(done, job)
+        download_engine.atomic_write_json(done, job)
         pending.unlink()
         webapp.local_upsert_history(user_id, [{
             "job_id": job_id,
@@ -1505,7 +1505,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             "country_code": "FR",
             "expires_at": int(webapp.time.time()) + 3600,
         }
-        musicdl.atomic_write_json(webapp.TIDAL_AUTH_PATH, auth)
+        download_engine.atomic_write_json(webapp.TIDAL_AUTH_PATH, auth)
         with mock.patch.object(webapp.requests, "post") as post:
             result = webapp.refresh_tidal_auth(
                 force=True, rejected_token="old-token"
@@ -1521,7 +1521,7 @@ class WebAppHTTPTests(unittest.IsolatedAsyncioTestCase):
             "country_code": "FR",
             "expires_at": 1,
         }
-        musicdl.atomic_write_json(webapp.TIDAL_AUTH_PATH, auth)
+        download_engine.atomic_write_json(webapp.TIDAL_AUTH_PATH, auth)
         response = mock.Mock(status_code=200)
         response.json.return_value = {
             "access_token": "fresh",

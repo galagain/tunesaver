@@ -1,9 +1,9 @@
 """Explicit, authenticated export of platform connections; never log bundle contents."""
 import configparser
+import hashlib
 import io
 import json
 from contextlib import ExitStack
-from aiohttp import web
 
 FORMAT = 'tunesaver-accounts-v1'
 MAX_SIZE = 256 * 1024
@@ -42,14 +42,35 @@ def validate(bundle):
                 raise ValueError('Session Qobuz invalide.')
             # Do not import server paths, downloader commands or output preferences.
             safe = configparser.ConfigParser(interpolation=None)
-            safe['DEFAULT'] = {k: values[k] for k in ('user_id', 'user_auth_token', 'app_id', 'secrets', 'musicdl_login_id') if k in values}
+            safe['DEFAULT'] = {k: values[k] for k in ('user_id', 'user_auth_token', 'app_id', 'secrets', 'tunesaver_login_id') if k in values}
+            safe['DEFAULT']['tunesaver_login_id'] = hashlib.sha256((values['user_id']+'\0'+values['user_auth_token']).encode()).hexdigest()
             output = io.StringIO(); safe.write(output)
             files['config.ini'] = output.getvalue()
         cleaned[provider] = files
     return cleaned
 
 
+
+def build_bundle(api, user, selected, *, include_sync=True):
+    paths = {'tiddl': [api.TIDAL_AUTH_PATH], 'beatport': [api.download_engine.SECRETS_ROOT / 'beatport_username', api.download_engine.SECRETS_ROOT / 'beatport_password', api.BEATPORT_CACHE_PATH], 'qobuz': [api.download_engine.QOBUZ_CONFIG_PATH]}
+    if not isinstance(selected, list) or not selected or any(not isinstance(p, str) or p not in paths for p in selected):
+        raise api.PublicError('Choisis au moins une plateforme.')
+    try:
+        with ExitStack() as locks:
+            for provider in sorted(set(selected)):
+                locks.enter_context(api.download_engine.provider_lock(provider, 'operation', blocking=False))
+            accounts = {p: {path.name: path.read_text() for path in paths[p] if path.is_file()} for p in selected}
+            bundle = {'format': FORMAT, 'accounts': accounts}
+            bundle['accounts'] = validate(bundle)
+    except (ValueError, KeyError, OSError, RuntimeError, configparser.Error):
+        raise api.PublicError('Connexions indisponibles ou plateforme occupée. Réessaie ou choisis une autre plateforme.', status=409)
+    import catalog_sync
+    if include_sync:
+        bundle['sync'] = catalog_sync.issue(api, user['id'])
+    return bundle
+
 def register(app, api):
+    from aiohttp import web
     async def page(request):
         return web.FileResponse(api.ASSET_ROOT / 'account-transfer.html', headers={'Cache-Control': 'no-store'})
 
@@ -92,20 +113,8 @@ def register(app, api):
 
     async def export(request):
         approved_user(request)
-        paths = {'tiddl': [api.TIDAL_AUTH_PATH], 'beatport': [api.musicdl.SECRETS_ROOT / 'beatport_username', api.musicdl.SECRETS_ROOT / 'beatport_password', api.BEATPORT_CACHE_PATH], 'qobuz': [api.musicdl.QOBUZ_CONFIG_PATH]}
         payload = await api.read_json_object(request)
-        selected = payload.get('providers')
-        if not isinstance(selected, list) or not selected or any(not isinstance(p, str) or p not in paths for p in selected):
-            raise api.PublicError('Choisis au moins une plateforme.')
-        try:
-            with ExitStack() as locks:
-                for provider in sorted(set(selected)):
-                    locks.enter_context(api.musicdl.provider_lock(provider, 'operation', blocking=False))
-                accounts = {p: {path.name: path.read_text() for path in paths[p] if path.is_file()} for p in selected}
-                bundle = {'format': FORMAT, 'accounts': accounts}
-                bundle['accounts'] = validate(bundle)
-        except (ValueError, KeyError, OSError, RuntimeError, configparser.Error):
-            raise api.PublicError('Connexions indisponibles ou plateforme occupée. Réessaie ou choisis une autre plateforme.', status=409)
+        bundle = build_bundle(api, approved_user(request), payload.get('providers'))
         return web.json_response(bundle, headers={'Cache-Control': 'no-store', 'Content-Disposition': 'attachment; filename="tunesaver-accounts.json"'})
 
     app.router.add_get('/auth/', page)

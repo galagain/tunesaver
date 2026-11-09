@@ -16,6 +16,11 @@ PAYLOAD = ("python", "src", "web", "config", "bin", "lib", "browsers", "Licenses
 
 def default_bin():
     candidates = (Path.home() / "bin", Path.home() / ".local/bin")
+    managed = Path.home() / "Library/Application Support/TuneSaver/CLI"
+    for candidate in candidates:
+        entry = candidate / "tunesaver"
+        if entry.is_symlink() and entry.resolve().is_relative_to(managed):
+            return candidate
     entries = {Path(p).expanduser() for p in os.environ.get("PATH", "").split(os.pathsep) if p}
     return next((candidate for candidate in candidates if candidate in entries), candidates[1])
 
@@ -63,9 +68,22 @@ def install(resources: Path, destination: Path, bin_dir: Path):
     return entry
 
 
+def configure_shell(bin_dir):
+    directory = str(bin_dir.expanduser().absolute())
+    if directory in os.environ.get("PATH", "").split(os.pathsep):
+        return
+    profile = Path.home() / (".zprofile" if Path(os.environ.get("SHELL", "/bin/zsh")).name == "zsh" else ".profile")
+    line = 'export PATH=' + shlex.quote(directory) + ':"$PATH"'
+    existing = profile.read_text() if profile.exists() else ""
+    if line not in existing.splitlines():
+        with profile.open("a") as output:
+            output.write("\n# TuneSaver CLI\n" + line + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Installer la commande tunesaver pour cet utilisateur, sans sudo.")
     parser.add_argument("--resources", type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument("--configure-shell", action="store_true", help="Ajouter la commande au PATH des prochains terminaux")
     parser.add_argument("--bin-dir", type=Path, default=default_bin())
     parser.add_argument("--destination", type=Path, default=Path.home() / "Library/Application Support/TuneSaver/CLI")
     args = parser.parse_args()
@@ -74,6 +92,8 @@ def main():
     except (OSError, RuntimeError) as exc:
         print(f"Installation impossible : {exc}", file=sys.stderr)
         return 1
+    if args.configure_shell:
+        configure_shell(args.bin_dir)
     print(f"Commande installée : {entry}\nLance tunesaver pour télécharger un son, ou tunesaver --help pour les commandes.")
     if str(entry.parent) not in os.environ.get("PATH", "").split(os.pathsep):
         print("Ajoute ce dossier à ton PATH dans ~/.zshrc :\nexport PATH=" + shlex.quote(str(entry.parent)) + ':"$PATH"')

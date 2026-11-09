@@ -1,7 +1,7 @@
 """Bounded Qobuz sign-in subprocess; credentials arrive only on private stdin."""
 import json
 import sys
-import musicdl
+import download_engine
 
 
 def main():
@@ -18,10 +18,10 @@ def main():
     app_id = str(bundle.get_app_id())
     app_secrets = list(bundle.get_secrets().values())
     Client.from_token(payload["user_id"], payload["token"], app_id, app_secrets)
-    musicdl.write_qobuz_config({**musicdl.load_qobuz_settings(),
+    download_engine.write_qobuz_config({**download_engine.load_qobuz_settings(),
         "user_id": payload["user_id"], "user_auth_token": payload["token"], "app_id": app_id,
         "secrets": ",".join(app_secrets),
-        "musicdl_login_id": musicdl.qobuz_login_id(payload["user_id"], payload["token"])})
+        "tunesaver_login_id": download_engine.qobuz_login_id(payload["user_id"], payload["token"])})
 
 
 if __name__ == "__main__":

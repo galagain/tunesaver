@@ -66,7 +66,7 @@ def read_with_docker(url, container):
         raise ValueError("Conteneur TuneSaver inaccessible. Verifiez Docker et --container.")
     command = ["docker", "run", "--rm", "--volumes-from", container,
                "-v", f"{ROOT}:/repo:ro", "-w", "/repo",
-               "-e", "MUSICDL_QOBUZ_SEARCH_SCRIPT=/repo/src/qobuz_search.py",
+               "-e", "TUNESAVER_QOBUZ_SEARCH_SCRIPT=/repo/src/qobuz_search.py",
                "--entrypoint", "python", inspected.stdout.strip(),
                "export_playlist.py", url, "--format", "json", "-o", "-"]
     result = subprocess.run(command, capture_output=True, text=True, timeout=900, check=False)

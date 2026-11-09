@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 import import_engine as engine
 
 
@@ -41,7 +41,7 @@ class SingleTrackImportTests(unittest.IsolatedAsyncioTestCase):
             second = fixtures.response_json(await webapp.playlist_import_handler(request))
         self.assertEqual(first['job_id'], second['job_id'])
         self.assertIsNone(first['playlist_id'])
-        self.assertTrue((musicdl.QUEUE_ROOT / 'pending' / 'tiddl' / (first['job_id'] + '.json')).exists())
+        self.assertTrue((download_engine.QUEUE_ROOT / 'pending' / 'tiddl' / (first['job_id'] + '.json')).exists())
         with webapp.local_db() as db:
             self.assertEqual(db.execute('select count(*) from playlists').fetchone()[0], 0)
             self.assertEqual(db.execute('select count(*) from playlist_imports').fetchone()[0], 0)

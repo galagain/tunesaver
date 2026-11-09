@@ -2681,6 +2681,7 @@ async function refreshAdmin() {
     renderAdminUsers(profiles);
     await refreshAdminStats();
     await refreshAdminHistory();
+    await refreshGlobalCatalog();
   } catch (error) {
     adminMessage.textContent = error.message;
   } finally {
@@ -2845,3 +2846,45 @@ for (const [id, icon, action] of [
 
 syncPlayerControls();
 start();
+
+let globalCatalogOffset = 0;
+let globalCatalogLoading = false;
+async function refreshGlobalCatalog(append = false) {
+  if (globalCatalogLoading) return;
+  globalCatalogLoading = true;
+  const list = document.querySelector('#global-catalog-tracks');
+  const message = document.querySelector('#global-catalog-message');
+  try {
+    const offset = append ? globalCatalogOffset : 0;
+    const result = await adminJson(`/api/admin/catalog?offset=${offset}`);
+    if (!append) list.replaceChildren();
+    for (const track of result.tracks) {
+      const row = document.createElement('article'); row.className = 'admin-track';
+      const provider = document.createElement('span'); provider.className = `mini-provider ${track.provider}`;
+      provider.textContent = providerLabels[track.provider] || track.provider;
+      const body = document.createElement('div'); body.className = 'admin-track-body';
+      const title = document.createElement('strong'); title.textContent = track.title;
+      const artist = document.createElement('span'); artist.textContent = track.artist;
+      body.append(title, artist);
+      const link = document.createElement('a'); link.className = 'catalog-source-link'; link.textContent = 'Ouvrir ↗';
+      link.setAttribute('aria-label', `Ouvrir ${track.title} sur ${provider.textContent}`);
+      try { const url = new URL(track.url); if (url.protocol === 'https:') link.href = url.href; } catch (_) {}
+      link.target = '_blank'; link.rel = 'noopener noreferrer';
+      row.append(provider, body, link); list.append(row);
+    }
+    globalCatalogOffset = offset + result.tracks.length;
+    document.querySelector('#global-catalog-count').textContent = `${result.total} titres`;
+    document.querySelector('#global-catalog-more').hidden = globalCatalogOffset >= result.total;
+    message.textContent = result.total ? '' : 'Aucun titre synchronisé.';
+  } catch (error) { message.textContent = error.message; }
+  finally { globalCatalogLoading = false; }
+}
+document.querySelector('#global-catalog-more').onclick = () => refreshGlobalCatalog(true);
+document.querySelector('#global-catalog-export').onclick = async () => {
+  try {
+    const rows = await adminJson('/api/admin/catalog/export');
+    const url = URL.createObjectURL(new Blob([JSON.stringify(rows, null, 2)], {type:'application/json'}));
+    const link = document.createElement('a'); link.href = url; link.download = 'catalogue-global.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { document.querySelector('#global-catalog-message').textContent = error.message; }
+};

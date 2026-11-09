@@ -1,3 +1,9 @@
+# Connexion des appareils
+
+Parcours recommandé : `tunesaver login` dans le terminal, ou **Se connecter avec TuneSaver** dans l’application. Confirmer le code affiché sur la page web ; les comptes et la synchronisation sont configurés automatiquement. Le lien peut être ouvert depuis une autre machine.
+
+## Import manuel (compatibilité)
+
 # Importer les connexions des plateformes
 
 Ouvrir `https://tunesaver.galagain.com/auth/`, utiliser sa session TuneSaver existante dans le même navigateur (ou se connecter), choisir les plateformes et télécharger `tunesaver-accounts.json`. Dans l’application Mac : **Mes plateformes → Importer un fichier**. La connexion manuelle reste disponible.

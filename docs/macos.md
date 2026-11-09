@@ -35,7 +35,7 @@ version antérieure de macOS. La compilation Intel n'a pas été validée.
 
 ## Installation et comptes
 
-Ouvrir `dist/TuneSaver-0.2.0-macOS-arm64.dmg`, puis glisser TuneSaver dans
+Ouvrir `dist/TuneSaver-0.4.0-macOS-arm64.dmg`, puis glisser TuneSaver dans
 Applications. Une archive ZIP et l'application `.app` sont également produites.
 Le paquet de développement est signé localement, **sans notarisation Apple**.
 Il sert aux essais locaux ; ce n'est pas encore le paquet destiné à une diffusion
@@ -66,16 +66,18 @@ La commande `tunesaver` fonctionne sans ouvrir l'application, sans serveur HTTP
 et sans service en arrière-plan. Python, FFmpeg et les moteurs sont embarqués ;
 Docker et Homebrew ne sont pas nécessaires sur le Mac de l'utilisateur.
 
-Installer depuis l'application copiée dans Applications, sans la lancer :
+Le plus simple : menu **TuneSaver → Installer la commande tunesaver…**, puis ouvrir un nouveau terminal.
+
+Ou installer depuis l’application copiée dans Applications :
 
 ```sh
-"/Applications/TuneSaver.app/Contents/Resources/tunesaver" install
+"/Applications/TuneSaver.app/Contents/Resources/tunesaver" install --configure-shell
 ```
 
 Ou utiliser uniquement l'archive terminal, sans installer l'application :
 
 ```sh
-tar -xzf TuneSaver-0.2.0-macOS-arm64-CLI.tar.gz
+tar -xzf TuneSaver-0.4.0-macOS-arm64-CLI.tar.gz
 ./TuneSaverCLI/tunesaver install
 ```
 

@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 import test_audio_retention
 import import_engine as engine
 import audio_retention
@@ -39,7 +39,7 @@ class PlaylistTextTests(unittest.IsolatedAsyncioTestCase):
         imported = next(p for p in webapp.local_playlists(owner) if p['id'] == result['playlist_id'])
         self.assertEqual(imported['name'], 'Mon set')
         self.assertEqual(imported['track_ids'], [identifier])
-        self.assertEqual(list((musicdl.QUEUE_ROOT / 'pending' / 'tiddl').glob('*.json')), [])
+        self.assertEqual(list((download_engine.QUEUE_ROOT / 'pending' / 'tiddl').glob('*.json')), [])
         self.assertTrue(directory.exists())
 
     async def test_normal_album_auto_download_moves_from_pending_to_running(self):

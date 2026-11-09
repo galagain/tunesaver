@@ -12,7 +12,7 @@ import unittest
 from unittest import mock
 
 import test_webapp as fixtures
-from test_webapp import musicdl, webapp
+from test_webapp import download_engine, webapp
 from test_desktop import MemoryVault
 from local_session import LocalSession
 import terminal
@@ -25,14 +25,14 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         await fixtures.WebAppHTTPTests.asyncSetUp(self)
         self.root = Path(self.temporary.name)
-        shutil.copytree(fixtures.PROJECT_ROOT / "config", musicdl.CONFIG_ROOT)
+        shutil.copytree(fixtures.PROJECT_ROOT / "config", download_engine.CONFIG_ROOT)
         self.accounts = terminal.make_accounts(self.root, MemoryVault())
 
     async def asyncTearDown(self):
         await fixtures.WebAppHTTPTests.asyncTearDown(self)
 
     def authenticate(self):
-        musicdl.atomic_write_json(webapp.TIDAL_AUTH_PATH,
+        download_engine.atomic_write_json(webapp.TIDAL_AUTH_PATH,
             {"token": "private-access", "refresh_token": "private-refresh"})
 
     def test_shortcuts_and_paths_with_spaces(self):
@@ -44,8 +44,8 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
 
     def test_tidal_config_preserves_unicode_quotes_and_backslashes(self):
         output = self.root / 'Mon set été 🎶 "live" \\1'
-        musicdl.sync_tiddl_config(output)
-        config = tomllib.loads((musicdl.STATE_ROOT / "tiddl/config.toml").read_text())
+        download_engine.sync_tiddl_config(output)
+        config = tomllib.loads((download_engine.STATE_ROOT / "tiddl/config.toml").read_text())
         self.assertEqual(config["download"]["download_path"], str(output))
         self.assertEqual(config["download"]["scan_path"], str(output))
 
@@ -65,11 +65,11 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(provider, "tiddl")
             self.assertEqual(len(urls), 1)
             (output_dir / "titre.wav").write_bytes(b"RIFF-fixture")
-            musicdl.atomic_write_json(webapp.TIDAL_AUTH_PATH,
+            download_engine.atomic_write_json(webapp.TIDAL_AUTH_PATH,
                 {"token": "private-renewed", "refresh_token": "private-refresh"})
             return 0
         stdout = io.StringIO()
-        with mock.patch.object(musicdl, "_run_provider_unlocked", side_effect=download), contextlib.redirect_stdout(stdout):
+        with mock.patch.object(download_engine, "_run_provider_unlocked", side_effect=download), contextlib.redirect_stdout(stdout):
             code = terminal.download(self.accounts, ["https://tidal.com/track/123"] * 2, output)
         self.assertEqual(code, 0)
         self.assertEqual((output / "titre.wav").read_bytes(), b"RIFF-fixture")
@@ -81,34 +81,34 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
     def test_noninteractive_download_requires_connection(self):
         stderr = io.StringIO()
         with mock.patch("sys.stdin.isatty", return_value=False), contextlib.redirect_stderr(stderr), \
-             mock.patch.object(musicdl, "_run_provider_unlocked") as downloader:
+             mock.patch.object(download_engine, "_run_provider_unlocked") as downloader:
             self.assertEqual(terminal.download(self.accounts, ["track/123"], self.root / "output"), 1)
         downloader.assert_not_called()
         self.assertIn("tunesaver login tidal", stderr.getvalue())
 
     def test_all_links_are_validated_before_first_download(self):
         self.authenticate()
-        with mock.patch.object(musicdl, "_run_provider_unlocked") as downloader, self.assertRaises(ValueError):
+        with mock.patch.object(download_engine, "_run_provider_unlocked") as downloader, self.assertRaises(ValueError):
             terminal.download(self.accounts, ["track/123", "https://evil.test/track/123"], self.root)
         downloader.assert_not_called()
 
     def test_download_failure_is_nonzero(self):
         self.authenticate()
-        with mock.patch.object(musicdl, "_run_provider_unlocked", return_value=7), \
+        with mock.patch.object(download_engine, "_run_provider_unlocked", return_value=7), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(terminal.download(self.accounts, ["track/123"], self.root), 1)
 
     def test_logout_cannot_remove_credentials_used_by_another_process(self):
         self.authenticate()
         self.accounts.persist("tiddl")
-        with musicdl.provider_lock("tiddl", "operation", blocking=False), self.assertRaises(RuntimeError):
+        with download_engine.provider_lock("tiddl", "operation", blocking=False), self.assertRaises(RuntimeError):
             terminal.logout(self.accounts, "tiddl")
         self.assertTrue(self.accounts.connected("tiddl"))
         self.assertTrue(self.accounts.vault.get("tiddl"))
 
     async def test_connect_lock_conflict_preserves_other_client_credentials(self):
         self.authenticate()
-        with musicdl.provider_lock("tiddl", "operation", blocking=False):
+        with download_engine.provider_lock("tiddl", "operation", blocking=False):
             await self.accounts.connect("tiddl", {})
         self.assertTrue(self.accounts.connected("tiddl"))
         self.assertEqual(self.accounts.jobs["tiddl"]["state"], "error")
@@ -137,10 +137,10 @@ class TerminalTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.accounts.connected("tiddl"))
         finally:
             second.__exit__(None, None, None)
-        self.assertFalse(musicdl.STATE_ROOT.exists())
+        self.assertFalse(download_engine.STATE_ROOT.exists())
 
     def test_stale_session_is_cleaned_without_touching_music(self):
-        stale = musicdl.STATE_ROOT / "stale"
+        stale = download_engine.STATE_ROOT / "stale"
         stale.write_text("private")
         music = self.root / "Music"
         music.mkdir()

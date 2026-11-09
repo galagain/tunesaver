@@ -4,6 +4,15 @@ const status = document.querySelector('#transfer-status');
 const account = document.querySelector('#transfer-account');
 const loginFields = document.querySelector('#transfer-login');
 let sharedSession = null;
+const deviceCode = new URLSearchParams(location.search).get('device');
+let deviceApproved = false;
+if (deviceCode) {
+  const code = document.querySelector('#transfer-device-code'); code.hidden = false;
+  code.textContent = `Vérifie que ton appareil affiche le code ${deviceCode}.`;
+  button.textContent = 'Connecter cet appareil';
+  document.querySelector('#transfer-file-notice').textContent = 'Les connexions choisies seront transférées uniquement à cet appareil. Ne valide que si tu as lancé cette connexion.';
+  document.querySelector('#transfer-file-help').hidden = true;
+}
 function storedSession() {
   try { return JSON.parse(localStorage.getItem('tunesaver.session') || 'null'); }
   catch { return null; }
@@ -65,10 +74,15 @@ form.addEventListener('submit', async event => {
       if (!login.ok) throw new Error(session.error || 'Connexion impossible.');
       temporary = true;
     }
-    const response = await fetch('/api/account-export', {method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`},body:JSON.stringify({providers}),cache:'no-store'});
+    const response = await fetch(deviceCode ? '/api/device/approve' : '/api/account-export', {method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`},body:JSON.stringify(deviceCode ? {code:deviceCode,providers} : {providers}),cache:'no-store'});
     if (!response.ok) {
       if (response.status === 401 || response.status === 403) showLogin();
       throw new Error((await response.json()).error || 'Export impossible.');
+    }
+    if (deviceCode) {
+      deviceApproved = true;
+      status.textContent = 'Appareil autorisé. Reviens dans TuneSaver : la connexion se termine automatiquement.';
+      return;
     }
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement('a'); link.href = url; link.download = 'tunesaver-accounts.json'; link.click();
@@ -78,6 +92,6 @@ form.addEventListener('submit', async event => {
   finally {
     // Never log out the main TuneSaver session after an export.
     if (temporary && session?.access_token) await fetch('/api/logout', {method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`},body:'{}'}).catch(()=>{});
-    button.disabled = false;
+    button.disabled = deviceApproved;
   }
 });

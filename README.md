@@ -1,144 +1,159 @@
-# TuneSaver
+<p align="center">
+  <img src="docs/assets/tunesaver-banner.svg" alt="TuneSaver — votre musique, un seul endroit" width="100%">
+</p>
 
-Bibliotheque musicale web avec playlists, lecture audio, recherche et import
-de morceaux depuis TIDAL, Beatport et Qobuz. Les comptes sont approuves par
-l'administrateur ; inscriptions et recuperations utilisent des codes par e-mail.
+<p align="center">
+  Une application Mac, une commande terminal et une interface web<br>
+  pour télécharger, écouter et organiser sa musique.
+</p>
 
-Le projet contient une application web avec workers Docker et une application
-macOS autonome avec une commande `tunesaver` utilisable sans ouvrir l'application.
-La version Mac utilise les comptes personnels de chaque
-utilisateur et stocke sa bibliothèque sur son ordinateur, sans serveur TuneSaver.
-Voir [la version macOS](docs/macos.md) pour l'installation, la construction et
-les commandes terminal et les limites de cette version.
+<p align="center">
+  <a href="https://github.com/galagain/tunesaver/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/version-0.4.0-67e5b0?style=flat-square&amp;labelColor=1b1d1c" alt="Version 0.4.0"></a>
+  <img src="https://img.shields.io/badge/macOS-Apple_Silicon-eee?style=flat-square&amp;labelColor=1b1d1c" alt="macOS Apple Silicon">
+  <img src="https://img.shields.io/badge/serveur-Docker-eee?style=flat-square&amp;labelColor=1b1d1c" alt="Serveur Docker">
+</p>
 
-Après installation de la commande sur Mac :
+<p align="center">
+  <a href="https://github.com/galagain/tunesaver/releases/tag/v0.4.0"><strong>Télécharger</strong></a> ·
+  <a href="https://tunesaver.galagain.com">Ouvrir le web</a> ·
+  <a href="#démarrer">Installation</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
+
+---
+
+## Une bibliothèque, plusieurs façons de l’utiliser
+
+- **Télécharger** depuis TIDAL, Beatport et Qobuz avec ses comptes connectés.
+- **Importer des playlists** et retrouver leurs titres sur les plateformes disponibles.
+- **Écouter et organiser** ses morceaux dans une bibliothèque avec playlists et tags.
+- **Connecter un appareil depuis le web**, sans recopier les fichiers des comptes.
+- **Synchroniser le catalogue** : titres, artistes, plateformes et liens. Les audios restent sur leur machine.
+
+## Démarrer
+
+| Vous souhaitez… | Choisissez… | Première étape |
+| --- | --- | --- |
+| Une application sur votre Mac | **Mac** | Installer l’application, puis ouvrir **Mes plateformes** |
+| Télécharger depuis le terminal | **CLI Mac** | Installer la commande depuis le menu TuneSaver |
+| Utiliser le service en ligne | **Web** | [Ouvrir TuneSaver](https://tunesaver.galagain.com) avec un compte approuvé |
+| Héberger votre propre instance | **Docker** | Lancer `./tunesaver server setup` dans le dépôt |
+
+### Mac
+
+1. Télécharger le [DMG 0.4.0](https://github.com/galagain/tunesaver/releases/download/v0.4.0/TuneSaver-0.4.0-macOS-arm64.dmg).
+2. Glisser **TuneSaver** dans **Applications**.
+3. Ouvrir **Mes plateformes → Se connecter avec TuneSaver**.
+
+Le navigateur reconnaît votre session TuneSaver. Confirmez le code affiché et les
+plateformes à connecter. La connexion manuelle reste disponible.
+
+> Le paquet actuel cible **Apple Silicon et macOS 26 ou plus récent**. Il est signé
+> localement, mais **pas encore notarié par Apple** ; macOS peut bloquer son ouverture.
+> Voir le [guide Mac](docs/macos.md) pour les détails de distribution.
+
+### Terminal
+
+Dans l’application : **TuneSaver → Installer la commande tunesaver…**, puis ouvrir
+un nouveau terminal. Python et les outils audio sont inclus ; aucun Docker ni
+Homebrew n’est nécessaire pour utiliser le client Mac.
 
 ```sh
-tunesaver login tidal
-tunesaver                       # coller un lien ou chercher un titre
+tunesaver login
 tunesaver "https://tidal.com/track/123"
 ```
 
-Les téléchargements terminal sont enregistrés dans `~/Music/TuneSaver`.
+Le Mac et le terminal partagent leurs comptes dans le Trousseau. Si vous êtes déjà
+connecté dans l’application, passez directement au téléchargement.
 
-## Installation
+```sh
+tunesaver                            # Recherche interactive
+tunesaver search "artiste titre"      # Rechercher un morceau
+tunesaver status                     # Vérifier les comptes
+tunesaver sync                       # Synchroniser les métadonnées
+```
 
-Prerequis : Docker avec Compose v2, Bash, une connexion Internet et les comptes
-adaptes aux plateformes. Utiliser uniquement des contenus que vous avez le droit
-de telecharger et respecter les conditions des services.
+Les téléchargements vont dans `~/Music/TuneSaver`. Pour choisir un dossier :
+
+```sh
+tunesaver download "https://tidal.com/track/123" -o "$HOME/Music/Mon set"
+```
+
+<details>
+<summary><strong>Installer uniquement le terminal</strong></summary>
+
+Télécharger l’[archive CLI](https://github.com/galagain/tunesaver/releases/download/v0.4.0/TuneSaver-0.4.0-macOS-arm64-CLI.tar.gz), puis :
+
+```sh
+tar -xzf TuneSaver-0.4.0-macOS-arm64-CLI.tar.gz
+./TuneSaverCLI/tunesaver install --configure-shell
+```
+
+Ouvrir un nouveau terminal, puis lancer `tunesaver login`.
+Pour Linux, utiliser le déploiement Docker ci-dessous.
+
+</details>
+
+### Serveur Docker
+
+**Prérequis :** Git, Python 3 et Docker avec Compose v2.
 
 ```sh
 git clone https://github.com/galagain/tunesaver.git
 cd tunesaver
-./musicdl init
+./tunesaver server setup
 ```
 
-Configurer `.env` : administrateur, SMTP, chemins de stockage et base de donnees.
-Le deploiement Compose utilise un reseau externe AppSilo : suivre le
-[guide PostgreSQL](docs/appsilo.md) avant de demarrer. Le moteur conserve un
-backend SQLite pour les tests et le developpement sans PostgreSQL.
+La configuration prépare les dossiers, crée le mot de passe administrateur,
+connecte les plateformes et démarre les services disponibles. L’interface est
+accessible sur **<http://127.0.0.1:8080>**.
+
+Sur une machine sans navigateur, ouvrez le lien de connexion depuis un autre
+appareil et confirmez le code. SQLite fonctionne par défaut ; un
+[PostgreSQL autonome](docs/postgres.md) est disponible en option.
 
 ```sh
-./musicdl auth tiddl
-./musicdl auth qobuz
-./musicdl start
-./musicdl doctor
+./tunesaver server status
+./tunesaver server logs
+./tunesaver server stop
 ```
 
-Interface : <http://127.0.0.1:8080> (`WEB_PORT` dans `.env`). Pour l'acces distant,
-utiliser un reverse proxy HTTPS et renseigner son domaine dans
-`TUNESAVER_ALLOWED_HOSTS`. Ne pas exposer directement le port HTTP sur Internet.
+Pour publier le site, configurer le domaine et un proxy HTTPS. L’inscription et la
+récupération par e-mail nécessitent SMTP. Le [guide serveur](docs/server.md)
+détaille la configuration, les mises à jour et le stockage.
 
-## Utilisation
+## Comptes et données
 
-- Rechercher un titre ou coller des liens de morceaux, playlists et albums.
-- Importer depuis Spotify, Apple Music, SoundCloud et les trois catalogues cibles.
-- Apparier dans l'ordre TIDAL, Beatport, puis Qobuz, avec verification de la
-  version, des artistes et de la duree. Les liens natifs evitent la recherche.
-- Organiser les morceaux en playlists, les ecouter ou recuperer une playlist en ZIP.
-- Exporter et reimporter les playlists au format texte, y compris par glisser-deposer.
-- Consulter les echecs, les comptes, l'activite et les retours utilisateurs dans l'admin.
+| Élément | Fonctionnement |
+| --- | --- |
+| Comptes des plateformes | Trousseau sur Mac ; fichiers privés côté serveur |
+| Connexion depuis le web | Compte approuvé, confirmation du code et autorisation à usage unique |
+| Catalogue global | Métadonnées uniquement : titres, artistes, plateformes et liens |
+| Audio | Conservé sur la machine de téléchargement ; aucun transfert par la synchronisation du catalogue |
+| Conservation | Le Mac conserve les audios ; le serveur web applique une expiration de sept jours par défaut |
 
-Les fichiers audio des imports web expirent apres sept jours. Les titres,
-playlists et liens sont conserves pour permettre un nouveau telechargement.
-Voir [la retention audio](docs/audio-retention.md) pour le perimetre exact.
+L’approbation d’un utilisateur sur le serveur lui permet de récupérer les
+connexions des plateformes proposées par ce serveur. Les abonnements et droits
+d’accès des plateformes restent nécessaires.
 
-## Exploitation
-
-```sh
-./musicdl status
-./musicdl logs
-./musicdl retry all
-./musicdl stop
-```
-
-Pour changer de compte plateforme, arreter les services, executer la commande
-concernee, puis relancer `./musicdl start` :
-
-```sh
-./musicdl auth tiddl --force
-./musicdl auth qobuz --force
-./musicdl init --force-beatport --skip-qobuz
-```
-
-TIDAL affiche un lien d'autorisation. Qobuz demande l'identifiant et le jeton de
-session du lecteur officiel. Ne jamais partager ces valeurs.
-
-Mise a jour du deploiement standard :
-
-```sh
-git pull --ff-only
-./musicdl build
-./musicdl start
-```
-
-Le `Dockerfile` principal permet une construction complete. Les variantes
-`Dockerfile.appsilo` et `Dockerfile.matching` sont des accelerateurs propres au
-serveur existant, pas des prerequis pour cloner le projet.
-
-## Donnees Privees
-
-Ne pas versionner `.env`, les fichiers de connexion PostgreSQL, `secrets/` ni
-le contenu de `data/`. Les configurations publiques sont dans `config/`.
-
-- `data/queue/` : taches persistantes et journaux.
-- `data/deliveries/` : fichiers des utilisateurs du site.
-- `data/downloads/` : sorties des outils en ligne de commande.
-- `data/state/` : sessions et caches des plateformes.
-- PostgreSQL : comptes, sessions TuneSaver, bibliotheques et historique.
-
-Sauvegarder separement la base, les fichiers et les secrets. GitHub ne constitue
-pas une sauvegarde des donnees des utilisateurs. Arreter les conteneurs ne les efface pas.
-
-## Developpement Et Tests
-
-```sh
-# Tests isoles, sans comptes reels ni telechargements
-docker run --rm -v "$PWD:/repo:ro" -w /repo --entrypoint python \
-  tunesaver:local -m unittest discover -s tests
-
-# Diagnostics reels : plateformes configurees et serveur demarre requis
-python3 test_playback.py --docker
-python3 test_downloads.py --docker
-```
-
-`test_playback.py` verifie des fichiers existants. `test_downloads.py` lance de
-vrais telechargements isoles et nettoie ses fichiers de test.
-
-Les scripts `export_playlist.py`, `match_music.py`, `run_playlist_tests.py` et
-`run_matching_tests.py` permettent de tester l'extraction et l'appariement sans
-passer par l'interface. Les tests navigateur utilisent Playwright.
+Les secrets, fichiers audio et bases locales ne sont pas versionnés. Sauvegardez
+vos données et configurations avant une mise à jour.
 
 ## Documentation
 
-- [PostgreSQL, migration et sauvegardes](docs/appsilo.md)
-- [Moteur d'appariement](docs/music-matching.md)
-- [Tests de playlists](docs/playlist-tests.md)
-- [Tests d'appariement](docs/matching-tests.md)
-- [Visualisation des tests](docs/matching-live.md)
-- [Format texte des playlists](docs/playlist-text.md)
-- [Lecture audio](docs/player.md)
-- [Retention des fichiers](docs/audio-retention.md)
+| Guide | Contenu |
+| --- | --- |
+| [Mac et terminal](docs/macos.md) | Installation, construction et données locales |
+| [Serveur Docker](docs/server.md) | Configuration, commandes et exploitation |
+| [PostgreSQL](docs/postgres.md) | Base autonome, migration et sauvegardes |
+| [Connexion des appareils](docs/account-transfer.md) | Autorisation web et import manuel |
+| [Catalogue global](docs/catalog-sync.md) | Synchronisation des métadonnées |
+| [Architecture](docs/architecture.md) | Moteur partagé, interfaces et déploiement |
+| [Rétention audio](docs/audio-retention.md) | Conservation et nettoyage des fichiers |
 
-Les versions des outils tiers et leurs empreintes sont definies dans `Dockerfile`
-et les fichiers `requirements*.lock`. Leurs licences sont conservees dans l'image.
+---
+
+<p align="center">
+  <img src="web/tunesaver.svg" width="28" height="28" alt="Logo TuneSaver"><br>
+  <sub>Une seule commande : <code>tunesaver</code>.</sub>
+</p>

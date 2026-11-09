@@ -11,7 +11,7 @@ import (
 	"unspok3n/beatportdl/internal/beatport"
 )
 
-const outputPrefix = "MUSICDL_JSON:"
+const outputPrefix = "TUNESAVER_JSON:"
 
 func readSecret(path string) (string, error) {
 	content, err := os.ReadFile(path)

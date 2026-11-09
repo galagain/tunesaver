@@ -20,7 +20,7 @@ def choose_url(app, provider, supplied):
                 (provider, 'done'))]
     for url in urls:
         try:
-            url = app.musicdl.validate_url(provider, url)
+            url = app.download_engine.validate_url(provider, url)
             if app.resource_kind(provider, url) == 'track':
                 return url
         except (ValueError, TypeError):
@@ -29,7 +29,7 @@ def choose_url(app, provider, supplied):
 
 
 def run_test(app, provider, url, timeout):
-    music = app.musicdl
+    music = app.download_engine
     if not app.worker_is_active(provider):
         return False, 'ARRETE : worker non demarre'
     owner = str(uuid.uuid4())

@@ -31,33 +31,33 @@ import requests
 from aiohttp import web
 from mutagen import File as MutagenFile, MutagenError
 
-import musicdl
+import download_engine
 import feedback
 import database
 import mixer_analysis
 import playlist_sources
 
 
-LOGGER = logging.getLogger("musicdl.web")
+LOGGER = logging.getLogger("download_engine.web")
 
-ASSET_ROOT = Path(os.environ.get("MUSICDL_WEB_ASSET_DIR", "/app/web"))
+ASSET_ROOT = Path(os.environ.get("TUNESAVER_WEB_ASSET_DIR", "/app/web"))
 BRAND_ASSETS = tuple(f'vendor/brands/{name}' for name in (
     'spotify.svg', 'applemusic.svg', 'soundcloud.svg', 'tidal.svg', 'beatport.svg', 'qobuz.ico'))
-TIDAL_AUTH_PATH = musicdl.STATE_ROOT / "tiddl" / "auth.json"
+TIDAL_AUTH_PATH = download_engine.STATE_ROOT / "tiddl" / "auth.json"
 BEATPORT_CACHE_PATH = (
-    musicdl.STATE_ROOT / "beatportdl" / "beatportdl-credentials.json"
+    download_engine.STATE_ROOT / "beatportdl" / "beatportdl-credentials.json"
 )
 BEATPORT_CONFIG_PATH = Path(
-    os.environ.get("MUSICDL_BEATPORT_CONFIG", "/config/beatport.json")
+    os.environ.get("TUNESAVER_BEATPORT_CONFIG", "/config/beatport.json")
 )
 BEATPORT_SEARCH_BINARY = os.environ.get(
-    "MUSICDL_BEATPORT_SEARCH_BINARY", "/usr/local/bin/beatport-search"
+    "TUNESAVER_BEATPORT_SEARCH_BINARY", "/usr/local/bin/beatport-search"
 )
 QOBUZ_SEARCH_SCRIPT = os.environ.get(
-    "MUSICDL_QOBUZ_SEARCH_SCRIPT", "/app/qobuz_search.py"
+    "TUNESAVER_QOBUZ_SEARCH_SCRIPT", "/app/qobuz_search.py"
 )
 LOCAL_DB_PATH = Path(
-    os.environ.get("TUNESAVER_DB_PATH", str(musicdl.STATE_ROOT / "tiddl" / "tunesaver.db"))
+    os.environ.get("TUNESAVER_DB_PATH", str(download_engine.STATE_ROOT / "tiddl" / "tunesaver.db"))
 )
 
 TIDAL_SEARCH_URL = "https://api.tidal.com/v1/search"
@@ -198,7 +198,7 @@ def _check_same_origin(request: web.Request) -> None:
 
 
 def utc_timestamp() -> str:
-    return musicdl.utc_now()
+    return download_engine.utc_now()
 
 
 def token_hash(token: str) -> str:
@@ -836,10 +836,10 @@ def local_admin_history(user_id: str = "") -> list[dict[str, Any]]:
         imports = [dict(row) for row in db.execute('select id,user_id,source_url,created_at,tracks,failures from playlist_imports')
                    if row['user_id'] in owners]
     # Failed jobs are durable queue records, even when no browser has synced history.
-    for provider in musicdl.PROVIDERS:
-        for path in (musicdl.QUEUE_ROOT / 'failed' / provider).glob('*.json'):
+    for provider in download_engine.PROVIDERS:
+        for path in (download_engine.QUEUE_ROOT / 'failed' / provider).glob('*.json'):
             try:
-                job = musicdl.load_job(path, expected_provider=provider)
+                job = download_engine.load_job(path, expected_provider=provider)
                 owner, identifier = job.get('owner_id'), job['id']
                 if owner not in owners or (owner, identifier) in removed:
                     continue
@@ -956,7 +956,7 @@ def single_zip_audio(path: Path) -> zipfile.ZipInfo | None:
     audio_members = [
         item
         for item in zip_members(path)
-        if Path(item.filename).suffix.lower() in musicdl.AUDIO_EXTENSIONS
+        if Path(item.filename).suffix.lower() in download_engine.AUDIO_EXTENSIONS
     ]
     return audio_members[0] if len(audio_members) == 1 else None
 
@@ -996,8 +996,8 @@ def delivery_for_job(job_id: str, owner_id: str) -> dict[str, Any] | None:
     delivery = job.get("delivery")
     if not isinstance(delivery, dict) or not isinstance(delivery.get("path"), str):
         return None
-    candidate = (musicdl.DELIVERY_ROOT / delivery["path"]).resolve()
-    root = musicdl.DELIVERY_ROOT.resolve()
+    candidate = (download_engine.DELIVERY_ROOT / delivery["path"]).resolve()
+    root = download_engine.DELIVERY_ROOT.resolve()
     if (
         not candidate.is_relative_to(root)
         or not candidate.is_file()
@@ -1080,20 +1080,20 @@ def local_library_tracks(user_id: str) -> list[dict[str, Any]]:
 
 
 def local_library_remove_track(user_id: str, job_id: str) -> None:
-    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+    if not download_engine.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Morceau introuvable.", status=404)
-    for provider in musicdl.PROVIDERS:
-        with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
+    for provider in download_engine.PROVIDERS:
+        with download_engine.provider_lock(provider, "enqueue"), local_db() as db:
             db.execute("begin immediate")
             owned = db.execute("select 1 from download_history where user_id=? and job_id=? and provider=?",
                                (user_id, job_id, provider)).fetchone()
             paths = []
             running = False
-            for state in musicdl.STATES:
-                path = musicdl.QUEUE_ROOT / state / provider / f"{job_id}.json"
+            for state in download_engine.STATES:
+                path = download_engine.QUEUE_ROOT / state / provider / f"{job_id}.json"
                 if not path.is_file():
                     continue
-                payload = musicdl.load_job(path, expected_provider=provider)
+                payload = download_engine.load_job(path, expected_provider=provider)
                 if payload.get("owner_id") != user_id:
                     raise PublicError("Morceau introuvable.", status=404)
                 paths.append(path)
@@ -1104,7 +1104,7 @@ def local_library_remove_track(user_id: str, job_id: str) -> None:
                 path.unlink(missing_ok=True)
             # An active worker stops its subprocess and cleans up after it exits.
             if not running or not worker_is_active(provider):
-                musicdl.remove_job_files(provider, user_id, job_id)
+                download_engine.remove_job_files(provider, user_id, job_id)
             db.execute("insert or ignore into library_removed (user_id, job_id) values (?, ?)",
                        (user_id, job_id))
             db.execute("delete from playlist_items where job_id = ? and playlist_id in "
@@ -1292,7 +1292,7 @@ def local_tag_has_owner(db: sqlite3.Connection, tag_id: str, user_id: str) -> bo
 
 
 def local_playlist_add_track(user_id: str, playlist_id: str, job_id: str) -> None:
-    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+    if not download_engine.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Morceau invalide.", status=404)
     with local_db() as db:
         if not db.execute('select 1 from download_history where job_id=? and user_id=?', (job_id, user_id)).fetchone() and not delivery_for_job(job_id, user_id):
@@ -1309,7 +1309,7 @@ def local_playlist_add_track(user_id: str, playlist_id: str, job_id: str) -> Non
 
 
 def local_tag_add_track(user_id: str, tag_id: str, job_id: str) -> None:
-    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+    if not download_engine.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Morceau invalide.", status=404)
     if not delivery_for_job(job_id, user_id):
         raise PublicError("Morceau introuvable.", status=404)
@@ -1412,6 +1412,8 @@ async def api_middleware(
             "/vendor/player-icons.js",
             "/vendor/mixer-icons.js",
             "/api/health",
+            "/api/catalog-sync",
+            "/api/device/start", "/api/device/poll",
             "/api/config",
             "/api/signup",
             "/api/login",
@@ -1493,7 +1495,7 @@ def normalized_query(value: Any) -> str:
 
 
 def resource_kind(provider: str, value: str) -> str:
-    if provider == "tiddl" and musicdl.TIDAL_RESOURCE_RE.fullmatch(value):
+    if provider == "tiddl" and download_engine.TIDAL_RESOURCE_RE.fullmatch(value):
         return value.split("/", 1)[0]
     segments = [segment for segment in urlparse(value).path.split("/") if segment]
     if provider == "tiddl":
@@ -1517,9 +1519,9 @@ def resource_kind(provider: str, value: str) -> str:
 
 
 def direct_result(value: str) -> dict[str, Any] | None:
-    for provider in musicdl.PROVIDERS:
+    for provider in download_engine.PROVIDERS:
         try:
-            download_url = musicdl.validate_url(provider, value)
+            download_url = download_engine.validate_url(provider, value)
         except ValueError:
             continue
         kind = resource_kind(provider, download_url)
@@ -1853,7 +1855,7 @@ def refresh_tidal_auth(
     *, force: bool, rejected_token: str | None = None
 ) -> dict[str, Any]:
     try:
-        lock = musicdl.provider_lock("tiddl", "operation", blocking=False)
+        lock = download_engine.provider_lock("tiddl", "operation", blocking=False)
         with lock:
             auth_data = load_json_file(TIDAL_AUTH_PATH, "Authentification TIDAL")
             if not force and tidal_auth_valid(auth_data):
@@ -1869,7 +1871,7 @@ def refresh_tidal_auth(
             refresh_token = auth_data.get("refresh_token")
             if not isinstance(refresh_token, str) or not refresh_token:
                 raise SourceError(
-                    "TIDAL n'est pas connecté. Lancez ./musicdl auth tiddl."
+                    "TIDAL n'est pas connecté. Lancez ./tunesaver server auth tiddl."
                 )
             from tiddl.core.auth.client import AUTH_URL, get_auth_credentials
 
@@ -1891,7 +1893,7 @@ def refresh_tidal_auth(
                 raise SourceError("Le service de connexion TIDAL est indisponible.")
             if response.status_code != 200:
                 raise SourceError(
-                    "La session TIDAL a expiré. Lancez ./musicdl auth tiddl --force."
+                    "La session TIDAL a expiré. Lancez ./tunesaver server auth tiddl --force."
                 )
             try:
                 refreshed = response.json()
@@ -1913,7 +1915,7 @@ def refresh_tidal_auth(
             if isinstance(new_refresh_token, str) and new_refresh_token:
                 auth_data["refresh_token"] = new_refresh_token
             auth_data["expires_at"] = int(time.time()) + expires_in
-            musicdl.atomic_write_json(TIDAL_AUTH_PATH, auth_data)
+            download_engine.atomic_write_json(TIDAL_AUTH_PATH, auth_data)
             return auth_data
     except RuntimeError as exc:
         raise SourceError(
@@ -1978,8 +1980,8 @@ def fnv1a_login_id(username: str, password: str) -> str:
 
 def valid_beatport_token() -> str | None:
     try:
-        username = musicdl.read_secret("beatport_username")
-        password = musicdl.read_secret("beatport_password")
+        username = download_engine.read_secret("beatport_username")
+        password = download_engine.read_secret("beatport_password")
         cache = load_json_file(BEATPORT_CACHE_PATH, "Cache Beatport")
         expires_at = int(cache.get("issued_at", 0)) + int(cache.get("expires_in", 0))
         token = cache.get("access_token")
@@ -2059,8 +2061,8 @@ def configured_beatport_proxy() -> str:
 def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "") -> dict[str, Any]:
     command = [BEATPORT_SEARCH_BINARY]
     if os.environ.get("TUNESAVER_DESKTOP") == "1":
-        command.extend(["--username-file", str(musicdl.SECRETS_ROOT / "beatport_username"),
-                        "--password-file", str(musicdl.SECRETS_ROOT / "beatport_password"),
+        command.extend(["--username-file", str(download_engine.SECRETS_ROOT / "beatport_username"),
+                        "--password-file", str(download_engine.SECRETS_ROOT / "beatport_password"),
                         "--cache-file", str(BEATPORT_CACHE_PATH)])
     if proxy:
         command.extend(["--proxy", proxy])
@@ -2068,7 +2070,7 @@ def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "")
         command.extend(["--collection", collection])
     command.extend(["--", query])
     try:
-        with musicdl.provider_lock("beatport", "operation", blocking=False):
+        with download_engine.provider_lock("beatport", "operation", blocking=False):
             process = subprocess.run(
                 command,
                 stdin=subprocess.DEVNULL,
@@ -2077,7 +2079,7 @@ def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "")
                 text=True,
                 timeout=210,
                 check=False,
-                env=musicdl.runtime_environment(),
+                env=download_engine.runtime_environment(),
             )
     except RuntimeError as exc:
         raise SourceError(
@@ -2088,7 +2090,7 @@ def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "")
     except OSError as exc:
         raise SourceError("Le module de recherche Beatport est indisponible.") from exc
 
-    prefix = "MUSICDL_JSON:"
+    prefix = "TUNESAVER_JSON:"
     payload_line = next(
         (line[len(prefix) :] for line in reversed(process.stdout.splitlines()) if line.startswith(prefix)),
         None,
@@ -2118,7 +2120,7 @@ def search_beatport(query: str) -> list[dict[str, Any]]:
 
 def qobuz_metadata(query: str, *, playlist: bool = False) -> dict[str, Any]:
     try:
-        with musicdl.provider_lock("qobuz", "operation", blocking=False):
+        with download_engine.provider_lock("qobuz", "operation", blocking=False):
             process = subprocess.run(
                 [os.environ.get("PYTHON", "python"), QOBUZ_SEARCH_SCRIPT, *(["--playlist"] if playlist else []), query],
                 stdin=subprocess.DEVNULL,
@@ -2127,7 +2129,7 @@ def qobuz_metadata(query: str, *, playlist: bool = False) -> dict[str, Any]:
                 text=True,
                 timeout=600 if playlist else 75,
                 check=False,
-                env=musicdl.runtime_environment("qobuz"),
+                env=download_engine.runtime_environment("qobuz"),
             )
     except RuntimeError as exc:
         raise SourceError(
@@ -2138,7 +2140,7 @@ def qobuz_metadata(query: str, *, playlist: bool = False) -> dict[str, Any]:
     except OSError as exc:
         raise SourceError("Le module de recherche Qobuz est indisponible.") from exc
 
-    prefix = "MUSICDL_JSON:"
+    prefix = "TUNESAVER_JSON:"
     payload_line = next(
         (
             line[len(prefix) :]
@@ -2150,7 +2152,7 @@ def qobuz_metadata(query: str, *, playlist: bool = False) -> dict[str, Any]:
     if process.returncode != 0 or payload_line is None:
         LOGGER.warning("qobuz-search a échoué avec le code %s", process.returncode)
         raise SourceError(
-            "Connexion ou recherche Qobuz impossible. Lancez ./musicdl auth qobuz --force."
+            "Connexion ou recherche Qobuz impossible. Lancez ./tunesaver server auth qobuz --force."
         )
     try:
         payload = json.loads(payload_line)
@@ -2203,7 +2205,7 @@ async def search_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     query = normalized_query(payload.get("query"))
     provider = payload.get("provider")
-    if provider is not None and provider not in musicdl.PROVIDERS:
+    if provider is not None and provider not in download_engine.PROVIDERS:
         raise PublicError("Plateforme inconnue.")
 
     direct = direct_result(query)
@@ -2223,12 +2225,12 @@ async def search_handler(request: web.Request) -> web.Response:
 
     tasks = [
         asyncio.create_task(execute_search(request, item_provider, query))
-        for item_provider in musicdl.PROVIDERS
+        for item_provider in download_engine.PROVIDERS
     ]
     outcomes = await asyncio.gather(*tasks, return_exceptions=True)
     results: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
-    for item_provider, outcome in zip(musicdl.PROVIDERS, outcomes, strict=True):
+    for item_provider, outcome in zip(download_engine.PROVIDERS, outcomes, strict=True):
         if isinstance(outcome, PublicError):
             errors[item_provider] = outcome.message
         elif isinstance(outcome, asyncio.TimeoutError):
@@ -2247,7 +2249,7 @@ async def search_handler(request: web.Request) -> web.Response:
 
 def resource_identity(provider: str, value: str) -> tuple[str, str] | None:
     try:
-        value = musicdl.validate_url(provider, value)
+        value = download_engine.validate_url(provider, value)
     except (ValueError, AttributeError, TypeError):
         return None
     return resource_kind(provider, value), urlparse(value).path.rstrip('/').rsplit('/', 1)[-1]
@@ -2256,7 +2258,7 @@ def resource_identity(provider: str, value: str) -> tuple[str, str] | None:
 def existing_job(provider: str, url: str, owner_id: str | None = None, *, completed: bool = False) -> str | None:
     identity = resource_identity(provider, url)
     for state in (("pending", "running", "done") if completed else ("pending", "running")):
-        directory = musicdl.QUEUE_ROOT / state / provider
+        directory = download_engine.QUEUE_ROOT / state / provider
         for path in directory.glob("*.json"):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -2276,10 +2278,10 @@ def existing_job(provider: str, url: str, owner_id: str | None = None, *, comple
 
 def worker_is_active(provider: str) -> bool:
     try:
-        handle = musicdl.acquire_provider_lock(provider, "worker", blocking=False)
+        handle = download_engine.acquire_provider_lock(provider, "worker", blocking=False)
     except RuntimeError:
         return True
-    musicdl.release_provider_lock(handle)
+    download_engine.release_provider_lock(handle)
     return False
 
 
@@ -2320,12 +2322,12 @@ async def download_handler(request: web.Request) -> web.Response:
     payload = await read_json_object(request)
     provider = payload.get("provider")
     value = payload.get("url")
-    if provider not in musicdl.PROVIDERS or not isinstance(value, str):
+    if provider not in download_engine.PROVIDERS or not isinstance(value, str):
         raise PublicError("Téléchargement invalide.")
     if len(value) > DIRECT_LINK_LIMIT:
         raise PublicError("Le lien est trop long.")
     try:
-        url = musicdl.validate_url(provider, value)
+        url = download_engine.validate_url(provider, value)
     except ValueError as exc:
         raise PublicError("Le lien n'appartient pas à la plateforme choisie.") from exc
     kind = resource_kind(provider, url)
@@ -2343,13 +2345,13 @@ async def download_handler(request: web.Request) -> web.Response:
     if not existing_job(provider, url, owner_id, completed=True):
         provider, url, metadata = await asyncio.to_thread(compatible_download, provider, url, metadata)
 
-    with musicdl.provider_lock(provider, "enqueue"):
+    with download_engine.provider_lock(provider, "enqueue"):
         job_id = existing_job(provider, url, owner_id, completed=True)
         duplicate = job_id is not None
         if job_id is None:
             if not worker_is_active(provider):
                 raise SourceError(f"Le worker {PLATFORM_NAMES[provider]} n'est pas démarré.")
-            job_id = musicdl.enqueue(
+            job_id = download_engine.enqueue(
                 provider,
                 [url],
                 metadata=metadata,
@@ -2393,11 +2395,11 @@ async def batch_download_handler(request: web.Request) -> web.Response:
     for direct in prepared:
         provider = direct["provider"]
         url = direct["download_url"]
-        with musicdl.provider_lock(provider, "enqueue"):
+        with download_engine.provider_lock(provider, "enqueue"):
             job_id = existing_job(provider, url, owner_id, completed=True)
             duplicate = job_id is not None
             if job_id is None:
-                job_id = musicdl.enqueue(
+                job_id = download_engine.enqueue(
                     provider,
                     [url],
                     metadata={
@@ -2415,10 +2417,10 @@ async def batch_download_handler(request: web.Request) -> web.Response:
 def queue_snapshot(owner_id: str) -> dict[str, Any]:
     counts: dict[str, dict[str, int]] = {}
     newest: list[tuple[float, str, str, str]] = []
-    for provider in musicdl.PROVIDERS:
+    for provider in download_engine.PROVIDERS:
         counts[provider] = {}
-        for state in musicdl.STATES:
-            directory = musicdl.QUEUE_ROOT / state / provider
+        for state in download_engine.STATES:
+            directory = download_engine.QUEUE_ROOT / state / provider
             count = 0
             try:
                 entries = os.scandir(directory)
@@ -2485,7 +2487,7 @@ def queue_snapshot(owner_id: str) -> dict[str, Any]:
     return {
         "counts": counts,
         "active": {
-            provider: worker_is_active(provider) for provider in musicdl.PROVIDERS
+            provider: worker_is_active(provider) for provider in download_engine.PROVIDERS
         },
         "recent": recent,
     }
@@ -2504,7 +2506,7 @@ def probe_provider_connection(provider: str) -> dict[str, str]:
                 timeout=(3, 8), allow_redirects=False,
             )
         elif provider == "qobuz":
-            config = musicdl.read_qobuz_config().defaults()
+            config = download_engine.read_qobuz_config().defaults()
             if any(not config.get(key) for key in ("user_id", "user_auth_token", "app_id")):
                 return result("inactive", "Connexion Qobuz non configurée.")
             response = requests.get(
@@ -2566,7 +2568,7 @@ async def provider_statuses(app: web.Application, workers: dict[str, bool]) -> d
             tasks.pop(provider, None)
 
     statuses = {}
-    for provider in musicdl.PROVIDERS:
+    for provider in download_engine.PROVIDERS:
         if not workers.get(provider):
             values.pop(provider, None)
             statuses[provider] = {"state": "inactive", "message": "Moteur de téléchargement arrêté.", "worker_running": False}
@@ -2924,7 +2926,7 @@ async def playlist_import_stop_handler(request: web.Request) -> web.Response:
 
 def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
     provider = result["provider"]
-    url = musicdl.validate_url(provider, result["download_url"])
+    url = download_engine.validate_url(provider, result["download_url"])
     owner = record["user_id"]
     if resource_kind(provider, url) != "track":
         raise PublicError("La correspondance n'est pas un morceau.")
@@ -2932,14 +2934,14 @@ def enqueue_import_track(record: dict[str, Any], result: dict[str, Any]) -> str:
         provider, url, metadata = compatible_download(provider, url, result)
         result = {**result, **metadata, 'provider': provider, 'download_url': url}
     # Serialize enqueue and playlist membership so a restart reuses the same job.
-    with musicdl.provider_lock(provider, "enqueue"), local_db() as db:
+    with download_engine.provider_lock(provider, "enqueue"), local_db() as db:
         if record.get('playlist_id') and not local_playlist_has_owner(db, record["playlist_id"], owner):
             raise PublicError("La playlist a ete supprimee.")
         job_id = existing_job(provider, url, owner, completed=True)
         if not job_id:
             if not worker_is_active(provider):
                 raise PublicError('La source de telechargement est arretee.', status=503)
-            job_id = musicdl.enqueue(provider, [url], owner_id=owner, ephemeral=True,
+            job_id = download_engine.enqueue(provider, [url], owner_id=owner, ephemeral=True,
                                      metadata={"title": result["title"][:200], "artist": result.get("artist", "")[:200], "kind": "track"})
         db.execute("delete from library_removed where user_id = ? and job_id = ?", (owner, job_id))
         if record.get('playlist_id'):
@@ -3019,11 +3021,11 @@ def local_reset_library(user_id: str) -> None:
         db.execute("delete from library_orders where user_id=?", (user_id,))
         jobs = {row['job_id'] for row in db.execute(
             "select job_id from download_history where user_id=?", (user_id,))}
-    for provider in musicdl.PROVIDERS:
-        for state in musicdl.STATES:
-            for path in (musicdl.QUEUE_ROOT / state / provider).glob('*.json'):
+    for provider in download_engine.PROVIDERS:
+        for state in download_engine.STATES:
+            for path in (download_engine.QUEUE_ROOT / state / provider).glob('*.json'):
                 try:
-                    payload = musicdl.load_job(path, expected_provider=provider)
+                    payload = download_engine.load_job(path, expected_provider=provider)
                 except FileNotFoundError:
                     continue
                 if payload.get('owner_id') == user_id:
@@ -3067,7 +3069,7 @@ def local_save_library_order(user_id: str, scope: Any, track_ids: Any) -> None:
     if scope != "library:" and (kind not in tables or not collection_id):
         raise PublicError("Collection invalide.")
     if (not isinstance(track_ids, list) or len(track_ids) > 5000
-            or any(not isinstance(job, str) or not musicdl.JOB_ID_RE.fullmatch(job) for job in track_ids)
+            or any(not isinstance(job, str) or not download_engine.JOB_ID_RE.fullmatch(job) for job in track_ids)
             or len(set(track_ids)) != len(track_ids)):
         raise PublicError("Ordre des morceaux invalide.")
     queued = {job["id"] for job in queue_snapshot(user_id)["recent"]}
@@ -3337,7 +3339,7 @@ async def playlist_move_handler(request: web.Request) -> web.Response:
 
 async def cover_handler(request: web.Request) -> web.StreamResponse:
     job_id = request.match_info.get("job_id", "")
-    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+    if not download_engine.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Pochette introuvable.", status=404)
     cover = await asyncio.to_thread(cover_for_job, job_id, request["user"]["id"])
     if not cover:
@@ -3408,8 +3410,8 @@ def retry_playlist(user_id: str, playlist_id: str, *, errors_only: bool = False)
             'select job_id from playlist_items where playlist_id=? order by created_at,rowid', (playlist_id,))]
     result = {'queued': 0, 'unchanged': 0, 'matching': 0, 'errors': []}
     for identifier in identifiers:
-        if errors_only and not any((musicdl.QUEUE_ROOT / 'failed' / p / f'{identifier}.json').is_file()
-                                   for p in musicdl.PROVIDERS):
+        if errors_only and not any((download_engine.QUEUE_ROOT / 'failed' / p / f'{identifier}.json').is_file()
+                                   for p in download_engine.PROVIDERS):
             continue
         try:
             job = audio_retention.requeue(sys.modules[__name__], user_id, identifier)
@@ -3675,23 +3677,23 @@ async def admin_stats_handler(_request: web.Request) -> web.Response:
 
 
 def find_done_job(job_id: str) -> tuple[Path, dict[str, Any]]:
-    if not musicdl.JOB_ID_RE.fullmatch(job_id):
+    if not download_engine.JOB_ID_RE.fullmatch(job_id):
         raise PublicError("Téléchargement invalide.", status=404)
-    for provider in musicdl.PROVIDERS:
-        path = musicdl.QUEUE_ROOT / "done" / provider / f"{job_id}.json"
+    for provider in download_engine.PROVIDERS:
+        path = download_engine.QUEUE_ROOT / "done" / provider / f"{job_id}.json"
         if path.is_file():
             try:
-                return path, musicdl.load_job(path, expected_provider=provider)
+                return path, download_engine.load_job(path, expected_provider=provider)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 raise PublicError("Téléchargement invalide.", status=404) from exc
     raise PublicError("Téléchargement introuvable.", status=404)
 
 
 def update_existing_job(path: Path, job: dict[str, Any]) -> bool:
-    with musicdl.provider_lock(job["provider"], "enqueue"):
+    with download_engine.provider_lock(job["provider"], "enqueue"):
         if not path.is_file():
             return False
-        musicdl.atomic_write_json(path, job)
+        download_engine.atomic_write_json(path, job)
         return True
 
 
@@ -3759,8 +3761,8 @@ async def file_handler(request: web.Request) -> web.StreamResponse:
     if not isinstance(delivery, dict) or not isinstance(delivery.get("path"), str):
         raise PublicError("Ce fichier a déjà été récupéré.", status=410)
 
-    candidate = (musicdl.DELIVERY_ROOT / delivery["path"]).resolve()
-    root = musicdl.DELIVERY_ROOT.resolve()
+    candidate = (download_engine.DELIVERY_ROOT / delivery["path"]).resolve()
+    root = download_engine.DELIVERY_ROOT.resolve()
     if (
         not candidate.is_relative_to(root)
         or not candidate.is_file()
@@ -3790,7 +3792,7 @@ async def file_handler(request: web.Request) -> web.StreamResponse:
         while chunk := await asyncio.to_thread(handle.read, 1024 * 1024):
             await response.write(chunk)
     await response.write_eof()
-    job["delivered_at"] = musicdl.utc_now()
+    job["delivered_at"] = download_engine.utc_now()
     job["delivery_deleted"] = False
     update_existing_job(path, job)
     return response
@@ -3858,8 +3860,8 @@ def resolve_stream(job_id: str, ticket: str):
     delivery = job.get("delivery")
     if not isinstance(delivery, dict) or not isinstance(delivery.get("path"), str):
         raise PublicError("Morceau introuvable.", status=404)
-    candidate = (musicdl.DELIVERY_ROOT / delivery["path"]).resolve()
-    root = musicdl.DELIVERY_ROOT.resolve()
+    candidate = (download_engine.DELIVERY_ROOT / delivery["path"]).resolve()
+    root = download_engine.DELIVERY_ROOT.resolve()
     if (
         not candidate.is_relative_to(root)
         or not candidate.is_file()
@@ -3950,7 +3952,8 @@ def create_app(desktop=None) -> web.Application:
         desktop.register(app)
     app.cleanup_ctx.append(playlist_import_context)
     if desktop is None:
-        app.cleanup_ctx.append(audio_retention_context)
+        if os.environ.get("TUNESAVER_KEEP_AUDIO") != "1":
+            app.cleanup_ctx.append(audio_retention_context)
         import download_fallback
         app.cleanup_ctx.append(lambda app: download_fallback.context(sys.modules[__name__]))
     app.cleanup_ctx.append(provider_status_context)
@@ -3958,6 +3961,10 @@ def create_app(desktop=None) -> web.Application:
     feedback.register(app, local_db, read_json_object, PublicError)
     import account_transfer
     account_transfer.register(app, sys.modules[__name__])
+    import device_login
+    device_login.register(app, sys.modules[__name__])
+    import catalog_sync
+    catalog_sync.register(app, sys.modules[__name__], desktop=desktop is not None)
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
@@ -4031,24 +4038,24 @@ def create_app(desktop=None) -> web.Application:
 
 def main() -> None:
     os.umask(0o077)
-    musicdl.ensure_layout()
+    download_engine.ensure_layout()
     for directory in (
-        musicdl.STATE_ROOT / "tiddl",
-        musicdl.STATE_ROOT / "beatportdl",
-        musicdl.STATE_ROOT / "qobuz",
+        download_engine.STATE_ROOT / "tiddl",
+        download_engine.STATE_ROOT / "beatportdl",
+        download_engine.STATE_ROOT / "qobuz",
     ):
         directory.chmod(0o700)
-    for path in (TIDAL_AUTH_PATH, BEATPORT_CACHE_PATH, musicdl.QOBUZ_CONFIG_PATH):
+    for path in (TIDAL_AUTH_PATH, BEATPORT_CACHE_PATH, download_engine.QOBUZ_CONFIG_PATH):
         if path.exists():
             path.chmod(0o600)
 
-    host = os.environ.get("MUSICDL_WEB_HOST", "0.0.0.0")
+    host = os.environ.get("TUNESAVER_WEB_HOST", "0.0.0.0")
     try:
-        port = int(os.environ.get("MUSICDL_WEB_PORT", "8080"))
+        port = int(os.environ.get("TUNESAVER_WEB_PORT", "8080"))
     except ValueError as exc:
-        raise SystemExit("MUSICDL_WEB_PORT doit être un nombre") from exc
+        raise SystemExit("TUNESAVER_WEB_PORT doit être un nombre") from exc
     if not 1 <= port <= 65535:
-        raise SystemExit("MUSICDL_WEB_PORT doit être compris entre 1 et 65535")
+        raise SystemExit("TUNESAVER_WEB_PORT doit être compris entre 1 et 65535")
     web.run_app(create_app(), host=host, port=port, access_log=None, print=None)
 
 

@@ -90,6 +90,8 @@ async def browser_test(args):
                 await expect(page.locator("#desktop-accounts")).to_be_visible()
                 await expect(page.locator("#auth-view")).to_be_hidden()
                 await expect(page.locator("#desktop-account-cards .desktop-account-card")).to_have_count(3)
+                await expect(page.get_by_role("button", name="Se connecter avec TuneSaver")).to_be_visible()
+                await page.get_by_text("Importer un fichier de connexions", exact=True).click()
                 await expect(page.get_by_role("link", name="Récupérer mes connexions")).to_have_attribute("href", "https://tunesaver.galagain.com/auth/")
                 await page.locator("#desktop-account-file").set_input_files({"name":"test-accounts.json", "mimeType":"application/json", "buffer":json.dumps({"format":"tunesaver-accounts-v1","accounts":{"beatport":{"beatport_username":"test-user","beatport_password":"test-password"}}}).encode()})
                 await expect(page.locator("#desktop-import-result")).to_contain_text("1 compte(s) importé(s)")

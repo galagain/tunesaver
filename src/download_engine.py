@@ -34,20 +34,20 @@ from urllib.parse import urlparse, urlunparse
 PROVIDERS = ("tiddl", "beatport", "qobuz")
 STATES = ("pending", "running", "done", "failed")
 
-QUEUE_ROOT = Path(os.environ.get("MUSICDL_QUEUE_DIR", "/queue"))
-STATE_ROOT = Path(os.environ.get("MUSICDL_STATE_DIR", "/state"))
-CONFIG_ROOT = Path(os.environ.get("MUSICDL_CONFIG_DIR", "/config"))
-SECRETS_ROOT = Path(os.environ.get("MUSICDL_SECRETS_DIR", "/run/secrets"))
+QUEUE_ROOT = Path(os.environ.get("TUNESAVER_QUEUE_DIR", "/queue"))
+STATE_ROOT = Path(os.environ.get("TUNESAVER_STATE_DIR", "/state"))
+CONFIG_ROOT = Path(os.environ.get("TUNESAVER_CONFIG_DIR", "/config"))
+SECRETS_ROOT = Path(os.environ.get("TUNESAVER_SECRETS_DIR", "/run/secrets"))
 TIDDL_DOWNLOAD_DIR = Path(
-    os.environ.get("MUSICDL_TIDDL_DOWNLOAD_DIR", "/downloads/tiddl")
+    os.environ.get("TUNESAVER_TIDDL_DOWNLOAD_DIR", "/downloads/tiddl")
 )
 BEATPORT_DOWNLOAD_DIR = Path(
-    os.environ.get("MUSICDL_BEATPORT_DOWNLOAD_DIR", "/downloads/beatport")
+    os.environ.get("TUNESAVER_BEATPORT_DOWNLOAD_DIR", "/downloads/beatport")
 )
 QOBUZ_DOWNLOAD_DIR = Path(
-    os.environ.get("MUSICDL_QOBUZ_DOWNLOAD_DIR", "/downloads/qobuz")
+    os.environ.get("TUNESAVER_QOBUZ_DOWNLOAD_DIR", "/downloads/qobuz")
 )
-DELIVERY_ROOT = Path(os.environ.get("MUSICDL_DELIVERY_DIR", "/deliveries"))
+DELIVERY_ROOT = Path(os.environ.get("TUNESAVER_DELIVERY_DIR", "/deliveries"))
 QOBUZ_CONFIG_PATH = STATE_ROOT / "qobuz" / ".config" / "qobuz-dl" / "config.ini"
 
 TIDAL_RESOURCE_RE = re.compile(
@@ -442,7 +442,7 @@ QOBUZ_AUTH_KEYS = {
     "user_auth_token",
     "app_id",
     "secrets",
-    "musicdl_login_id",
+    "tunesaver_login_id",
 }
 
 
@@ -494,7 +494,7 @@ def read_qobuz_config() -> configparser.ConfigParser:
         with QOBUZ_CONFIG_PATH.open("r", encoding="utf-8") as handle:
             parser.read_file(handle)
     except FileNotFoundError as exc:
-        raise RuntimeError("Qobuz non authentifié: lancez ./musicdl auth qobuz") from exc
+        raise RuntimeError("Qobuz non authentifié: lancez tunesaver server auth qobuz") from exc
     except configparser.Error as exc:
         raise RuntimeError("authentification Qobuz illisible") from exc
     return parser
@@ -524,7 +524,7 @@ def sync_qobuz_config() -> None:
     current = dict(read_qobuz_config().defaults())
     if QOBUZ_AUTH_KEYS - set(current):
         raise RuntimeError(
-            "authentification Qobuz incomplète; relancez ./musicdl auth qobuz --force"
+            "authentification Qobuz incomplète; relancez tunesaver server auth qobuz --force"
         )
     write_qobuz_config(
         {**settings, **{key: current[key] for key in QOBUZ_AUTH_KEYS}}
@@ -537,7 +537,7 @@ def auth_qobuz(*, force: bool) -> None:
     token = read_secret("qobuz_token")
     login_id = qobuz_login_id(user_id, token)
     if QOBUZ_CONFIG_PATH.is_file() and not force:
-        if read_qobuz_config().defaults().get("musicdl_login_id") == login_id:
+        if read_qobuz_config().defaults().get("tunesaver_login_id") == login_id:
             print("Qobuz est déjà authentifié pour ce compte.")
             return
     try:
@@ -560,7 +560,7 @@ def auth_qobuz(*, force: bool) -> None:
             "user_auth_token": token,
             "app_id": app_id,
             "secrets": ",".join(secrets),
-            "musicdl_login_id": login_id,
+            "tunesaver_login_id": login_id,
         }
     )
     write_qobuz_config(values)
@@ -588,7 +588,7 @@ def stream_command(
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     printable_command = shlex.join(command)
-    print(f"[musicdl] commande: {printable_command}", flush=True)
+    print(f"[tunesaver] commande: {printable_command}", flush=True)
     with log_path.open("ab") as log_handle:
         log_handle.write(f"\n[{utc_now()}] {printable_command}\n".encode())
         log_handle.flush()
@@ -693,7 +693,7 @@ def _run_provider_unlocked(
             command.append("--no-db")
         return stream_command(command, cwd=None, log_path=log_path, environment=environment)
 
-    with tempfile.TemporaryDirectory(prefix="musicdl-beatport-") as temporary_name:
+    with tempfile.TemporaryDirectory(prefix="tunesaver-beatport-") as temporary_name:
         temporary_dir = Path(temporary_name)
         build_beatport_config(temporary_dir, output_dir)
         command = ["beatportdl", "-q", *urls]
@@ -706,7 +706,7 @@ def _run_provider_unlocked(
         error_log = temporary_dir / "beatportdl-err.log"
         if error_log.is_file() and error_log.stat().st_size:
             marker = (
-                b"\n[musicdl] BeatportDL a produit un journal d'erreurs; "
+                b"\n[tunesaver] BeatportDL a produit un journal d'erreurs; "
                 b"la tache est placee dans failed.\n"
             )
             with log_path.open("ab") as log_handle:
@@ -739,7 +739,7 @@ DEFAULT_VALUE_CENTS = {"tiddl": 129, "beatport": 149, "qobuz": 149}
 
 def estimated_track_value_cents(provider: str) -> int:
     provider = validate_provider(provider)
-    variable = f"MUSICDL_{provider.upper()}_TRACK_VALUE_CENTS"
+    variable = f"TUNESAVER_{provider.upper()}_TRACK_VALUE_CENTS"
     try:
         value = int(os.environ.get(variable, DEFAULT_VALUE_CENTS[provider]))
     except ValueError:
@@ -837,7 +837,7 @@ def process_job(provider: str, pending_path: Path) -> bool:
             payload = load_job(running_path, expected_provider=provider)
         except Exception as exc:
             failed_path = QUEUE_ROOT / "failed" / provider / running_path.name
-            print(f"[musicdl] tâche illisible {running_path.name}: {exc}", file=sys.stderr)
+            print(f"[tunesaver] tâche illisible {running_path.name}: {exc}", file=sys.stderr)
             os.replace(running_path, failed_path)
             return True
         payload["attempts"] = int(payload.get("attempts", 0)) + 1
@@ -848,7 +848,7 @@ def process_job(provider: str, pending_path: Path) -> bool:
     attempt = payload["attempts"]
     log_path = QUEUE_ROOT / "logs" / provider / f"{payload['id']}-attempt-{attempt}.log"
     print(
-        f"[musicdl] démarrage {payload['id']} ({provider}, {len(payload['urls'])} URL)",
+        f"[tunesaver] démarrage {payload['id']} ({provider}, {len(payload['urls'])} URL)",
         flush=True,
     )
     output_dir: Path | None = None
@@ -876,9 +876,9 @@ def process_job(provider: str, pending_path: Path) -> bool:
     except Exception as exc:
         return_code = 1
         error = f"{type(exc).__name__}: {exc}"
-        print(f"[musicdl] {error}", file=sys.stderr, flush=True)
+        print(f"[tunesaver] {error}", file=sys.stderr, flush=True)
         with log_path.open("a", encoding="utf-8") as log_handle:
-            log_handle.write(f"\n[musicdl] {error}\n")
+            log_handle.write(f"\n[tunesaver] {error}\n")
     finally:
         ACTIVE_JOB_PATH = None
 
@@ -897,7 +897,7 @@ def process_job(provider: str, pending_path: Path) -> bool:
             return True
         atomic_write_json(running_path, payload)
         os.replace(running_path, destination)
-    print(f"[musicdl] {payload['id']} -> {state} (code {return_code})", flush=True)
+    print(f"[tunesaver] {payload['id']} -> {state} (code {return_code})", flush=True)
     return True
 
 
@@ -914,14 +914,14 @@ def signal_handler(signum: int, _frame: Any) -> None:
         return
     if SIGNAL_COUNT == 1:
         print(
-            f"[musicdl] signal {signum}: arrêt après la tâche en cours",
+            f"[tunesaver] signal {signum}: arrêt après la tâche en cours",
             file=sys.stderr,
             flush=True,
         )
         return
 
     if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is None:
-        print("[musicdl] second signal: interruption forcée", file=sys.stderr, flush=True)
+        print("[tunesaver] second signal: interruption forcée", file=sys.stderr, flush=True)
         ACTIVE_PROCESS.terminate()
 
 
@@ -944,11 +944,11 @@ def worker(provider: str, *, once: bool, poll_interval: float) -> int:
     with provider_lock(provider, "worker", blocking=False):
         recovered = recover_running_jobs(provider)
         if recovered:
-            print(f"[musicdl] {recovered} tâche(s) récupérée(s) après redémarrage")
+            print(f"[tunesaver] {recovered} tâche(s) récupérée(s) après redémarrage")
 
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
-        print(f"[musicdl] worker {provider} prêt", flush=True)
+        print(f"[tunesaver] worker {provider} prêt", flush=True)
 
         while not STOP_EVENT.is_set() and desktop_parent_alive():
             pending = sorted((QUEUE_ROOT / "pending" / provider).glob("*.json"))
@@ -1028,7 +1028,7 @@ def doctor(provider: str) -> int:
             failures.append(f"configuration tiddl invalide: {exc}")
         auth_path = STATE_ROOT / "tiddl" / "auth.json"
         if not auth_path.is_file():
-            failures.append("TIDAL non authentifié: lancez ./musicdl auth tiddl")
+            failures.append("TIDAL non authentifié: lancez tunesaver server auth tiddl")
         else:
             try:
                 auth_data = json.loads(auth_path.read_text(encoding="utf-8"))
@@ -1042,7 +1042,7 @@ def doctor(provider: str) -> int:
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 failures.append(
                     f"authentification TIDAL illisible ({exc}); "
-                    "lancez ./musicdl auth tiddl --force"
+                    "lancez tunesaver server auth tiddl --force"
                 )
     if provider in {"all", "beatport"}:
         try:
@@ -1069,9 +1069,9 @@ def doctor(provider: str) -> int:
             defaults = read_qobuz_config().defaults()
             if QOBUZ_AUTH_KEYS - set(defaults):
                 raise RuntimeError("authentification Qobuz incomplète")
-            if defaults.get("musicdl_login_id") != qobuz_login_id(user_id, token):
+            if defaults.get("tunesaver_login_id") != qobuz_login_id(user_id, token):
                 raise RuntimeError(
-                    "le compte Qobuz a changé; lancez ./musicdl auth qobuz --force"
+                    "le compte Qobuz a changé; lancez tunesaver server auth qobuz --force"
                 )
             QOBUZ_CONFIG_PATH.chmod(0o600)
         except RuntimeError as exc:
@@ -1113,7 +1113,7 @@ def positive_finite_float(value: str) -> float:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="musicdl")
+    parser = argparse.ArgumentParser(prog="tunesaver")
     commands = parser.add_subparsers(dest="command", required=True)
 
     worker_parser = commands.add_parser("worker")
@@ -1122,7 +1122,7 @@ def build_parser() -> argparse.ArgumentParser:
     worker_parser.add_argument(
         "--poll-interval",
         type=positive_finite_float,
-        default=os.environ.get("MUSICDL_POLL_INTERVAL", "5"),
+        default=os.environ.get("TUNESAVER_POLL_INTERVAL", "5"),
     )
 
     enqueue_parser = commands.add_parser("enqueue")
@@ -1207,7 +1207,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"qobuz-dl={os.environ.get('QOBUZDL_COMMIT', 'inconnu')}")
             return 0
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        print(f"musicdl: {exc}", file=sys.stderr)
+        print(f"tunesaver: {exc}", file=sys.stderr)
         return 2
     return 2
 

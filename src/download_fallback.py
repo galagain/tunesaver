@@ -8,7 +8,7 @@ from catalog_matcher import Catalog, match_collection
 
 def reason(api, job):
     provider = job['provider']
-    log = api.musicdl.QUEUE_ROOT / 'logs' / provider / f"{job['id']}-attempt-{job.get('attempts', 1)}.log"
+    log = api.download_engine.QUEUE_ROOT / 'logs' / provider / f"{job['id']}-attempt-{job.get('attempts', 1)}.log"
     if log.is_symlink() or not log.is_file():
         return ''
     with log.open('rb') as handle:
@@ -22,7 +22,7 @@ def reason(api, job):
 
 
 def retry(api, path):
-    m = api.musicdl
+    m = api.download_engine
     job = m.load_job(path)
     owner, identifier = job.get('owner_id'), job['id']
     if not owner or not job.get('ephemeral') or len(job['urls']) != 1:
@@ -97,8 +97,8 @@ def retry(api, path):
 
 
 def scan(api):
-    for provider in api.musicdl.PROVIDERS:
-        for path in sorted((api.musicdl.QUEUE_ROOT / 'failed' / provider).glob('*.json'), reverse=True):
+    for provider in api.download_engine.PROVIDERS:
+        for path in sorted((api.download_engine.QUEUE_ROOT / 'failed' / provider).glob('*.json'), reverse=True):
             try:
                 retry(api, path)
             except (OSError, ValueError, KeyError, TypeError):

@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 from catalog_matcher import Catalog, match_collection, direct_target, match_album
 
 
@@ -51,8 +51,8 @@ class AtmosDownloadTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(Catalog, 'track', return_value=AtmosFallbackTests.atmos), \
              mock.patch.object(Catalog, 'search_tracks', return_value=[AtmosFallbackTests.replacement]):
             job = webapp.enqueue_import_track({'user_id': user['id']}, AtmosFallbackTests.atmos)
-        self.assertTrue((musicdl.QUEUE_ROOT / 'pending' / 'beatport' / (job + '.json')).exists())
-        self.assertEqual(list((musicdl.QUEUE_ROOT / 'pending' / 'tiddl').glob('*.json')), [])
+        self.assertTrue((download_engine.QUEUE_ROOT / 'pending' / 'beatport' / (job + '.json')).exists())
+        self.assertEqual(list((download_engine.QUEUE_ROOT / 'pending' / 'tiddl').glob('*.json')), [])
 
     async def test_download_enqueues_replacement_not_atmos(self):
         request = fixtures.FakeRequest({'provider': 'tiddl', 'url': AtmosFallbackTests.atmos['source_url']},
@@ -61,5 +61,5 @@ class AtmosDownloadTests(unittest.IsolatedAsyncioTestCase):
              mock.patch.object(Catalog, 'search_tracks', return_value=[AtmosFallbackTests.replacement]):
             response = await webapp.api_middleware(request, webapp.download_handler)
         self.assertEqual(response.status, 202, response.text)
-        self.assertEqual(len(list((musicdl.QUEUE_ROOT / 'pending' / 'beatport').glob('*.json'))), 1)
-        self.assertEqual(list((musicdl.QUEUE_ROOT / 'pending' / 'tiddl').glob('*.json')), [])
+        self.assertEqual(len(list((download_engine.QUEUE_ROOT / 'pending' / 'beatport').glob('*.json'))), 1)
+        self.assertEqual(list((download_engine.QUEUE_ROOT / 'pending' / 'tiddl').glob('*.json')), [])

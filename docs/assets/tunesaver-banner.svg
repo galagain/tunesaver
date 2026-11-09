@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-labelledby="title desc">
+<title id="title">TuneSaver</title><desc id="desc">Votre musique. Un seul endroit. Mac, terminal, web et Docker.</desc>
+<rect width="1280" height="440" rx="28" fill="#161b19"/>
+<circle cx="1190" cy="50" r="280" fill="#1b2923"/>
+<circle cx="1190" cy="50" r="210" fill="none" stroke="#2a4236"/>
+<circle cx="1190" cy="50" r="140" fill="none" stroke="#2a4236"/>
+<circle cx="1190" cy="50" r="70" fill="none" stroke="#2a4236"/>
+<g transform="translate(70 70) scale(.88)" fill="#67e5b0">  <path d="M8 35C8 19 19 9 34 9H94C109 9 120 19 120 35C115 26 108 22 97 22H31C20 22 13 26 8 35Z"/>
+  <path d="M30 34H98C111 34 120 42 120 54C120 66 111 74 98 74H82C67 74 58 83 58 98V112C58 120 46 120 46 112V98C46 76 61 62 82 62H98C104 62 108 59 108 54C108 49 104 46 98 46H30C20 46 13 50 10 58C5 45 14 34 30 34Z"/>
+  <path d="M52 46H70C48 57 37 75 37 98V119C27 119 25 112 25 103V96C25 74 36 56 52 46Z"/>
+</g>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="207" y="148" font-size="68" font-weight="700" letter-spacing="-3" fill="#f2f6f3">TuneSaver</text>
+<text x="76" y="243" font-size="35" font-weight="500" fill="#f2f6f3">Votre musique. Un seul endroit.</text>
+<text x="78" y="285" font-size="20" fill="#a4b6ac">Télécharger · Écouter · Organiser</text>
+<path d="M78 325H1202" stroke="#34423a"/>
+<text x="78" y="376" font-size="16" letter-spacing="2" fill="#67e5b0">MAC / TERMINAL / WEB / DOCKER</text>
+<text x="1202" y="376" text-anchor="end" font-size="15" fill="#a4b6ac">TIDAL · Beatport · Qobuz</text>
+</g></svg>

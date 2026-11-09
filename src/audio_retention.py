@@ -8,7 +8,7 @@ import shutil
 import time
 import uuid
 
-import musicdl
+import download_engine
 
 RETENTION_SECONDS = 7 * 24 * 60 * 60
 
@@ -24,9 +24,9 @@ def finished_at(job):
 def job_directory(job):
     owner = str(uuid.UUID(job['owner_id']))
     identifier = job['id']
-    if not musicdl.JOB_ID_RE.fullmatch(identifier):
+    if not download_engine.JOB_ID_RE.fullmatch(identifier):
         raise ValueError('Invalid job ID')
-    root = musicdl.DELIVERY_ROOT.resolve()
+    root = download_engine.DELIVERY_ROOT.resolve()
     parent = root / owner
     directory = parent / identifier
     if parent.is_symlink() or directory.is_symlink() or not directory.resolve().is_relative_to(root):
@@ -50,11 +50,11 @@ def history(job):
 def expire(api, now=None):
     now = time.time() if now is None else now
     removed = 0
-    for provider in musicdl.PROVIDERS:
-        for path in (musicdl.QUEUE_ROOT / 'done' / provider).glob('*.json'):
+    for provider in download_engine.PROVIDERS:
+        for path in (download_engine.QUEUE_ROOT / 'done' / provider).glob('*.json'):
             try:
-                with musicdl.provider_lock(provider, 'enqueue'):
-                    job = musicdl.load_job(path, expected_provider=provider)
+                with download_engine.provider_lock(provider, 'enqueue'):
+                    job = download_engine.load_job(path, expected_provider=provider)
                     end = finished_at(job)
                     if (job.get('ephemeral') is not True or end is None or now - end <= RETENTION_SECONDS
                             or job.get('delivery_expired_at') and not job.get('retention_pending')):
@@ -64,16 +64,16 @@ def expire(api, now=None):
                         continue
                     # Save source metadata before deleting any bytes, including after a crash.
                     api.local_upsert_history(job['owner_id'], [history(job)])
-                    job['delivery_expired_at'] = job.get('delivery_expired_at') or musicdl.utc_now()
+                    job['delivery_expired_at'] = job.get('delivery_expired_at') or download_engine.utc_now()
                     job['retention_pending'] = True
                     job.pop('delivery', None)
                     for key in ('download_ticket_hash', 'download_ticket_expires', 'stream_ticket_hash', 'stream_ticket_expires'):
                         job.pop(key, None)
-                    musicdl.atomic_write_json(path, job)
+                    download_engine.atomic_write_json(path, job)
                     if directory.exists():
                         shutil.rmtree(directory)
                     job.pop('retention_pending', None)
-                    musicdl.atomic_write_json(path, job)
+                    download_engine.atomic_write_json(path, job)
                     removed += 1
             except (OSError, ValueError, KeyError, TypeError):
                 api.LOGGER.warning('Audio retention skipped invalid or inaccessible job %s', path.stem)
@@ -81,15 +81,15 @@ def expire(api, now=None):
 
 
 def requeue(api, owner, identifier):
-    if not musicdl.JOB_ID_RE.fullmatch(identifier):
+    if not download_engine.JOB_ID_RE.fullmatch(identifier):
         raise api.PublicError('Morceau introuvable.', status=404)
-    for provider in musicdl.PROVIDERS:
-        with musicdl.provider_lock(provider, 'enqueue'):
+    for provider in download_engine.PROVIDERS:
+        with download_engine.provider_lock(provider, 'enqueue'):
             for state in ('pending', 'running', 'done', 'failed'):
-                path = musicdl.QUEUE_ROOT / state / provider / f'{identifier}.json'
+                path = download_engine.QUEUE_ROOT / state / provider / f'{identifier}.json'
                 if not path.is_file():
                     continue
-                job = musicdl.load_job(path, expected_provider=provider)
+                job = download_engine.load_job(path, expected_provider=provider)
                 if job.get('owner_id') != owner:
                     raise api.PublicError('Morceau introuvable.', status=404)
                 if state in ('pending', 'running') or (state == 'done' and api.delivery_for_job(identifier, owner)):
@@ -97,14 +97,14 @@ def requeue(api, owner, identifier):
                 if not api.worker_is_active(provider):
                     raise api.PublicError('La source de telechargement est arretee.', status=503)
                 for url in job['urls']:
-                    musicdl.validate_url(provider, url)
+                    download_engine.validate_url(provider, url)
                 for key in ('delivery', 'delivery_expired_at', 'retention_pending', 'last_finished_at', 'last_error',
                             'last_exit_code', 'download_ticket_hash', 'download_ticket_expires', 'delivered_at',
                             'fallback_tried', 'fallback_checked_at'):
                     job.pop(key, None)
                 job['attempts'] = 0
-                musicdl.atomic_write_json(path, job)
-                pending = musicdl.QUEUE_ROOT / 'pending' / provider / path.name
+                download_engine.atomic_write_json(path, job)
+                pending = download_engine.QUEUE_ROOT / 'pending' / provider / path.name
                 try:
                     os.replace(path, pending)
                 except OSError as exc:
@@ -112,7 +112,7 @@ def requeue(api, owner, identifier):
                         raise
                     # Docker can bind-mount queue states separately. Workers
                     # share this enqueue lock, so they cannot claim the copy yet.
-                    musicdl.atomic_write_json(pending, job)
+                    download_engine.atomic_write_json(pending, job)
                     path.unlink()
                 with api.local_db() as db:
                     db.execute("update download_history set state='pending', completed_at=null, delivered_at=null where job_id=? and user_id=?",

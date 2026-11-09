@@ -268,7 +268,7 @@ class Catalog:
             url = "https://api.beatport.com/v4/catalog/" + path
         else:
             config = configparser.ConfigParser()
-            with self.web.musicdl.QOBUZ_CONFIG_PATH.open(encoding="utf-8") as handle:
+            with self.web.download_engine.QOBUZ_CONFIG_PATH.open(encoding="utf-8") as handle:
                 config.read_file(handle)
             headers = {"X-App-Id": config["DEFAULT"]["app_id"],
                        "X-User-Auth-Token": config["DEFAULT"]["user_auth_token"]}

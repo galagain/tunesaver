@@ -17,7 +17,7 @@ class LocalSession:
         self.lifecycle = None
 
     def __enter__(self):
-        import musicdl
+        import download_engine
         self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lifecycle = (self.data / ".session.lifecycle.lock").open("a+b")
         fcntl.flock(self.lifecycle, fcntl.LOCK_EX)
@@ -36,10 +36,10 @@ class LocalSession:
                             fcntl.flock(legacy, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError:
                             raise RuntimeError("Ferme l’ancienne version de TuneSaver avant d’utiliser la commande terminal.") from None
-                shutil.rmtree(musicdl.STATE_ROOT, ignore_errors=True)
-                musicdl.SECRETS_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
-                musicdl.ensure_layout()
-                musicdl.sync_tiddl_config(musicdl.TIDDL_DOWNLOAD_DIR)
+                shutil.rmtree(download_engine.STATE_ROOT, ignore_errors=True)
+                download_engine.SECRETS_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+                download_engine.ensure_layout()
+                download_engine.sync_tiddl_config(download_engine.TIDDL_DOWNLOAD_DIR)
                 self.initialize()
             fcntl.flock(self.users, fcntl.LOCK_SH)
             return self
@@ -54,7 +54,7 @@ class LocalSession:
                 fcntl.flock(self.lifecycle, fcntl.LOCK_UN)
 
     def __exit__(self, *exc):
-        import musicdl
+        import download_engine
         fcntl.flock(self.lifecycle, fcntl.LOCK_EX)
         try:
             fcntl.flock(self.users, fcntl.LOCK_UN)
@@ -62,7 +62,7 @@ class LocalSession:
                 fcntl.flock(self.users, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return
-            shutil.rmtree(musicdl.STATE_ROOT, ignore_errors=True)
+            shutil.rmtree(download_engine.STATE_ROOT, ignore_errors=True)
         finally:
             self.users.close()
             self.lifecycle.close()

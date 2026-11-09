@@ -293,7 +293,7 @@
                 <h2 id="admin-users-title">Comptes</h2>
                 <span id="admin-users-count" class="result-count"></span>
               </header>
-              <div id="admin-users" class="admin-users"></div>
+              <div id="admin-users" tabindex="0" role="region" aria-label="Comptes" class="admin-users"></div>
             </section>
 
             <section class="admin-panel" aria-labelledby="admin-history-title">
@@ -302,11 +302,20 @@
                 <select id="admin-history-filter" aria-label="Filtrer les sons du compte"><option value="">Tous</option><option value="failed">Échecs</option></select>
                 <span id="admin-history-count" class="result-count"></span>
               </header>
-              <div id="admin-history" class="admin-history">
+              <div id="admin-history" tabindex="0" role="region" aria-label="Morceaux du compte" class="admin-history">
                 <p class="empty-copy">Sélectionne un compte.</p>
               </div>
             </section>
           </div>
+          <section class="admin-panel" aria-labelledby="global-catalog-title">
+            <header class="admin-panel-header"><h2 id="global-catalog-title">Catalogue global</h2>
+              <span id="global-catalog-count" class="result-count"></span>
+              <button id="global-catalog-export" type="button">Exporter JSON</button>
+            </header>
+            <div id="global-catalog-tracks" tabindex="0" role="region" aria-label="Catalogue global" class="admin-history"></div>
+            <button id="global-catalog-more" type="button" hidden>Afficher la suite</button>
+            <p id="global-catalog-message" role="status"></p>
+          </section>
           <section class="admin-panel feedback-admin-panel">
             <header class="admin-panel-header"><h2>Retours &amp; bugs</h2>
               <button id="feedback-admin-open" class="feedback-open" type="button"><span data-ui-icon="Flag"></span>Voir les retours <span class="feedback-badge" hidden></span></button>

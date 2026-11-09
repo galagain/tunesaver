@@ -1,6 +1,6 @@
 import unittest
 import test_webapp as fixtures
-from test_webapp import webapp, musicdl
+from test_webapp import webapp, download_engine
 
 
 class LibraryResetTests(unittest.IsolatedAsyncioTestCase):
@@ -14,10 +14,10 @@ class LibraryResetTests(unittest.IsolatedAsyncioTestCase):
         for user in (owner, other):
             playlist = webapp.local_create_playlist(user, 'Keep or reset')
             for state in ('pending', 'failed', 'done'):
-                job = musicdl.enqueue('qobuz', ['https://play.qobuz.com/track/123'], owner_id=user, ephemeral=True)
-                path = musicdl.QUEUE_ROOT / 'pending' / 'qobuz' / (job + '.json')
-                path.rename(musicdl.QUEUE_ROOT / state / 'qobuz' / path.name)
-                content = musicdl.DELIVERY_ROOT / user / job / 'content'
+                job = download_engine.enqueue('qobuz', ['https://play.qobuz.com/track/123'], owner_id=user, ephemeral=True)
+                path = download_engine.QUEUE_ROOT / 'pending' / 'qobuz' / (job + '.json')
+                path.rename(download_engine.QUEUE_ROOT / state / 'qobuz' / path.name)
+                content = download_engine.DELIVERY_ROOT / user / job / 'content'
                 content.mkdir(parents=True)
                 (content / 'test.flac').write_bytes(b'audio')
                 webapp.local_upsert_history(user, [{'job_id': job, 'provider': 'qobuz', 'state': state}])

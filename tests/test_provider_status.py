@@ -32,7 +32,7 @@ class ProviderProbeTests(unittest.TestCase):
     def test_qobuz_entitlements_and_secret_safe_errors(self):
         config = configparser.ConfigParser()
         config["DEFAULT"] = {"user_id": "fixture", "user_auth_token": "do-not-leak", "app_id": "test"}
-        with mock.patch.object(webapp.musicdl, "read_qobuz_config", return_value=config):
+        with mock.patch.object(webapp.download_engine, "read_qobuz_config", return_value=config):
             for payload, expected in [
                 ({"user": {"credential": {"parameters": {"short_label": "Studio"}}}}, "active"),
                 ({"user": {"credential": {}}}, "inactive"), ({}, "unknown"),
@@ -59,7 +59,7 @@ class ProviderProbeTests(unittest.TestCase):
 class ProviderStatusCacheTests(unittest.IsolatedAsyncioTestCase):
     async def test_nonblocking_shared_cache_expiry_and_worker_stop(self):
         app = {webapp.STATUS_CACHE_KEY: {}}
-        workers = {p: True for p in webapp.musicdl.PROVIDERS}
+        workers = {p: True for p in webapp.download_engine.PROVIDERS}
         with mock.patch.object(webapp, "probe_provider_connection", return_value={"state": "active", "message": "Verified"}) as probe:
             first = await webapp.provider_statuses(app, workers)
             self.assertTrue(all(v["state"] == "loading" for v in first.values()))

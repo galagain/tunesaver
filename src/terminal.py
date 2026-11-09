@@ -18,7 +18,7 @@ from tunesaver_version import VERSION
 
 NAMES = {"tiddl": "TIDAL", "beatport": "Beatport", "qobuz": "Qobuz"}
 ALIASES = {"tidal": "tiddl", "tiddl": "tiddl", "beatport": "beatport", "qobuz": "qobuz"}
-COMMANDS = {"download", "search", "login", "logout", "status", "install"}
+COMMANDS = {"download", "search", "login", "logout", "status", "install", "sync"}
 
 
 def normalize_argv(argv):
@@ -55,18 +55,22 @@ def build_parser():
     search.add_argument("-o", "--output", type=Path, default=Path.home() / "Music/TuneSaver")
     for name, help_text in (("login", "Connecter son propre compte"), ("logout", "Déconnecter un compte de ce Mac")):
         command = commands.add_parser(name, help=help_text)
-        command.add_argument("provider", choices=ALIASES)
+        command.add_argument("provider", choices=ALIASES, nargs="?" if name == "login" else None)
+        if name == "login": command.add_argument("--web", action="store_true", help="Se connecter depuis le navigateur")
     commands.add_parser("status", help="Afficher les comptes connectés, sans révéler leurs identifiants")
+    sync = commands.add_parser("sync", help="Synchroniser les titres, artistes et liens avec le catalogue global")
+    sync.add_argument("--import-file", type=Path, help="Fichier de connexions exporté depuis TuneSaver")
     install = commands.add_parser("install", help="Installer cette commande dans le PATH, sans sudo")
     install.add_argument("--bin-dir", type=Path)
+    install.add_argument("--configure-shell", action="store_true")
     return parser
 
 
 def detect_provider(value):
-    import musicdl
+    import download_engine
     for provider in NAMES:
         try:
-            return provider, musicdl.validate_url(provider, value)
+            return provider, download_engine.validate_url(provider, value)
         except ValueError:
             continue
     raise ValueError("Lien non pris en charge. Utilise un lien HTTPS TIDAL, Beatport ou Qobuz, ou « tunesaver search artiste titre ».")
@@ -147,7 +151,7 @@ def download(accounts, values, output):
             groups[provider].append(url)
     output = output.expanduser().resolve()
     failed = False
-    for provider, urls in groups.items():
+    for provider, urls in [(p, [url]) for p, values in groups.items() for url in values]:
         if not accounts.connected(provider):
             command_name = "tidal" if provider == "tiddl" else provider
             if sys.stdin.isatty():
@@ -170,6 +174,7 @@ def download(accounts, values, output):
                 if not accounts.connected(provider):
                     raise RuntimeError("Le compte vient d’être déconnecté. Relance tunesaver login.")
                 try:
+                    before = {str(p): p.stat().st_mtime_ns for p in output.rglob("*") if p.is_file()}
                     code = accounts.music._run_provider_unlocked(provider, urls, log, output_dir=output)
                 finally:
                     accounts.persist(provider)
@@ -177,6 +182,12 @@ def download(accounts, values, output):
                 failed = True
                 print(f"Échec {NAMES[provider]}. Diagnostic local : {log}", file=sys.stderr)
             else:
+                import catalog_sync
+                paths = [p for p in output.rglob("*") if p.is_file() and p.suffix.lower() in accounts.music.AUDIO_EXTENSIONS and before.get(str(p)) != p.stat().st_mtime_ns]
+                # One source at a time preserves the exact originating link.
+                source = urls[0] if urls[0].startswith("https://") else "https://tidal.com/" + urls[0]
+                catalog_sync.enqueue(accounts.data, catalog_sync.audio_rows(paths, provider, source))
+                accounts.sync_catalog()
                 print(f"Téléchargement terminé : {output}")
         except RuntimeError:
             print(f"{NAMES[provider]} est occupé ou sa connexion est indisponible. Réessaie après l’opération en cours.", file=sys.stderr)
@@ -252,11 +263,26 @@ def run(args, *, vault=None):
     with LocalSession(data, accounts.restore, terminal=True):
         if accounts.storage_error:
             print(accounts.storage_error, file=sys.stderr)
+        if args.command == "sync":
+            import catalog_sync
+            if args.import_file:
+                config = catalog_sync.valid_config(json.loads(args.import_file.read_text())["sync"])
+                accounts.vault.set("catalog_sync", config)
+            accounts.sync_catalog()
+            print(json.dumps(accounts.sync_status, ensure_ascii=False))
+            return 1 if accounts.sync_status.get("error") else 0
+        accounts.sync_catalog()
         if args.command == "status":
             for provider, name in NAMES.items():
                 print(f"{name}: {'connecté' if accounts.connected(provider) else 'non connecté'}")
             return 0
         if args.command == "login":
+            if args.web or not args.provider:
+                import web_login
+                result = accounts.import_bundle(web_login.login())
+                accounts.sync_catalog()
+                print(f"Connexion terminée : {len(result['imported'])} compte(s) importé(s), {len(result['skipped'])} déjà connecté(s).")
+                return 0
             return login(accounts, ALIASES[args.provider])
         if args.command == "logout":
             return logout(accounts, ALIASES[args.provider])
@@ -272,6 +298,8 @@ def main(argv=None):
     args = parser.parse_args(normalize_argv(sys.argv[1:] if argv is None else argv))
     if args.command == "install":
         command = [sys.executable, "-B", str(args.resources / "install_cli.py"), "--resources", str(args.resources)]
+        if args.configure_shell:
+            command.append("--configure-shell")
         if args.bin_dir:
             command.extend(["--bin-dir", str(args.bin_dir)])
         return subprocess.call(command)

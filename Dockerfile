@@ -59,8 +59,8 @@ RUN mkdir -p /out/qobuz-dl \
         --strip-components=1 --directory=/out/qobuz-dl \
     && rm /tmp/qobuz-dl.tar.gz
 
-RUN mkdir -p /src/cmd/musicdl-search
-COPY src/beatport_search.go /src/cmd/musicdl-search/main.go
+RUN mkdir -p /src/cmd/tunesaver-search
+COPY src/beatport_search.go /src/cmd/tunesaver-search/main.go
 
 RUN CGO_ENABLED=1 CGO_LDFLAGS="-lstdc++" go test -mod=vendor ./...
 RUN CGO_ENABLED=1 go build \
@@ -75,7 +75,7 @@ RUN CGO_ENABLED=0 go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/beatport-search \
-    ./cmd/musicdl-search
+    ./cmd/tunesaver-search
 
 
 FROM python:3.13.15-slim-trixie AS runtime
@@ -114,7 +114,7 @@ COPY --from=beatport-builder /out/beatport-search /usr/local/bin/beatport-search
 COPY --from=beatport-builder /src/LICENSE /usr/share/licenses/beatportdl/LICENSE
 COPY --from=beatport-builder /out/qobuz-dl /opt/qobuz-dl
 COPY --from=beatport-builder /out/qobuz-dl/LICENSE /usr/share/licenses/qobuz-dl/LICENSE
-COPY src/musicdl.py /app/musicdl.py
+COPY src/download_engine.py /app/download_engine.py
 COPY src/webapp.py src/database.py /app/
 COPY migrations /app/migrations
 COPY tools/migrate_postgres.py /app/migrate_postgres.py
@@ -158,9 +158,9 @@ RUN mkdir -p \
 
 ENV BEATPORTDL_COMMIT=${BEATPORTDL_COMMIT} \
     HOME=/state/home \
-    MUSICDL_CONFIG_DIR=/config \
-    MUSICDL_QUEUE_DIR=/queue \
-    MUSICDL_STATE_DIR=/state \
+    TUNESAVER_CONFIG_DIR=/config \
+    TUNESAVER_QUEUE_DIR=/queue \
+    TUNESAVER_STATE_DIR=/state \
     PYTHONPATH=/opt/qobuz-dl \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -170,7 +170,16 @@ ENV BEATPORTDL_COMMIT=${BEATPORTDL_COMMIT} \
     XDG_CONFIG_HOME=/state \
     XDG_STATE_HOME=/state
 
-ENTRYPOINT ["python", "/app/musicdl.py"]
+ENTRYPOINT ["tunesaver"]
 CMD ["worker", "tiddl"]
 
 COPY src/account_transfer.py /app/
+
+COPY src/catalog_sync.py /app/
+
+COPY src/cli.py src/tunesaver_version.py /app/
+COPY scripts/container-entrypoint /usr/local/bin/tunesaver
+
+COPY src/device_login.py /app/
+
+COPY src/service_cli.py src/server_setup.py src/web_login.py /app/

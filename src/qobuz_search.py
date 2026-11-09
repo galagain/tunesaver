@@ -12,7 +12,7 @@ from pathlib import Path
 import playlist_sources
 
 
-PREFIX = "MUSICDL_JSON:"
+PREFIX = "TUNESAVER_JSON:"
 
 
 def main() -> int:
@@ -22,7 +22,7 @@ def main() -> int:
         return 2
     config_path = Path(
         os.environ.get(
-            "MUSICDL_QOBUZ_CONFIG",
+            "TUNESAVER_QOBUZ_CONFIG",
             "/state/qobuz/.config/qobuz-dl/config.ini",
         )
     )
