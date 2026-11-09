@@ -28,6 +28,20 @@ non exposes aux utilisateurs du site.
 
 ## Deploiement applicatif
 
+### Repli apres un echec de telechargement
+
+Le serveur web examine toutes les dix secondes les echecs des dernieres 24 heures.
+Pour un morceau individuel d'un utilisateur approuve, une qualite indisponible ou
+la reponse JSON invalide observee chez TIDAL declenche une recherche sur les autres
+plateformes actives. Les plateformes deja essayees sont exclues. La version et la
+duree sont comparees aux metadonnees du morceau initial, meme apres plusieurs replis.
+L'identifiant, le proprietaire et les appartenances aux playlists sont conserves.
+Les raisons et liens des tentatives precedentes restent dans le fichier de tache.
+Une recherche sans remplacement est marquee comme traitee pour eviter une boucle.
+Les erreurs de disque et les autres erreurs non reconnues ne sont pas relancees.
+Les qualites configurees de chaque plateforme restent inchangees : ce mecanisme
+ne garantit pas une qualite lossless sur la plateforme de remplacement.
+
 Le Dockerfile principal inclut tous les nouveaux modules. Sur le serveur ayant
 deja l'image `tunesaver:appsilo`, la variante suivante reutilise son environnement :
 

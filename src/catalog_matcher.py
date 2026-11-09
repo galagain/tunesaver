@@ -128,7 +128,7 @@ def queries(track):
     return list(unique.values())
 
 
-def match_collection(collection, catalog, progress=None, on_event=None, max_tracks=0):
+def match_collection(collection, catalog, progress=None, on_event=None, max_tracks=0, excluded_providers=()):
     if (collection.get("provider") == "soundcloud"
             or urlparse(collection.get("source", "")).hostname in {"soundcloud.com", "www.soundcloud.com"}):
         collection = {**collection, "tracks": [sources.normalize_soundcloud_track(t) for t in collection["tracks"]]}
@@ -149,7 +149,7 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
     album_attempts = []
     for row in rows:
         target = direct_target(row["input"])
-        if target:
+        if target and target['provider'] not in excluded_providers:
             row.update(status="matched", match={**row["input"], "provider": target["provider"],
                                                "source_url": target["url"], "download_url": target["url"],
                                                "method": "direct"})
@@ -157,6 +157,8 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
         elif row["status"] == "unavailable":
             update(row, final=True)
     for provider in PROVIDERS:
+        if provider in excluded_providers:
+            continue
         pending = [row for row in rows if row["match"] is None and row["status"] != "unavailable"
                    and not (provider == 'tidal' and is_atmos(row['input']))]
         if not pending:

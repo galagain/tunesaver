@@ -3887,6 +3887,8 @@ def create_app() -> web.Application:
     app[PLAYLIST_ZIP_LOCK_KEY] = asyncio.Lock()
     app.cleanup_ctx.append(playlist_import_context)
     app.cleanup_ctx.append(audio_retention_context)
+    import download_fallback
+    app.cleanup_ctx.append(lambda app: download_fallback.context(sys.modules[__name__]))
     app.cleanup_ctx.append(provider_status_context)
     mixer_analysis.register(app, local_db, delivery_for_job, PublicError)
     feedback.register(app, local_db, read_json_object, PublicError)
