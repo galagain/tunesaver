@@ -213,6 +213,7 @@ vos données et configurations avant une mise à jour.
 | --- | --- |
 | [Mac et terminal](docs/macos.md) | Installation, construction et données locales |
 | [Serveur Docker](docs/server.md) | Configuration, commandes et exploitation |
+| [Téléchargements en parallèle](docs/parallel-downloads.md) | Limites actuelles, files et différences entre versions |
 | [PostgreSQL](docs/postgres.md) | Base autonome, migration et sauvegardes |
 | [Connexion des appareils](docs/account-transfer.md) | Autorisation web et import manuel |
 | [Catalogue global](docs/catalog-sync.md) | Synchronisation des métadonnées |
