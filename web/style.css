@@ -2521,6 +2521,16 @@ body.file-drop-active::after { content: ''; position: fixed; inset: 5px; z-index
 .search-sources .search-flow-divider { justify-content: center; margin: 12px 0 18px; color: #68dfb4; }
 .search-sources .search-flow-divider::before, .search-sources .search-flow-divider::after { display: none; }
 .search-sources .search-flow-divider svg { width: 76px; height: 76px; stroke-width: 1.5; }
+.search-sources .search-flow-divider > span { animation: search-transfer 2.4s ease-in-out infinite; }
+@keyframes search-transfer {
+  0%, 100% { transform: translateY(-5px); opacity: .45; }
+  45% { opacity: 1; }
+  65% { transform: translateY(5px); opacity: 1; }
+  85% { transform: translateY(5px); opacity: .45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-sources .search-flow-divider > span { animation: none; }
+}
 .search-sources .search-output { display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 0; border: 0; text-align: center; }
 .search-sources .search-output h2 { margin: 0; font-size: 22px; }
 .search-sources .search-output h2 span { display: block; margin: 0; font-size: 12px; line-height: 22px; }

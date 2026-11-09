@@ -16,6 +16,13 @@ const { chromium, expect } = require('@playwright/test');
       await expect(guide.locator('summary')).toHaveCount(0);
       await expect(guide.locator('.search-source')).toHaveCount(6);
       await expect(guide.locator('.search-flow-divider svg')).toBeVisible();
+      const arrow = guide.locator('.search-flow-divider > span');
+      expect(await arrow.evaluate(el => getComputedStyle(el).animationName)).toBe('search-transfer');
+      const firstPosition = await arrow.evaluate(el => getComputedStyle(el).transform);
+      await page.waitForTimeout(400);
+      expect(await arrow.evaluate(el => getComputedStyle(el).transform)).not.toBe(firstPosition);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      expect(await arrow.evaluate(el => getComputedStyle(el).animationName)).toBe('none');
       await page.evaluate(() => { document.querySelector('#results-section').hidden = false; });
       await expect(guide).toBeVisible();
       await page.evaluate(() => {
