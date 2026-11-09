@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="docs/assets/tunesaver-banner.svg" alt="TuneSaver — votre musique, un seul endroit" width="100%">
+  <img src="web/tunesaver.svg" alt="Logo TuneSaver" width="112" height="112">
 </p>
+
+<h1 align="center">TuneSaver</h1>
 
 <p align="center">
   Une application Mac, une commande terminal et une interface web<br>
