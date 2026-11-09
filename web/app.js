@@ -1409,6 +1409,7 @@ function collectionRowLabel(button, name, count) {
 }
 
 const downloadingCollections = new Set();
+const retryingCollections = new Set();
 
 document.querySelector('#collection-download').addEventListener('click', async () => {
   const id = selectedPlaylistId;
@@ -1454,6 +1455,25 @@ function renderCollectionActions() {
   renameSlot.append(makeRenameButton(item, collection));
   const exportButton = makeCollectionExportButton(item, collection);
   actions.append(exportButton);
+  if (collection === 'playlists') {
+    const retry = document.createElement('button'); retry.type = 'button';
+    retry.className = 'collection-retry';
+    retry.title = 'Relancer les erreurs et les fichiers absents';
+    retry.setAttribute('aria-label', retry.title);
+    retry.disabled = retryingCollections.has(item.id) || Boolean(importing && ['pending', 'running'].includes(importing.state));
+    appendUIIcon(retry, 'RefreshCw');
+    retry.addEventListener('click', async () => {
+      retryingCollections.add(item.id); renderCollectionActions();
+      try {
+        const result = await requestJson(`/api/playlists/${item.id}/redownload`, {method: 'POST', body: '{}'});
+        showToast(`${result.queued} téléchargement(s) relancé(s), ${result.matching} correspondance(s) à rechercher.${result.errors.length ? ` ${result.errors.length} son(s) non relancé(s).` : ''}`);
+        importPreviews.clear();
+        await refreshLibrary(); await refreshQueue();
+      } catch (error) { showToast(error.message, 'error'); }
+      finally { retryingCollections.delete(item.id); renderCollectionActions(); }
+    });
+    actions.append(retry);
+  }
   if (collection === 'playlists') {
     if (importing?.state === 'ready') {
       const label = document.createElement('label'); label.textContent = 'Titres (0 = tous)';
@@ -1768,17 +1788,18 @@ function renderLibrary() {
       const statusButton = makeTrackStatus(stateLabels[track.state || 'pending'] || 'En file', track.error || '');
       statusButton.classList.add(track.state || 'pending');
       actions.append(statusButton);
-    } else if (track.expired) {
+    }
+    if (track.expired || track.state === 'failed') {
       const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'restore-audio';
       restore.title = 'Retélécharger depuis la plateforme'; restore.setAttribute('aria-label', `Retélécharger ${track.title || 'ce son'}`);
-      appendUIIcon(restore, 'Download');
+      appendUIIcon(restore, track.state === 'failed' ? 'RefreshCw' : 'Download');
       restore.addEventListener('click', async () => {
         restore.disabled = true;
         try { await requestJson(`/api/library/${track.job_id}/redownload`, {method: 'POST', body: '{}'}); await refreshQueue(); }
         catch (error) { showToast(error.message, 'error'); restore.disabled = false; }
       });
       actions.append(restore);
-    } else {
+    } else if (!track.is_live) {
       const download = document.createElement("button");
       download.className = "history-download";
       download.type = "button";

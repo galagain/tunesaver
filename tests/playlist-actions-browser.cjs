@@ -5,7 +5,7 @@ const { chromium, expect } = require('@playwright/test');
   try {
     for (const width of [1440, 390]) {
       const page = await browser.newPage({ viewport: { width, height: 900 } });
-      const errors = [], removals = [];
+      const errors = [], removals = [], retries = [];
       const tracks = [
         { job_id: 'ready', title: 'Ready song', artist: 'Artist', provider: 'tiddl', state: 'done', streamable: true },
         { job_id: 'failed', title: 'Failed song', artist: 'Artist', provider: 'qobuz', state: 'failed' },
@@ -19,6 +19,14 @@ const { chromium, expect } = require('@playwright/test');
         if (path === '/api/library') return route.fulfill({ json: library });
         if (path === '/api/status') return route.fulfill({ json: { active: {}, counts: {}, recent: [] } });
         if (path === '/api/history') return route.fulfill({ json: { history: [] } });
+        if (path === '/api/playlists/p/redownload') {
+          retries.push(path);
+          return route.fulfill({status: 202, json: {queued: 1, unchanged: 1, matching: 0, errors: []}});
+        }
+        if (path === '/api/library/failed/redownload') {
+          retries.push(path);
+          return route.fulfill({status: 202, json: {job_id: 'failed', duplicate: false}});
+        }
         if (path === '/api/playlists/p/tracks/failed' && route.request().method() === 'DELETE') {
           removals.push(path); library.playlists[0].track_ids = ['ready'];
           return route.fulfill({ json: { removed: true } });
@@ -35,6 +43,11 @@ const { chromium, expect } = require('@playwright/test');
       await expect(page.locator('#collection-rename .collection-rename')).toBeVisible();
       await expect(page.locator('#collection-actions .collection-export')).toBeVisible();
       await expect(page.locator('#collection-actions .collection-delete')).toBeVisible();
+      await page.locator('#collection-actions .collection-retry').click();
+      await expect.poll(() => retries.length).toBe(1);
+      await expect(page.locator('#collection-actions .collection-retry')).toBeEnabled();
+      await page.getByRole('button', {name: 'Retélécharger Failed song', exact: true}).click();
+      await expect.poll(() => retries.length).toBe(2);
       await expect(page.getByLabel('Déplacer la playlist dans un dossier')).toHaveCount(0);
       await page.locator('#collection-rename .collection-rename').click();
       await expect(page.locator('#action-dialog-input')).toHaveValue('Set');

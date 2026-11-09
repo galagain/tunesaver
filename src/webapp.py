@@ -3387,6 +3387,50 @@ async def library_redownload_handler(request: web.Request) -> web.Response:
     return web.json_response(result, status=200 if result['duplicate'] else 202)
 
 
+def retry_playlist(user_id: str, playlist_id: str, *, errors_only: bool = False) -> dict[str, Any]:
+    import audio_retention
+    with local_db() as db:
+        if not local_playlist_has_owner(db, playlist_id, user_id):
+            raise PublicError('Playlist introuvable.', status=404)
+        identifiers = [r['job_id'] for r in db.execute(
+            'select job_id from playlist_items where playlist_id=? order by created_at,rowid', (playlist_id,))]
+    result = {'queued': 0, 'unchanged': 0, 'matching': 0, 'errors': []}
+    for identifier in identifiers:
+        if errors_only and not any((musicdl.QUEUE_ROOT / 'failed' / p / f'{identifier}.json').is_file()
+                                   for p in musicdl.PROVIDERS):
+            continue
+        try:
+            job = audio_retention.requeue(sys.modules[__name__], user_id, identifier)
+            result['unchanged' if job['duplicate'] else 'queued'] += 1
+        except PublicError as exc:
+            result['errors'].append({'job_id': identifier, 'error': str(exc)})
+    with local_db() as db:
+        if not local_playlist_has_owner(db, playlist_id, user_id):
+            return result
+        for record in db.execute('select id,tracks from playlist_imports where user_id=? and playlist_id=? '
+                                 "and state in ('done','partial','matched','failed')", (user_id, playlist_id)).fetchall():
+            tracks = json.loads(record['tracks'])
+            retry_count = 0
+            for track in tracks:
+                matching = track.get('matching', {})
+                if matching.get('final') and not matching.get('job_id') and (
+                        matching.get('status') != 'matched' or matching.get('error')):
+                    track.pop('matching', None)
+                    retry_count += 1
+            if retry_count:
+                tracks[0].setdefault('_import', {}).update(download=True, auto_download=True)
+                processed = sum(bool(t.get('matching', {}).get('final')) for t in tracks)
+                db.execute("update playlist_imports set state='running',tracks=?,failures='[]',error='',processed=? where id=?",
+                           (json.dumps(tracks), processed, record['id']))
+                result['matching'] += retry_count
+    return result
+
+
+async def playlist_redownload_handler(request: web.Request) -> web.Response:
+    result = await asyncio.to_thread(retry_playlist, request['user']['id'], request.match_info['playlist_id'])
+    return web.json_response(result, status=202)
+
+
 async def audio_retention_context(app):
     import audio_retention
     async with audio_retention.context(sys.modules[__name__]):
@@ -3918,6 +3962,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/playlists", playlist_create_handler)
     app.router.add_get("/api/playlists/{playlist_id}/export", collection_export_handler)
     app.router.add_post("/api/playlists/{playlist_id}/download-ticket", playlist_download_ticket_handler)
+    app.router.add_post("/api/playlists/{playlist_id}/redownload", playlist_redownload_handler)
     app.router.add_get("/api/playlist-files/{token}", playlist_files_handler)
     app.router.add_get("/api/tags/{tag_id}/export", collection_export_handler)
     app.router.add_post("/api/playlist-folders", playlist_folder_handler)

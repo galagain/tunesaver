@@ -98,7 +98,8 @@ def requeue(api, owner, identifier):
                 for url in job['urls']:
                     musicdl.validate_url(provider, url)
                 for key in ('delivery', 'delivery_expired_at', 'retention_pending', 'last_finished_at', 'last_error',
-                            'last_exit_code', 'download_ticket_hash', 'download_ticket_expires', 'delivered_at'):
+                            'last_exit_code', 'download_ticket_hash', 'download_ticket_expires', 'delivered_at',
+                            'fallback_tried', 'fallback_checked_at'):
                     job.pop(key, None)
                 job['attempts'] = 0
                 musicdl.atomic_write_json(path, job)
