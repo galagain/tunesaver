@@ -24,3 +24,7 @@ export const Search = ['svg', searchAttributes, [['circle', { cx: '11', cy: '11'
 export const Download = ['svg', searchAttributes, [['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['polyline', { points: '7 10 12 15 17 10' }], ['line', { x1: '12', x2: '12', y1: '15', y2: '3' }]]];
 export const ExternalLink = ['svg', searchAttributes, [['path', { d: 'M15 3h6v6' }], ['path', { d: 'M10 14 21 3' }], ['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }]]];
 export const ListPlus = ['svg', searchAttributes, [['path', { d: 'M11 12H3' }], ['path', { d: 'M16 6H3' }], ['path', { d: 'M16 18H3' }], ['path', { d: 'M18 9v6' }], ['path', { d: 'M21 12h-6' }]]];
+// Lucide v0.468.0, ISC; see LUCIDE-LICENSE.
+export const ChevronDown = ['svg', searchAttributes, [['path', { d: 'm6 9 6 6 6-6' }]]];
+export const Link = ['svg', searchAttributes, [['path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71' }], ['path', { d: 'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' }]]];
+export const FileText = ['svg', searchAttributes, [['path', { d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z' }], ['path', { d: 'M14 2v4a2 2 0 0 0 2 2h4' }], ['path', { d: 'M10 9H8' }], ['path', { d: 'M16 13H8' }], ['path', { d: 'M16 17H8' }]]];

@@ -41,6 +41,8 @@ import playlist_sources
 LOGGER = logging.getLogger("musicdl.web")
 
 ASSET_ROOT = Path(os.environ.get("MUSICDL_WEB_ASSET_DIR", "/app/web"))
+BRAND_ASSETS = tuple(f'vendor/brands/{name}' for name in (
+    'spotify.svg', 'applemusic.svg', 'soundcloud.svg', 'tidal.svg', 'beatport.svg', 'qobuz.ico'))
 TIDAL_AUTH_PATH = musicdl.STATE_ROOT / "tiddl" / "auth.json"
 BEATPORT_CACHE_PATH = (
     musicdl.STATE_ROOT / "beatportdl" / "beatportdl-credentials.json"
@@ -1396,6 +1398,7 @@ async def api_middleware(
     try:
         _check_local_host(request)
         public_paths = {
+            *(f'/{asset}' for asset in BRAND_ASSETS),
             "/",
             "/app.js",
             "/feedback.js",
@@ -3939,7 +3942,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/style.css", stylesheet_handler)
-    for asset in ("vendor/mixer-icons.js", "vendor/player-icons.js", "tunesaver.svg", "feedback.js"):
+    for asset in ("vendor/mixer-icons.js", "vendor/player-icons.js", "tunesaver.svg", "feedback.js", *BRAND_ASSETS):
         app.router.add_get(f"/{asset}", icon_asset_handler)
     app.router.add_get("/api/health", health_handler)
     app.router.add_get("/api/config", config_handler)
