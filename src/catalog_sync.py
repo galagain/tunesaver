@@ -22,7 +22,7 @@ def clean(row):
         if not isinstance(value, str) or len(value) > limit or '\x00' in value:
             raise ValueError('Métadonnées invalides')
         result[key] = value.strip()
-    if not result['title'] or result['provider'] not in ('tiddl', 'beatport', 'qobuz'):
+    if not result['title'] or not result['artist'] or result['title'].startswith('.stream-') or result['provider'] not in ('tiddl', 'beatport', 'qobuz'):
         raise ValueError('Titre ou plateforme absent')
     parsed = urlparse(result['url'])
     domains = {'tiddl':('tidal.com',), 'beatport':('beatport.com',), 'qobuz':('qobuz.com',)}
@@ -45,6 +45,9 @@ def audio_rows(paths, provider, url):
     from mutagen import File
     rows = []
     for path in paths:
+        path = Path(path)
+        if path.name.startswith('.stream-'):
+            continue
         try:
             tags = File(path, easy=True)
             if tags is None: continue
@@ -98,7 +101,7 @@ def save_server(api, rows):
     rows = [clean(row) for row in rows]
     with api.local_db() as db:
         for row in rows:
-            db.execute('insert into global_catalog (id,title,artist,url,provider,added_at) values (?,?,?,?,?,?) on conflict(id) do nothing', (fingerprint(row),row['title'],row['artist'],row['url'],row['provider'],api.utc_timestamp()))
+            db.execute("insert into global_catalog (id,title,artist,url,provider,added_at) values (?,?,?,?,?,?) on conflict(id) do update set title=excluded.title,artist=excluded.artist,url=excluded.url,provider=excluded.provider where global_catalog.title like '.stream-%' or global_catalog.artist=''", (fingerprint(row),row['title'],row['artist'],row['url'],row['provider'],api.utc_timestamp()))
 
 
 def harvest_server(api):
@@ -108,7 +111,7 @@ def harvest_server(api):
     for provider in music.PROVIDERS:
         for path in (music.QUEUE_ROOT/'done'/provider).glob('*.json'):
             try:
-                stamp = str(path.stat().st_mtime_ns)
+                stamp = 'metadata-v2:' + str(path.stat().st_mtime_ns)
                 if seen.get(path.stem) == stamp: continue
                 job = music.load_job(path, expected_provider=provider)
                 save_server(api, job_rows(music, job))
@@ -134,7 +137,15 @@ def enqueue(data, rows):
     with local_db(data) as db:
         for row in rows:
             row = clean(row)
-            db.execute('insert or ignore into outbox (id,payload) values (?,?)', (fingerprint(row),json.dumps(row)))
+            identifier = fingerprint(row)
+            existing = db.execute('select payload from outbox where id=?', (identifier,)).fetchone()
+            if existing:
+                try:
+                    clean(json.loads(existing[0]))
+                except (ValueError, TypeError):
+                    db.execute('update outbox set payload=?,sent=0 where id=?', (json.dumps(row),identifier))
+            else:
+                db.execute('insert into outbox (id,payload) values (?,?)', (identifier,json.dumps(row)))
 
 
 def harvest_local(data, music):
@@ -143,7 +154,7 @@ def harvest_local(data, music):
     for provider in music.PROVIDERS:
         for path in (music.QUEUE_ROOT/'done'/provider).glob('*.json'):
             try:
-                stamp = str(path.stat().st_mtime_ns)
+                stamp = 'metadata-v2:' + str(path.stat().st_mtime_ns)
                 if seen.get(path.stem) == stamp: continue
                 enqueue(data,job_rows(music,music.load_job(path,expected_provider=provider)))
                 with local_db(data) as db:

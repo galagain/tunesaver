@@ -32,6 +32,13 @@ class CatalogHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await r.json(),[ROW])
         self.assertEqual((await self.client.get('/api/admin/catalog',headers=self.headers)).status,401)
         self.assertEqual((await self.client.post('/api/catalog-sync',json={'tracks':[ROW]})).status,401)
+    async def test_valid_tags_repair_legacy_placeholder(self):
+        with webapp.local_db() as db:
+            db.execute('insert into global_catalog values (?,?,?,?,?,?)',(catalog.fingerprint(ROW),'.stream-123','',ROW['url'],ROW['provider'],webapp.utc_timestamp()))
+        catalog.save_server(webapp,[ROW])
+        r=await self.client.get('/api/admin/catalog/export',headers=self.admin)
+        self.assertEqual(await r.json(),[ROW])
+
     async def test_no_audio_paths_or_arbitrary_urls(self):
         for row in ({**ROW,'audio':'bytes'},{**ROW,'path':'/private/music'}, {**ROW,'url':'file:///private'}, {**ROW,'url':'https://evil.example/track'}):
             r=await self.client.post('/api/catalog-sync',headers=self.headers,json={'tracks':[row]})
@@ -62,6 +69,26 @@ class OutboxTests(unittest.TestCase):
     def test_album_identity_ignores_database_fields(self):
         row = {**ROW, "url":"https://tidal.com/album/123"}
         self.assertEqual(catalog.fingerprint(row), catalog.fingerprint({**row,"id":"old","added_at":"date"}))
+
+    def test_playback_copies_never_override_real_track_tags(self):
+        with mock.patch('mutagen.File', return_value={'title':['Real track'],'artist':['Artist']}) as read:
+            rows=catalog.audio_rows([Path('.stream-123-456.flac'),Path('original.flac')], 'tiddl',ROW['url'])
+        self.assertEqual(rows,[{**ROW,'title':'Real track'}])
+        read.assert_called_once_with(Path('original.flac'),easy=True)
+
+    def test_missing_artist_and_stream_placeholder_are_rejected(self):
+        for row in ({**ROW,'artist':''},{**ROW,'title':'.stream-123-456'}):
+            with self.assertRaises(ValueError):catalog.clean(row)
+
+    def test_legacy_outbox_metadata_is_repaired_and_resent(self):
+        with tempfile.TemporaryDirectory() as data:
+            with catalog.local_db(data) as db:
+                db.execute('insert into outbox values (?,?,1)',(catalog.fingerprint(ROW),json.dumps({**ROW,'title':'.stream-123','artist':''})))
+            catalog.enqueue(data,[ROW])
+            with catalog.local_db(data) as db:
+                payload,sent=db.execute('select payload,sent from outbox').fetchone()
+            self.assertEqual(json.loads(payload),ROW)
+            self.assertEqual(sent,0)
 
     def test_reject_other_destination(self):
         with self.assertRaises(ValueError):catalog.valid_config({'server':'https://evil.example','token':'x'*40})
