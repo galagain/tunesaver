@@ -66,6 +66,24 @@ def direct_target(track):
 
 
 def match_track(track, candidates):
+    # An API-provided ISRC identifies the recording across release/tag variants.
+    reference_isrc = str(track.get('isrc') or '').strip().upper()
+    reference_duration = sources.matching_duration(track.get('duration'))
+    if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{3}[0-9]{7}', reference_isrc):
+        credits = {sources.normalized_words(a) for a in sources.artist_credits(track.get('artist', ''))}
+        for candidate in candidates:
+            seconds = sources.matching_duration(candidate.get('duration'))
+            other_credits = {sources.normalized_words(a) for a in sources.artist_credits(candidate.get('artist', ''))}
+            credit_match = bool(credits & other_credits) or any(
+                len(a.split()) >= 2 and len(b.split()) >= 2
+                and (set(a.split()) <= set(b.split()) or set(b.split()) <= set(a.split()))
+                for a in credits for b in other_credits)
+            versions = sources.version_labels(track);other_versions = sources.version_labels(candidate)
+            version_conflict = bool(versions and other_versions and versions != other_versions)
+            if (not version_conflict and str(candidate.get('isrc') or '').strip().upper() == reference_isrc
+                    and reference_duration is not None and seconds is not None
+                    and abs(reference_duration - seconds) <= 2 and credit_match):
+                return candidate, False
     def metadata(item):
         mix = item.get("mix", "")
         if re.match(r"^(?:feat\.?|ft\.?|featuring)\s+", mix, re.I):
@@ -115,7 +133,8 @@ def queries(track):
     credits = sources.artist_credits(track.get('artist', ''))
     primary = credits[0] if credits else ''
     primary_query = f'{primary} {title}'.strip()
-    variants = [full, simplified, primary_query]
+    isrc = str(track.get('isrc') or '').strip().upper()
+    variants = ([f'isrc:{isrc}'] if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{3}[0-9]{7}', isrc) else []) + [full, simplified, primary_query]
     base, edition = sources.split_release_edition(title)
     if edition and primary:
         variants.append(f'{primary} {base}')
@@ -202,7 +221,7 @@ def match_collection(collection, catalog, progress=None, on_event=None, max_trac
                         candidates = catalog.with_verified_credits(provider, row['input'], candidates)
                         found, ambiguous = match_track(row['input'], candidates)
                     if found:
-                        row.update(status="matched", match={**found, "provider": provider, "method": "track"})
+                        row.update(status="matched", match={**found, "provider": provider, "method": "isrc" if row["input"].get("isrc") and str(row["input"]["isrc"]).upper()==found.get("isrc") else "track"})
                         attempt["status"] = "matched"
                         break
                     if ambiguous:
@@ -296,10 +315,24 @@ class Catalog:
                       "qobuz": self.web.normalize_qobuz_results}[provider]
         output = []
         for track in tracks:
-            output.extend(normalizer({"tracks": [track] if provider == "beatport" else {"items": [track]}}))
+            normalized = normalizer({"tracks": [track] if provider == "beatport" else {"items": [track]}})
+            for item in normalized:
+                isrc = str(track.get('isrc') or '').strip().upper()
+                if re.fullmatch(r'[A-Z]{2}[A-Z0-9]{3}[0-9]{7}', isrc):
+                    item['isrc'] = isrc
+            output.extend(normalized)
         return output
 
     def search_tracks(self, provider, query):
+        if re.fullmatch(r'isrc:[A-Z]{2}[A-Z0-9]{3}[0-9]{7}', query):
+            code = query.split(':', 1)[1]
+            if provider == 'tidal':
+                tracks = self.api(provider, 'tracks', isrc=code, limit=100)['items']
+            elif provider == 'qobuz':
+                tracks = self.api(provider, 'track/search', query=code, limit=50)['tracks']['items']
+            else:
+                return []
+            return self.normalize(provider, tracks)
         if provider == "tidal":
             data = self.api(provider, "search/tracks", query=query, limit=50)
             tracks = data["items"]

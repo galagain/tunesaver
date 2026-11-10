@@ -331,5 +331,44 @@ class CatalogMatcherTests(unittest.TestCase):
             self.assertEqual(api.call_count, 1)
 
 
+
+
+
+class ISRCMatchingTests(unittest.TestCase):
+    def test_exact_isrc_preserves_recording_across_credit_differences(self):
+        source=track("Rien d’spécial", "Népal", duration=280, isrc='FRIDO1911311')
+        candidate=track("Rien d'spécial", "Népal, Guest", duration='4:40', isrc='FRIDO1911311')
+        self.assertIs(match_track(source,[candidate])[0],candidate)
+        for change in ({'duration':320},{'artist':'Unrelated performer'}):
+            self.assertIsNone(match_track(source,[{**candidate,**change}])[0])
+
+    def test_isrc_reconciles_full_artist_name_aliases(self):
+        for source_name,target_name in [('Yusuf / Cat Stevens','Cat Stevens'),('Hues Corporation','The Hues Corporation')]:
+            source=track('Song',source_name,isrc='FRIDO1911311')
+            candidate=track('Song',target_name,isrc='FRIDO1911311')
+            self.assertIs(match_track(source,[candidate])[0],candidate)
+
+    def test_explicit_conflicting_versions_cannot_be_forced_by_isrc(self):
+        source=track('Song','Artist',mix='Original Mix',isrc='FRIDO1911311')
+        candidate=track('Song','Artist',mix='Other Remix',isrc='FRIDO1911311')
+        self.assertIsNone(match_track(source,[candidate])[0])
+
+    def test_tidal_isrc_lookup_uses_filter_not_text_search_and_retains_isrc(self):
+        raw={'id':114970272,'title':"Rien d'spécial",'artists':[{'name':'Népal'}], 'duration':280,'isrc':'FRIDO1911311','allowStreaming':True,'streamReady':True}
+        catalog=Catalog()
+        with mock.patch.object(catalog,'api',return_value={'items':[raw]}) as api:
+            result=catalog.search_tracks('tidal','isrc:FRIDO1911311')
+        api.assert_called_once_with('tidal','tracks',isrc='FRIDO1911311',limit=100)
+        self.assertEqual(result[0]['isrc'],'FRIDO1911311')
+
+    def test_qobuz_isrc_query_and_beatport_skip(self):
+        catalog=Catalog()
+        with mock.patch.object(catalog,'api',return_value={'tracks':{'items':[]}}) as api:
+            self.assertEqual(catalog.search_tracks('qobuz','isrc:FRIDO1911311'),[])
+            api.assert_called_once_with('qobuz','track/search',query='FRIDO1911311',limit=50)
+        with mock.patch.object(catalog,'api') as api:
+            self.assertEqual(catalog.search_tracks('beatport','isrc:FRIDO1911311'),[])
+            api.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()
