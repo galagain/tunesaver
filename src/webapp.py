@@ -2059,11 +2059,10 @@ def configured_beatport_proxy() -> str:
 
 
 def beatport_helper_search(query: str, *, proxy: str = "", collection: str = "") -> dict[str, Any]:
-    command = [BEATPORT_SEARCH_BINARY]
-    if os.environ.get("TUNESAVER_DESKTOP") == "1":
-        command.extend(["--username-file", str(download_engine.SECRETS_ROOT / "beatport_username"),
-                        "--password-file", str(download_engine.SECRETS_ROOT / "beatport_password"),
-                        "--cache-file", str(BEATPORT_CACHE_PATH)])
+    command = [BEATPORT_SEARCH_BINARY,
+               "--username-file", str(download_engine.SECRETS_ROOT / "beatport_username"),
+               "--password-file", str(download_engine.SECRETS_ROOT / "beatport_password"),
+               "--cache-file", str(BEATPORT_CACHE_PATH)]
     if proxy:
         command.extend(["--proxy", proxy])
     if collection:

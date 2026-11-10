@@ -1,5 +1,7 @@
 import asyncio
 import configparser
+import os
+from contextlib import nullcontext
 from pathlib import Path
 import sys
 import time
@@ -61,6 +63,23 @@ class ProviderProbeTests(unittest.TestCase):
             self.assertEqual(webapp.probe_provider_connection("beatport")["state"], "active")
             search.return_value = None
             self.assertEqual(webapp.probe_provider_connection("beatport")["state"], "inactive")
+
+
+class BeatportHelperPathsTests(unittest.TestCase):
+    def test_configured_credentials_and_cache_paths_in_every_runtime(self):
+        for desktop in ('0', '1'):
+            with self.subTest(desktop=desktop), \
+                 mock.patch.dict(os.environ, {'TUNESAVER_DESKTOP': desktop}), \
+                 mock.patch.object(webapp.download_engine, 'SECRETS_ROOT', Path('/custom/secrets')), \
+                 mock.patch.object(webapp, 'BEATPORT_CACHE_PATH', Path('/custom/state/oauth.json')), \
+                 mock.patch.object(webapp.download_engine, 'provider_lock', return_value=nullcontext()), \
+                 mock.patch.object(webapp.subprocess, 'run', return_value=mock.Mock(returncode=0, stdout='TUNESAVER_JSON:{"tracks": []}\n')) as run:
+                self.assertEqual(webapp.beatport_helper_search('test'), {'tracks': []})
+                command = run.call_args.args[0]
+                self.assertEqual(command[command.index('--username-file')+1], '/custom/secrets/beatport_username')
+                self.assertEqual(command[command.index('--password-file')+1], '/custom/secrets/beatport_password')
+                self.assertEqual(command[command.index('--cache-file')+1], '/custom/state/oauth.json')
+                self.assertEqual(command[-2:], ['--', 'test'])
 
 
 class ProviderStatusCacheTests(unittest.IsolatedAsyncioTestCase):
