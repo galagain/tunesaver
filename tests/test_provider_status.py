@@ -17,6 +17,13 @@ class ProviderProbeTests(unittest.TestCase):
             (200, {"status": "ACTIVE", "subscription": {"type": "FREE"}}, "inactive"),
             (200, {"status": "ACTIVE", "subscription": {"type": "HIFI"}}, "active"),
             (200, {"status": "EXPIRED", "subscription": {"type": "HIFI"}}, "inactive"),
+            (200, {"status": "STOPPED", "subscription": {"type": "HIFI"}, "premiumAccess": True, "validUntil": "2099-01-01T00:00:00.000+0000"}, "active"),
+            (200, {"status": "STOPPED", "subscription": {"type": "HIFI"}, "premiumAccess": True, "validUntil": "2000-01-01T00:00:00Z"}, "inactive"),
+            (200, {"status": "STOPPED", "subscription": {"type": "HIFI"}, "premiumAccess": False, "validUntil": "2099-01-01T00:00:00Z"}, "inactive"),
+            (200, {"status": "STOPPED", "subscription": {"type": "HIFI"}, "premiumAccess": True, "validUntil": "invalid"}, "unknown"),
+            (200, {"status": "STOPPED", "subscription": {"type": "HIFI"}, "premiumAccess": True, "validUntil": "2099-01-01T00:00:00"}, "unknown"),
+            (200, {"status": "STOPPED", "subscription": {"type": "HIFI"}}, "unknown"),
+            (200, {"status": "STOPPED", "subscription": {"type": "FREE"}, "premiumAccess": True, "validUntil": "2099-01-01T00:00:00Z"}, "inactive"),
             (401, {}, "inactive"), (403, {}, "inactive"), (429, {}, "unknown"),
             (503, {}, "unknown"), (200, {}, "unknown"),
         ]

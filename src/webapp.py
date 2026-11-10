@@ -2539,7 +2539,25 @@ def probe_provider_connection(provider: str) -> dict[str, str]:
                 return result("inactive", "Compte TIDAL FREE : abonnement requis pour accéder aux sons.")
             if not kind or not data.get("status"):
                 return result("unknown", "Droits de l’abonnement TIDAL non vérifiables.")
-            if str(data["status"]).upper() != "ACTIVE":
+            status = str(data["status"]).upper()
+            if status == "STOPPED":
+                # A stopped subscription can retain Premium access through its
+                # paid validity period. Check the explicit entitlement and expiry.
+                valid_until = data.get("validUntil")
+                expiry = None
+                if isinstance(valid_until, str):
+                    try:
+                        parsed = datetime.fromisoformat(valid_until.replace("Z", "+00:00"))
+                        if parsed.tzinfo is not None:
+                            expiry = parsed.timestamp()
+                    except (ValueError, OverflowError):
+                        pass
+                premium = data.get("premiumAccess")
+                if premium is False or (expiry is not None and expiry <= time.time()):
+                    return result("inactive", "Abonnement TIDAL non actif.")
+                if premium is not True or expiry is None:
+                    return result("unknown", "Droits de l’abonnement TIDAL non vérifiables.")
+            elif status != "ACTIVE":
                 return result("inactive", "Abonnement TIDAL non actif.")
         else:
             if not isinstance(data.get("user"), dict):
