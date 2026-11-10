@@ -176,8 +176,8 @@ class DownloadEngineTests(unittest.TestCase):
             stream.call_args.args[0],
             [
                 download_engine.sys.executable,
-                "-m",
-                "qobuz_dl.cli",
+                "-B",
+                str(MODULE_PATH.with_name("qobuz_download.py")),
                 "dl",
                 qobuz_url,
                 "-d",

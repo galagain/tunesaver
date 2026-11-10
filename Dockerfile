@@ -125,7 +125,7 @@ COPY src/catalog_matcher.py src/import_engine.py src/spotify_http.py export_play
 COPY src/audio_retention.py src/feedback.py /app/
 COPY src/stream_audio.py /app/
 COPY src/download_fallback.py /app/
-COPY src/qobuz_search.py /app/qobuz_search.py
+COPY src/qobuz_search.py src/qobuz_download.py /app/
 COPY web /app/web
 RUN mkdir -p \
         /config \

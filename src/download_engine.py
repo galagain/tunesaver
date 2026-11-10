@@ -678,8 +678,8 @@ def _run_provider_unlocked(
         quality = load_qobuz_settings()["default_quality"]
         command = [
             sys.executable,
-            "-m",
-            "qobuz_dl.cli",
+            "-B",
+            str(Path(__file__).with_name("qobuz_download.py")),
             "dl",
             *urls,
             "-d",
